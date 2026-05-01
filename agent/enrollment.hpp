@@ -13,7 +13,7 @@ struct AgentConfig;
 // Throws std::runtime_error if rejected or on unrecoverable errors.
 // Updates config.server_public_key once received in the approval response.
 void enroll(AgentConfig& config, zmq::context_t& ctx, const std::atomic<bool>& stop_flag,
-            int poll_interval_seconds = 10);
+            int poll_interval_seconds = 10, int recv_timeout_ms = 5000);
 
 std::string get_hostname();
 std::string get_platform_string();
