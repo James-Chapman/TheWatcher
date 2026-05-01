@@ -1,0 +1,2 @@
+# Placeholder — individual BUILD files are assigned via build_file in MODULE.bazel.
+package(default_visibility = ["//visibility:public"])

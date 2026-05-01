@@ -1,0 +1,30 @@
+# Environment — contains API keys, never commit
+backend/.env
+
+# Runtime artefacts
+backend/*.db
+backend/*.log
+
+**/__pycache__/
+**/*.pyc
+__pycache__/
+
+*.db
+*.log
+
+# Local development files
+.bazelrc.user
+.claude/
+.claudeignore
+.idea/
+.vscode/
+.tmp/
+.venv/
+.github/
+
+dashboard/.npm-cache/
+dashboard/dist/
+dashboard/node_modules/
+dashboard/*.tsbuildinfo
+
+bazel-*

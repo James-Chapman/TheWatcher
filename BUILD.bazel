@@ -1,0 +1,4 @@
+package(default_visibility = ["//visibility:private"])
+
+# Platform constraints used by select() in third_party BUILD files.
+# Targets are defined in //agent and //server subdirectories.

@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SYSMON — Infrastructure Health</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        oklch(0.10 0.012 240);
+    --bg2:       oklch(0.13 0.012 240);
+    --bg3:       oklch(0.16 0.013 240);
+    --border:    oklch(0.22 0.015 240);
+    --border2:   oklch(0.28 0.015 240);
+    --text:      oklch(0.88 0.012 240);
+    --muted:     oklch(0.50 0.012 240);
+    --dim:       oklch(0.35 0.012 240);
+
+    --red:    oklch(0.60 0.22 25);
+    --orange: oklch(0.68 0.18 55);
+    --yellow: oklch(0.82 0.18 95);
+    --green:  oklch(0.72 0.18 145);
+    --blue:   oklch(0.62 0.16 240);
+
+    --red-glow:    oklch(0.60 0.22 25 / 0.5);
+    --orange-glow: oklch(0.68 0.18 55 / 0.5);
+    --yellow-glow: oklch(0.82 0.18 95 / 0.4);
+    --green-glow:  oklch(0.72 0.18 145 / 0.4);
+    --blue-glow:   oklch(0.62 0.16 240 / 0.4);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    min-height: 100vh;
+    overflow-x: hidden;
+
+    /* subtle grid texture */
+    background-image:
+      linear-gradient(oklch(0.18 0.012 240 / 0.3) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(0.18 0.012 240 / 0.3) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* ── TOP BAR ─────────────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 0 24px;
+    height: 48px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .logo-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green-glow);
+    animation: pulse-green 2s infinite;
+  }
+
+  .topbar-meta {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .topbar-meta span { display: flex; align-items: center; gap: 6px; }
+  .topbar-meta strong { color: var(--text); }
+
+  .live-badge {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10px; letter-spacing: 0.08em;
+    color: var(--green);
+  }
+  .live-pulse {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--green);
+    animation: pulse-green 1.5s infinite;
+  }
+
+  /* ── SUMMARY BAR ───────────────────────────────── */
+  .summary {
+    display: flex;
+    gap: 1px;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+  }
+  .summary-card {
+    flex: 1;
+    padding: 12px 16px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .summary-card + .summary-card { margin-left: 8px; }
+  .summary-label {
+    font-size: 10px;
+    letter-spacing: 0.10em;
+    color: var(--muted);
+    font-family: 'Space Grotesk', sans-serif;
+    text-transform: uppercase;
+  }
+  .summary-value {
+    font-size: 22px;
+    font-weight: 600;
+    font-family: 'Space Grotesk', sans-serif;
+    line-height: 1;
+  }
+  .summary-value.ok    { color: var(--green); }
+  .summary-value.warn  { color: var(--yellow); }
+  .summary-value.crit  { color: var(--red); }
+  .summary-value.info  { color: var(--blue); }
+  .summary-value.deg   { color: var(--orange); }
+
+  /* ── MAIN TABLE ────────────────────────────────── */
+  .table-wrap {
+    padding: 0 24px 40px;
+  }
+
+  .table-container {
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+  }
+
+  thead th {
+    padding: 10px 12px;
+    text-align: center;
+    font-size: 10px;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 500;
+    white-space: nowrap;
+    position: sticky;
+    top: 48px;
+    background: var(--bg);
+    background-image:
+      linear-gradient(oklch(0.18 0.012 240 / 0.3) 1px, transparent 1px),
+      linear-gradient(90deg, oklch(0.18 0.012 240 / 0.3) 1px, transparent 1px);
+    background-size: 32px 32px;
+    z-index: 10;
+  }
+  thead th:first-child { text-align: left; min-width: 220px; }
+  thead th:nth-child(2) { text-align: left; min-width: 90px; }
+
+  tbody tr {
+    border-bottom: 1px solid oklch(0.16 0.012 240);
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  tbody tr:hover { background: oklch(0.14 0.012 240 / 0.8); }
+  tbody tr.expanded { background: var(--bg2); }
+
+  td {
+    padding: 0 12px;
+    height: 48px;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+
+  .server-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .server-env {
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    padding: 2px 6px;
+    border-radius: 2px;
+    font-family: 'Space Grotesk', sans-serif;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .env-prod { background: oklch(0.60 0.22 25 / 0.15); color: var(--red); border: 1px solid oklch(0.60 0.22 25 / 0.3); }
+  .env-stag { background: oklch(0.68 0.18 55 / 0.15); color: var(--orange); border: 1px solid oklch(0.68 0.18 55 / 0.3); }
+  .env-dev  { background: oklch(0.62 0.16 240 / 0.15); color: var(--blue); border: 1px solid oklch(0.62 0.16 240 / 0.3); }
+
+  .uptime { color: var(--muted); font-size: 11px; }
+
+  /* ── STATUS DOTS ───────────────────────────────── */
+  .dot-cell { text-align: center; }
+
+  .dot {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+    position: relative;
+    cursor: default;
+  }
+
+  .dot.red    { background: var(--red);    box-shadow: 0 0 6px 1px var(--red-glow); }
+  .dot.orange { background: var(--orange); box-shadow: 0 0 6px 1px var(--orange-glow); }
+  .dot.yellow { background: var(--yellow); box-shadow: 0 0 5px 1px var(--yellow-glow); }
+  .dot.green  { background: var(--green);  box-shadow: 0 0 5px 1px var(--green-glow); }
+  .dot.blue   { background: var(--blue);   box-shadow: 0 0 5px 1px var(--blue-glow); }
+
+  .dot.red    { animation: pulse-red    1.2s ease-in-out infinite; }
+  .dot.orange { animation: pulse-orange 1.8s ease-in-out infinite; }
+
+  @keyframes pulse-red {
+    0%, 100% { box-shadow: 0 0 6px 1px var(--red-glow); }
+    50%       { box-shadow: 0 0 12px 4px var(--red-glow); }
+  }
+  @keyframes pulse-orange {
+    0%, 100% { box-shadow: 0 0 6px 1px var(--orange-glow); }
+    50%       { box-shadow: 0 0 10px 3px var(--orange-glow); }
+  }
+  @keyframes pulse-green {
+    0%, 100% { box-shadow: 0 0 8px var(--green-glow); }
+    50%       { box-shadow: 0 0 14px var(--green-glow); opacity: 0.7; }
+  }
+
+  /* ── EXPAND ROW ────────────────────────────────── */
+  .detail-row td {
+    padding: 0;
+    border-bottom: 1px solid var(--border2);
+  }
+  .detail-row.hidden { display: none; }
+
+  .detail-inner {
+    padding: 16px 24px 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+  }
+
+  .detail-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .detail-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-family: 'Space Grotesk', sans-serif;
+    text-transform: uppercase;
+  }
+  .detail-card-value {
+    font-size: 20px;
+    font-weight: 500;
+    line-height: 1;
+  }
+  .detail-card-value.red    { color: var(--red); }
+  .detail-card-value.orange { color: var(--orange); }
+  .detail-card-value.yellow { color: var(--yellow); }
+  .detail-card-value.green  { color: var(--green); }
+  .detail-card-value.blue   { color: var(--blue); }
+
+  .detail-card-sub {
+    font-size: 10px;
+    color: var(--dim);
+  }
+
+  /* minibar */
+  .minibar-track {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .minibar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.4s;
+  }
+  .minibar-fill.red    { background: var(--red); }
+  .minibar-fill.orange { background: var(--orange); }
+  .minibar-fill.yellow { background: var(--yellow); }
+  .minibar-fill.green  { background: var(--green); }
+  .minibar-fill.blue   { background: var(--blue); }
+
+  /* ── CHEVRON ───────────────────────────────────── */
+  .chevron {
+    display: inline-block;
+    width: 12px; height: 12px;
+    color: var(--dim);
+    transition: transform 0.18s;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+  .chevron svg { width: 12px; height: 12px; display: block; }
+  .expanded .chevron { transform: rotate(90deg); }
+
+  /* ── TOOLTIP ───────────────────────────────────── */
+  .dot-wrap { position: relative; display: inline-flex; }
+  .dot-wrap:hover .tooltip { opacity: 1; pointer-events: none; }
+  .tooltip {
+    position: absolute;
+    bottom: calc(100% + 7px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 10px;
+    color: var(--text);
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.12s;
+    z-index: 200;
+    pointer-events: none;
+    font-family: 'Space Grotesk', sans-serif;
+  }
+  .tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%; left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--border2);
+  }
+
+  /* ── SECTION HEADER ───────────────────────────── */
+  .section-header td {
+    padding: 18px 12px 6px;
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--dim);
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    background: transparent;
+  }
+  .section-header:hover { background: transparent !important; cursor: default; }
+
+  /* ── TIMESTAMP ────────────────────────────────── */
+  #timestamp {
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── SCROLLBAR ────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<header class="topbar">
+  <div class="logo">
+    <span class="logo-dot"></span>
+    SYSMON
+  </div>
+  <span style="color:var(--border2); font-size:18px; font-weight:200;">|</span>
+  <span style="color:var(--muted); font-size:11px; letter-spacing:0.06em; font-family:'Space Grotesk',sans-serif;">Infrastructure Health Dashboard</span>
+
+  <div class="topbar-meta">
+    <span><strong id="timestamp">—</strong></span>
+    <span>Region: <strong>us-east-1</strong></span>
+    <span>Clusters: <strong>4</strong></span>
+    <div class="live-badge"><span class="live-pulse"></span> LIVE</div>
+  </div>
+</header>
+
+<!-- SUMMARY -->
+<div class="summary">
+  <div class="summary-card">
+    <div class="summary-label">Operational</div>
+    <div class="summary-value ok" id="sum-ok">—</div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-label">Degraded</div>
+    <div class="summary-value deg" id="sum-deg">—</div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-label">Warning</div>
+    <div class="summary-value warn" id="sum-warn">—</div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-label">Critical</div>
+    <div class="summary-value crit" id="sum-crit">—</div>
+  </div>
+  <div class="summary-card">
+    <div class="summary-label">Maintenance</div>
+    <div class="summary-value info" id="sum-info">—</div>
+  </div>
+</div>
+
+<!-- TABLE -->
+<div class="table-wrap">
+  <div class="table-container">
+    <table id="server-table">
+      <thead>
+        <tr>
+          <th style="text-align:left">Server</th>
+          <th style="text-align:left">Uptime</th>
+          <th>CPU</th>
+          <th>Memory</th>
+          <th>Disk</th>
+          <th>Network</th>
+          <th>Database</th>
+          <th>Cache</th>
+          <th>API</th>
+          <th>Queue</th>
+          <th>TLS</th>
+          <th>Logs</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const COMPONENTS = ['cpu','memory','disk','network','database','cache','api','queue','tls','logs'];
+const LABELS     = ['CPU','Memory','Disk','Network','Database','Cache','API','Queue','TLS','Logs'];
+
+const SERVERS = [
+  // PROD
+  { id:'web-prod-01', name:'web-prod-01', env:'prod', group:'Production Web Tier', uptime:'99.97%', region:'us-east-1a' },
+  { id:'web-prod-02', name:'web-prod-02', env:'prod', group:'Production Web Tier', uptime:'99.97%', region:'us-east-1b' },
+  { id:'app-prod-01', name:'app-prod-01', env:'prod', group:'Production App Tier', uptime:'99.91%', region:'us-east-1a' },
+  { id:'app-prod-02', name:'app-prod-02', env:'prod', group:'Production App Tier', uptime:'99.88%', region:'us-east-1b' },
+  { id:'db-prod-01',  name:'db-prod-01',  env:'prod', group:'Production Data Layer', uptime:'100.0%', region:'us-east-1a' },
+  { id:'db-prod-02',  name:'db-prod-02',  env:'prod', group:'Production Data Layer', uptime:'99.99%', region:'us-east-1b' },
+  { id:'cache-prod',  name:'cache-prod',  env:'prod', group:'Production Data Layer', uptime:'99.95%', region:'us-east-1a' },
+  // STAGING
+  { id:'web-stag-01', name:'web-stag-01', env:'stag', group:'Staging', uptime:'98.41%', region:'us-east-1a' },
+  { id:'app-stag-01', name:'app-stag-01', env:'stag', group:'Staging', uptime:'97.83%', region:'us-east-1a' },
+  { id:'db-stag-01',  name:'db-stag-01',  env:'stag', group:'Staging', uptime:'96.10%', region:'us-east-1a' },
+  // DEV
+  { id:'dev-all-01',  name:'dev-all-01',  env:'dev',  group:'Development', uptime:'89.20%', region:'us-east-1a' },
+  { id:'dev-all-02',  name:'dev-all-02',  env:'dev',  group:'Development', uptime:'91.50%', region:'us-east-1a' },
+];
+
+// Deterministic-ish initial health (so it looks realistic)
+const INITIAL = {
+  'web-prod-01': ['green','green','green','green','green','green','green','green','green','green'],
+  'web-prod-02': ['green','green','yellow','green','green','green','green','orange','green','green'],
+  'app-prod-01': ['orange','yellow','green','green','green','green','green','green','green','green'],
+  'app-prod-02': ['green','green','green','green','red','green','green','green','green','yellow'],
+  'db-prod-01':  ['green','green','green','green','green','green','green','green','green','green'],
+  'db-prod-02':  ['green','yellow','green','green','green','green','green','green','blue','green'],
+  'cache-prod':  ['green','green','green','green','green','green','green','green','green','green'],
+  'web-stag-01': ['yellow','green','orange','green','green','green','green','green','green','green'],
+  'app-stag-01': ['red','orange','yellow','green','yellow','green','orange','green','green','green'],
+  'db-stag-01':  ['green','green','green','green','blue','blue','green','green','green','green'],
+  'dev-all-01':  ['orange','orange','yellow','green','orange','green','yellow','green','green','green'],
+  'dev-all-02':  ['green','green','green','green','green','green','green','green','green','red'],
+};
+
+const METRICS = {
+  red:    { label:'Critical',     pct: () => Math.floor(88 + Math.random()*11) },
+  orange: { label:'High',         pct: () => Math.floor(72 + Math.random()*15) },
+  yellow: { label:'Warning',      pct: () => Math.floor(60 + Math.random()*12) },
+  green:  { label:'Healthy',      pct: () => Math.floor(10 + Math.random()*40) },
+  blue:   { label:'Maintenance',  pct: () => 0 },
+};
+
+const VALUES = {
+  cpu:      (c,p) => p + '%',
+  memory:   (c,p) => p + '%',
+  disk:     (c,p) => p + '%',
+  network:  (c,p) => (p*1.2).toFixed(0) + ' MB/s',
+  database: (c,p) => p + 'ms',
+  cache:    (c,p) => (100-p) + '% hit',
+  api:      (c,p) => p + 'ms p95',
+  queue:    (c,p) => Math.floor(p*30) + ' msg',
+  tls:      (c,p) => c==='blue'?'Renewing':c==='green'?'Valid 87d':c==='yellow'?'Exp 7d':c==='orange'?'Exp 2d':'Expired',
+  logs:     (c,p) => c==='red'?'Error flood':c==='orange'?'Warn spike':c==='yellow'?'Anomaly':c==='blue'?'Archived':'Normal',
+};
+
+const state = {};
+SERVERS.forEach(s => {
+  state[s.id] = { health: [...INITIAL[s.id]] };
+});
+
+function statusColor(health) {
+  if (health.includes('red'))    return 'red';
+  if (health.includes('orange')) return 'orange';
+  if (health.includes('yellow')) return 'yellow';
+  if (health.includes('blue'))   return 'blue';
+  return 'green';
+}
+
+function buildTable() {
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+
+  let lastGroup = null;
+
+  SERVERS.forEach((server, si) => {
+    if (server.group !== lastGroup) {
+      lastGroup = server.group;
+      const hr = document.createElement('tr');
+      hr.className = 'section-header';
+      hr.innerHTML = `<td colspan="${2 + COMPONENTS.length}">${server.group}</td>`;
+      tbody.appendChild(hr);
+    }
+
+    const health = state[server.id].health;
+    const envClass = { prod:'env-prod', stag:'env-stag', dev:'env-dev' }[server.env];
+    const envLabel = { prod:'PROD', stag:'STG', dev:'DEV' }[server.env];
+
+    // main row
+    const tr = document.createElement('tr');
+    tr.id = 'row-' + server.id;
+    tr.dataset.id = server.id;
+
+    const dots = health.map((c, ci) => {
+      const comp = COMPONENTS[ci];
+      const label = LABELS[ci];
+      const met = METRICS[c];
+      const pct = met.pct();
+      const val = VALUES[comp](c, pct);
+      return `<td class="dot-cell">
+        <div class="dot-wrap">
+          <span class="dot ${c}"></span>
+          <div class="tooltip">${label}: ${val}<br><span style="color:var(--muted)">${met.label}</span></div>
+        </div>
+      </td>`;
+    }).join('');
+
+    tr.innerHTML = `
+      <td>
+        <div class="server-name">
+          <span class="chevron"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 2l4 4-4 4"/></svg></span>
+          ${server.name}
+          <span class="server-env ${envClass}">${envLabel}</span>
+        </div>
+      </td>
+      <td class="uptime">${server.uptime}</td>
+      ${dots}
+    `;
+
+    tr.addEventListener('click', () => toggleDetail(server.id));
+    tbody.appendChild(tr);
+
+    // detail row
+    const detailTr = document.createElement('tr');
+    detailTr.className = 'detail-row hidden';
+    detailTr.id = 'detail-' + server.id;
+    const detailTd = document.createElement('td');
+    detailTd.colSpan = 2 + COMPONENTS.length;
+
+    const cards = health.map((c, ci) => {
+      const comp = COMPONENTS[ci];
+      const label = LABELS[ci];
+      const met = METRICS[c];
+      const pct = met.pct();
+      const val = VALUES[comp](c, pct);
+      const showBar = ['cpu','memory','disk','network'].includes(comp);
+      return `<div class="detail-card">
+        <div class="detail-card-header">
+          <span>${label}</span>
+          <span class="dot ${c}" style="width:8px;height:8px;"></span>
+        </div>
+        <div class="detail-card-value ${c}">${val}</div>
+        <div class="detail-card-sub">${met.label} · ${server.region}</div>
+        ${showBar ? `<div class="minibar-track"><div class="minibar-fill ${c}" style="width:${pct}%"></div></div>` : ''}
+      </div>`;
+    }).join('');
+
+    detailTd.innerHTML = `<div class="detail-inner">${cards}</div>`;
+    detailTr.appendChild(detailTd);
+    tbody.appendChild(detailTr);
+  });
+
+  updateSummary();
+}
+
+function toggleDetail(id) {
+  const row = document.getElementById('row-' + id);
+  const detail = document.getElementById('detail-' + id);
+  const expanded = row.classList.toggle('expanded');
+  detail.classList.toggle('hidden', !expanded);
+}
+
+function updateSummary() {
+  const counts = { green: 0, yellow: 0, orange: 0, red: 0, blue: 0 };
+  SERVERS.forEach(s => {
+    const sc = statusColor(state[s.id].health);
+    counts[sc]++;
+  });
+  document.getElementById('sum-ok').textContent   = counts.green;
+  document.getElementById('sum-deg').textContent  = counts.orange;
+  document.getElementById('sum-warn').textContent = counts.yellow;
+  document.getElementById('sum-crit').textContent = counts.red;
+  document.getElementById('sum-info').textContent = counts.blue;
+}
+
+function updateTimestamp() {
+  const now = new Date();
+  document.getElementById('timestamp').textContent =
+    now.toUTCString().replace('GMT','UTC');
+}
+
+// Occasional random flicker (simulate live updates)
+function randomFlicker() {
+  const server = SERVERS[Math.floor(Math.random() * SERVERS.length)];
+  // skip prod db to keep it stable
+  if (server.id === 'db-prod-01') return;
+  const ci = Math.floor(Math.random() * COMPONENTS.length);
+  const colors = ['green','green','green','yellow','orange','red','blue'];
+  // bias toward keeping things healthy on prod
+  const pool = server.env === 'prod'
+    ? ['green','green','green','green','yellow','orange']
+    : ['green','green','yellow','orange','red','blue'];
+  state[server.id].health[ci] = pool[Math.floor(Math.random() * pool.length)];
+  buildTable();
+}
+
+buildTable();
+updateTimestamp();
+setInterval(updateTimestamp, 1000);
+setInterval(randomFlicker, 4000);
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+exports_files([
+    "cpp_httplib_bazel9_cc_library.patch",
+    "libzmq_bazel_windows_sodium_find.patch",
+    "rules_foreign_cc_bazel9_cc_import.patch",
+])

@@ -1,0 +1,68 @@
+module(
+    name = "thewatcher",
+    version = "0.2.17",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "catch2", version = "3.13.0")
+bazel_dep(name = "cpp-httplib", version = "0.22.0", repo_name = "cpp_httplib")
+bazel_dep(name = "nlohmann_json", version = "3.12.0.bcr.1")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
+bazel_dep(name = "sqlite3", version = "3.51.2.bcr.1")
+
+# Bazel 9 removed cc_import/cc_library as implicit builtins. Keep this patch
+# until rules_foreign_cc exposes the built pkg-config path cleanly on Windows.
+single_version_override(
+    module_name = "rules_foreign_cc",
+    patch_strip = 1,
+    patches = ["//patches:rules_foreign_cc_bazel9_cc_import.patch"],
+    version = "0.15.1",
+)
+
+single_version_override(
+    module_name = "cpp-httplib",
+    patch_strip = 1,
+    patches = ["//patches:cpp_httplib_bazel9_cc_library.patch"],
+    version = "0.22.0",
+)
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# ZeroMQ stays archive-backed because this project requires the local
+# rules_foreign_cc build settings for libsodium/CURVE and Windows static linking.
+http_archive(
+    name = "libzmq",
+    build_file = "//third_party:libzmq.BUILD",
+    patch_args = ["-p1"],
+    patches = ["//patches:libzmq_bazel_windows_sodium_find.patch"],
+    strip_prefix = "zeromq-4.3.5",
+    urls = ["https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5.tar.gz"],
+)
+
+# libsodium stays archive-backed for the custom Windows cc_library target and
+# the non-Windows configure_make target consumed by third_party:libzmq.BUILD.
+http_archive(
+    name = "libsodium",
+    build_file = "//third_party:libsodium.BUILD",
+    strip_prefix = "libsodium-1.0.20",
+    urls = ["https://download.libsodium.org/libsodium/releases/libsodium-1.0.20.tar.gz"],
+)
+
+# cppzmq stays archive-backed so the wrapper can propagate ZMQ_STATIC and
+# Windows socket libraries to consumers of the static libzmq build.
+http_archive(
+    name = "cppzmq",
+    build_file = "//third_party:cppzmq.BUILD",
+    strip_prefix = "cppzmq-4.10.0",
+    urls = ["https://github.com/zeromq/cppzmq/archive/refs/tags/v4.10.0.tar.gz"],
+)
+
+# msgpack-cxx has no BCR module available, so it remains archive-backed.
+http_archive(
+    name = "msgpack_cxx",
+    build_file = "//third_party:msgpack.BUILD",
+    strip_prefix = "msgpack-cxx-6.1.1",
+    urls = ["https://github.com/msgpack/msgpack-c/releases/download/cpp-6.1.1/msgpack-cxx-6.1.1.tar.gz"],
+)

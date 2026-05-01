@@ -1,0 +1,1 @@
+.\scripts\bazel.cmd test //... --verbose_failures

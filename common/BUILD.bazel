@@ -1,0 +1,29 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "common",
+    srcs = [
+        "windows_service.cpp",
+    ],
+    hdrs = [
+        "SingleLog.hpp",
+        "commands.hpp",
+        "crypto.hpp",
+        "metrics.hpp",
+        "protocol.hpp",
+        "windows_service.hpp",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": ["advapi32.lib"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = ".",
+    deps = [
+        "@cppzmq//:cppzmq",
+        "@libsodium//:libsodium",
+        "@msgpack_cxx//:msgpack",
+        "@nlohmann_json//:json",
+    ],
+)

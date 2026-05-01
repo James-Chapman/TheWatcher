@@ -1,0 +1,33 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+package(default_visibility = ["//visibility:private"])
+
+cc_test(
+    name = "config_test",
+    srcs = ["config_test.cpp"],
+    linkopts = select({
+        "@platforms//os:windows": ["ws2_32.lib"],
+        "//conditions:default": ["-lpthread"],
+    }),
+    deps = [
+        "//agent:agent_lib",
+        "//common",
+        "@catch2//:catch2_main",
+        "@libsodium//:libsodium",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_test(
+    name = "collector_contract_test",
+    srcs = ["collector_contract_test.cpp"],
+    deps = [
+        "//agent/collectors:collectors",
+        "//common",
+        "@catch2//:catch2_main",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": ["ws2_32.lib"],
+        "//conditions:default": ["-lpthread"],
+    }),
+)

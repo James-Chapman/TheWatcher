@@ -1,0 +1,43 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+package(default_visibility = ["//visibility:private"])
+
+# Library of all agent logic except main(). Tests link against this.
+cc_library(
+    name = "agent_lib",
+    srcs = [
+        "agent.cpp",
+        "config.cpp",
+        "enrollment.cpp",
+    ],
+    hdrs = [
+        "agent.hpp",
+        "config.hpp",
+        "enrollment.hpp",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "shell32.lib",
+            "ws2_32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//agent/collectors:collectors",
+        "//common",
+        "@cppzmq//:cppzmq",
+        "@libsodium//:libsodium",
+        "@nlohmann_json//:json",
+    ],
+    visibility = [
+        "//agent_tests:__pkg__",
+        "//integration_tests:__pkg__",
+    ],
+)
+
+cc_binary(
+    name = "TheWatcherAgent",
+    srcs = ["main.cpp"],
+    deps = [":agent_lib"],
+    visibility = ["//visibility:public"],
+)

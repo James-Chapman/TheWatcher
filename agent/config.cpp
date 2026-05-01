@@ -1,0 +1,227 @@
+#include "config.hpp"
+
+#include "common/SingleLog.hpp"
+#include "common/crypto.hpp"
+
+#include <cctype>
+#include <cstdio>
+#include <fstream>
+#include <sodium.h>
+#include <stdexcept>
+#include <string_view>
+#include <unordered_map>
+
+#ifdef _WIN32
+#include <shlobj.h>
+#include <windows.h>
+#else
+#include <pwd.h>
+#include <unistd.h>
+#endif
+
+namespace thewatcher::agent
+{
+
+namespace
+{
+
+    std::string generate_uuid()
+    {
+        uint8_t b[16];
+        ::randombytes_buf(b, sizeof(b));
+        b[6] = (b[6] & 0x0f) | 0x40; // version 4
+        b[8] = (b[8] & 0x3f) | 0x80; // variant 2
+        char buf[37];
+        std::snprintf(buf, sizeof(buf), "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", b[0],
+                      b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
+        return buf;
+    }
+
+    std::string trim(std::string value)
+    {
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+            value.erase(value.begin());
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+            value.pop_back();
+        return value;
+    }
+
+    bool starts_with_json_object(const std::filesystem::path& path)
+    {
+        std::ifstream f(path);
+        char ch = '\0';
+        while (f.get(ch))
+        {
+            if (!std::isspace(static_cast<unsigned char>(ch)))
+                return ch == '{';
+        }
+        return false;
+    }
+
+    std::unordered_map<std::string, std::string> read_key_value_file(const std::filesystem::path& path)
+    {
+        std::ifstream f(path);
+        if (!f)
+            throw std::runtime_error("Cannot open " + path.string());
+
+        std::unordered_map<std::string, std::string> values;
+        std::string line;
+        while (std::getline(f, line))
+        {
+            line = trim(line);
+            if (line.empty() || line[0] == '#')
+                continue;
+            const auto pos = line.find('=');
+            if (pos == std::string::npos)
+                continue;
+            auto key = trim(line.substr(0, pos));
+            auto value = trim(line.substr(pos + 1));
+            values[key] = value;
+        }
+        return values;
+    }
+
+    std::string host_from_server_value(const std::string& value)
+    {
+        auto host = trim(value);
+        constexpr std::string_view tcp_prefix = "tcp://";
+        if (host.rfind(tcp_prefix, 0) == 0)
+            host = host.substr(tcp_prefix.size());
+        const auto colon = host.rfind(':');
+        if (colon != std::string::npos && host.find(']') == std::string::npos)
+            host = host.substr(0, colon);
+        return host.empty() ? "127.0.0.1" : host;
+    }
+
+    std::string endpoint_for_host(const std::string& host, int port)
+    {
+        return "tcp://" + host_from_server_value(host) + ":" + std::to_string(port);
+    }
+
+    std::string server_host_from_endpoint(const std::string& endpoint)
+    {
+        return host_from_server_value(endpoint);
+    }
+
+    void apply_key_value(AgentConfig& cfg, const std::unordered_map<std::string, std::string>& values)
+    {
+        if (auto it = values.find("THEWATCHER_SERVER"); it != values.end())
+        {
+            cfg.server_address = endpoint_for_host(it->second, 5555);
+            cfg.enrollment_address = endpoint_for_host(it->second, 5556);
+        }
+        if (auto it = values.find("SERVER_ADDRESS"); it != values.end())
+            cfg.server_address = it->second;
+        if (auto it = values.find("ENROLLMENT_ADDRESS"); it != values.end())
+            cfg.enrollment_address = it->second;
+        if (auto it = values.find("SERVER_PUBLIC_KEY"); it != values.end())
+            cfg.server_public_key = it->second;
+        if (auto it = values.find("AGENT_ID"); it != values.end())
+            cfg.agent_id = it->second;
+        if (auto it = values.find("AGENT_PUBLIC_KEY"); it != values.end())
+            cfg.agent_public_key = it->second;
+        if (auto it = values.find("AGENT_SECRET_KEY"); it != values.end())
+            cfg.agent_secret_key = it->second;
+        if (auto it = values.find("COLLECTION_INTERVAL"); it != values.end())
+            cfg.collection_interval = std::stoi(it->second);
+        if (auto it = values.find("PROCESS_LIMIT"); it != values.end())
+            cfg.process_limit = std::stoi(it->second);
+    }
+
+} // namespace
+
+std::filesystem::path AgentConfig::default_path()
+{
+    LOG_FUNCTION_TRACE
+#ifdef _WIN32
+    char path[MAX_PATH];
+    ::SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, 0, path);
+    return std::filesystem::path(path) / "TheWatcher" / "TheWatcherAgent.conf";
+#else
+    const char* home = ::getenv("HOME");
+    if (!home)
+    {
+        struct passwd pw{}, *result = nullptr;
+        char buf[4096];
+        ::getpwuid_r(::getuid(), &pw, buf, sizeof(buf), &result);
+        home = result ? result->pw_dir : "/tmp";
+    }
+    return std::filesystem::path(home) / ".config" / "thewatcher" / "TheWatcherAgent.conf";
+#endif
+}
+
+AgentConfig AgentConfig::load_or_create(const std::filesystem::path& path)
+{
+    LOG_FUNCTION_TRACE
+    LOGF_DEBUG("Loading agent config from %s", path.string().c_str());
+    thewatcher::crypto::init();
+
+    if (std::filesystem::exists(path))
+    {
+        LOG_DEBUG("Agent config exists");
+        if (starts_with_json_object(path))
+        {
+            LOG_DEBUG("Loading legacy JSON agent config");
+            std::ifstream f(path);
+            nlohmann::json j;
+            f >> j;
+            return j.get<AgentConfig>();
+        }
+
+        AgentConfig cfg;
+        LOG_DEBUG("Loading key-value agent config");
+        apply_key_value(cfg, read_key_value_file(path));
+        if (cfg.agent_id.empty() || cfg.agent_public_key.empty() || cfg.agent_secret_key.empty())
+        {
+            LOG_INFO("Agent config is missing identity fields; generating stable identity values");
+            auto kp = thewatcher::crypto::generate_curve_keypair();
+            if (cfg.agent_id.empty())
+                cfg.agent_id = generate_uuid();
+            if (cfg.agent_public_key.empty())
+                cfg.agent_public_key = kp.public_key_z85;
+            if (cfg.agent_secret_key.empty())
+                cfg.agent_secret_key = kp.secret_key_z85;
+            cfg.save(path);
+        }
+        LOGF_DEBUG("Loaded agent config id=%s server=%s enrollment=%s interval=%d process_limit=%d",
+                   cfg.agent_id.c_str(), cfg.server_address.c_str(), cfg.enrollment_address.c_str(),
+                   cfg.collection_interval, cfg.process_limit);
+        return cfg;
+    }
+
+    // First run: generate new agent identity
+    LOG_INFO("Agent config does not exist; creating a new config with generated identity");
+    AgentConfig cfg;
+    cfg.agent_id = generate_uuid();
+    auto kp = thewatcher::crypto::generate_curve_keypair();
+    cfg.agent_public_key = kp.public_key_z85;
+    cfg.agent_secret_key = kp.secret_key_z85;
+
+    if (path.has_parent_path())
+        std::filesystem::create_directories(path.parent_path());
+    cfg.save(path);
+    LOGF_DEBUG("Created agent config id=%s path=%s", cfg.agent_id.c_str(), path.string().c_str());
+    return cfg;
+}
+
+void AgentConfig::save(const std::filesystem::path& path) const
+{
+    LOG_FUNCTION_TRACE
+    LOGF_DEBUG("Saving agent config to %s", path.string().c_str());
+    if (path.has_parent_path())
+        std::filesystem::create_directories(path.parent_path());
+    std::ofstream f(path);
+    if (!f)
+        throw std::runtime_error("Cannot write " + path.string());
+    f << "THEWATCHER_SERVER=" << server_host_from_endpoint(server_address) << '\n';
+    f << "SERVER_ADDRESS=" << server_address << '\n';
+    f << "ENROLLMENT_ADDRESS=" << enrollment_address << '\n';
+    f << "SERVER_PUBLIC_KEY=" << server_public_key << '\n';
+    f << "AGENT_ID=" << agent_id << '\n';
+    f << "AGENT_PUBLIC_KEY=" << agent_public_key << '\n';
+    f << "AGENT_SECRET_KEY=" << agent_secret_key << '\n';
+    f << "COLLECTION_INTERVAL=" << collection_interval << '\n';
+    f << "PROCESS_LIMIT=" << process_limit << '\n';
+}
+
+} // namespace thewatcher::agent

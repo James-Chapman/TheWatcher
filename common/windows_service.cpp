@@ -1,0 +1,254 @@
+#include "windows_service.hpp"
+
+#include "SingleLog.hpp"
+
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
+namespace thewatcher::service
+{
+
+namespace
+{
+
+#ifdef _WIN32
+    SERVICE_STATUS_HANDLE g_status_handle = nullptr;
+    SERVICE_STATUS g_status{};
+    const char* g_service_name = nullptr;
+    const std::function<void()>* g_stop_callback = nullptr;
+    const std::function<void()>* g_run_callback = nullptr;
+
+    void set_service_status(DWORD state, DWORD exit_code = NO_ERROR, DWORD wait_hint = 0)
+    {
+        LOGF_TRACE("Setting Windows service status state=%lu exit_code=%lu wait_hint=%lu",
+                   static_cast<unsigned long>(state), static_cast<unsigned long>(exit_code),
+                   static_cast<unsigned long>(wait_hint));
+        g_status.dwCurrentState = state;
+        g_status.dwWin32ExitCode = exit_code;
+        g_status.dwWaitHint = wait_hint;
+        g_status.dwControlsAccepted = state == SERVICE_RUNNING ? SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN : 0;
+        SetServiceStatus(g_status_handle, &g_status);
+    }
+
+    void WINAPI service_control_handler(DWORD control)
+    {
+        if (control == SERVICE_CONTROL_STOP || control == SERVICE_CONTROL_SHUTDOWN)
+        {
+            LOG_INFO("Stop requested by Service Control Manager");
+            set_service_status(SERVICE_STOP_PENDING, NO_ERROR, 30000);
+            if (g_stop_callback)
+                (*g_stop_callback)();
+        }
+    }
+
+    void WINAPI service_main(DWORD, LPSTR*)
+    {
+        g_status_handle = RegisterServiceCtrlHandlerA(g_service_name, service_control_handler);
+        if (!g_status_handle)
+            return;
+
+        g_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+        g_status.dwServiceSpecificExitCode = 0;
+
+        set_service_status(SERVICE_START_PENDING, NO_ERROR, 30000);
+        set_service_status(SERVICE_RUNNING);
+
+        try
+        {
+            LOG_INFO("Service started");
+            if (g_run_callback)
+                (*g_run_callback)();
+            LOG_INFO("Service stopped");
+            set_service_status(SERVICE_STOPPED);
+        }
+        catch (...)
+        {
+            LOG_CRITICAL("Service failed with an unhandled exception");
+            set_service_status(SERVICE_STOPPED, ERROR_SERVICE_SPECIFIC_ERROR);
+        }
+    }
+
+    void throw_last_error(const std::string& operation)
+    {
+        std::ostringstream out;
+        out << operation << " failed with Windows error " << GetLastError();
+        throw std::runtime_error(out.str());
+    }
+#endif
+
+} // namespace
+
+std::string quote_windows_argument(const std::string& value)
+{
+    LOG_FUNCTION_TRACE
+    std::string quoted = "\"";
+    for (char ch : value)
+    {
+        if (ch == '"')
+            quoted += "\\\"";
+        else
+            quoted += ch;
+    }
+    quoted += "\"";
+    return quoted;
+}
+
+std::string build_service_command_line(const std::vector<std::string>& args)
+{
+    LOG_FUNCTION_TRACE
+    std::ostringstream command;
+    for (std::size_t i = 0; i < args.size(); ++i)
+    {
+        if (i > 0)
+            command << ' ';
+        command << quote_windows_argument(args[i]);
+    }
+    return command.str();
+}
+
+std::string current_executable_path()
+{
+    LOG_FUNCTION_TRACE
+#ifdef _WIN32
+    std::string buffer(MAX_PATH, '\0');
+    DWORD length = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    while (length == buffer.size() && GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+    {
+        buffer.resize(buffer.size() * 2);
+        length = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    }
+    if (length == 0)
+        throw_last_error("GetModuleFileNameA");
+    buffer.resize(length);
+    return buffer;
+#else
+    return {};
+#endif
+}
+
+int install_windows_service(const WindowsServiceDefinition& definition)
+{
+    LOG_FUNCTION_TRACE
+#ifdef _WIN32
+    LOGF_INFO("Installing Windows service name=%s", definition.name.c_str());
+    SC_HANDLE scm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE);
+    if (!scm)
+        throw_last_error("OpenSCManagerA");
+
+    SC_HANDLE service =
+        CreateServiceA(scm, definition.name.c_str(), definition.display_name.c_str(), SERVICE_ALL_ACCESS,
+                       SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, SERVICE_ERROR_NORMAL,
+                       definition.command_line.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr);
+    if (!service)
+    {
+        DWORD error = GetLastError();
+        CloseServiceHandle(scm);
+        if (error == ERROR_SERVICE_EXISTS)
+        {
+            LOGF_WARNING("Service already exists: %s", definition.name.c_str());
+            std::cerr << "Service already exists: " << definition.name << "\n";
+            return 1;
+        }
+        throw std::runtime_error("CreateServiceA failed with Windows error " + std::to_string(error));
+    }
+
+    if (!definition.description.empty())
+    {
+        SERVICE_DESCRIPTIONA desc{};
+        desc.lpDescription = const_cast<char*>(definition.description.c_str());
+        ChangeServiceConfig2A(service, SERVICE_CONFIG_DESCRIPTION, &desc);
+    }
+
+    CloseServiceHandle(service);
+    CloseServiceHandle(scm);
+    LOGF_INFO("Installed service: %s", definition.name.c_str());
+    std::cout << "Installed service: " << definition.name << "\n";
+    std::cout << "Command: " << definition.command_line << "\n";
+    return 0;
+#else
+    std::cerr << "Windows service installation is only available on Windows.\n";
+    return 1;
+#endif
+}
+
+int uninstall_windows_service(const std::string& name)
+{
+    LOG_FUNCTION_TRACE
+#ifdef _WIN32
+    LOGF_INFO("Uninstalling Windows service name=%s", name.c_str());
+    SC_HANDLE scm = OpenSCManagerA(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm)
+        throw_last_error("OpenSCManagerA");
+
+    SC_HANDLE service = OpenServiceA(scm, name.c_str(), DELETE | SERVICE_STOP | SERVICE_QUERY_STATUS);
+    if (!service)
+    {
+        DWORD error = GetLastError();
+        CloseServiceHandle(scm);
+        if (error == ERROR_SERVICE_DOES_NOT_EXIST)
+        {
+            LOGF_WARNING("Service does not exist: %s", name.c_str());
+            std::cerr << "Service does not exist: " << name << "\n";
+            return 1;
+        }
+        throw std::runtime_error("OpenServiceA failed with Windows error " + std::to_string(error));
+    }
+
+    SERVICE_STATUS status{};
+    ControlService(service, SERVICE_CONTROL_STOP, &status);
+    if (!DeleteService(service))
+    {
+        DWORD error = GetLastError();
+        CloseServiceHandle(service);
+        CloseServiceHandle(scm);
+        throw std::runtime_error("DeleteService failed with Windows error " + std::to_string(error));
+    }
+
+    CloseServiceHandle(service);
+    CloseServiceHandle(scm);
+    LOGF_INFO("Uninstalled service: %s", name.c_str());
+    std::cout << "Uninstalled service: " << name << "\n";
+    return 0;
+#else
+    std::cerr << "Windows service uninstallation is only available on Windows.\n";
+    return 1;
+#endif
+}
+
+int run_windows_service(const std::string& name, const std::function<void()>& run, const std::function<void()>& stop)
+{
+    LOG_FUNCTION_TRACE
+#ifdef _WIN32
+    LOGF_INFO("Starting Windows service dispatcher name=%s", name.c_str());
+    g_stop_callback = &stop;
+    g_run_callback = &run;
+    g_service_name = name.c_str();
+    g_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+
+    SERVICE_TABLE_ENTRYA table[] = {
+        {const_cast<char*>(name.c_str()), service_main},
+        {nullptr,                         nullptr     },
+    };
+
+    if (!StartServiceCtrlDispatcherA(table))
+    {
+        throw_last_error("StartServiceCtrlDispatcherA");
+    }
+    return 0;
+#else
+        (void)
+        name;
+    (void)run;
+    (void)stop;
+    std::cerr << "Windows service mode is only available on Windows.\n";
+    return 1;
+#endif
+}
+
+} // namespace thewatcher::service

@@ -1,0 +1,35 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//agent:__pkg__", "//agent_tests:__pkg__"])
+
+cc_library(
+    name = "collectors",
+    srcs = [
+        "cpu_collector.cpp",
+        "disk_collector.cpp",
+        "memory_collector.cpp",
+        "network_collector.cpp",
+        "process_collector.cpp",
+        "temperature_collector.cpp",
+    ],
+    hdrs = [
+        "collector.hpp",
+        "cpu_collector.hpp",
+        "disk_collector.hpp",
+        "memory_collector.hpp",
+        "network_collector.hpp",
+        "process_collector.hpp",
+        "temperature_collector.hpp",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "ws2_32.lib",
+            "iphlpapi.lib",
+            "pdh.lib",
+            "psapi.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = ["//common"],
+    visibility = ["//visibility:public"],
+)

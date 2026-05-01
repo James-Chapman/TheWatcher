@@ -1,0 +1,51 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+package(default_visibility = ["//visibility:private"])
+
+# Library containing all server logic except main(). Tests depend on this.
+cc_library(
+    name = "server_lib",
+    srcs = [
+        "api.cpp",
+        "config.cpp",
+        "server.cpp",
+        "store_sqlite.cpp",
+        "zap_handler.cpp",
+    ],
+    hdrs = [
+        "api.hpp",
+        "config.hpp",
+        "server.hpp",
+        "startup_signal.hpp",
+        "store.hpp",
+        "store_sqlite.hpp",
+        "zap_handler.hpp",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": ["shell32.lib"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//common",
+        "@cppzmq//:cppzmq",
+        "@cpp_httplib//:httplib",
+        "@libsodium//:libsodium",
+        "@nlohmann_json//:json",
+        "@sqlite3//:sqlite3",
+    ],
+    visibility = [
+        "//integration_tests:__pkg__",
+        "//server_tests:__pkg__",
+    ],
+)
+
+cc_binary(
+    name = "TheWatcherServer",
+    srcs = ["main.cpp"],
+    linkopts = select({
+        "@platforms//os:windows": ["ws2_32.lib", "iphlpapi.lib"],
+        "//conditions:default":   ["-lpthread"],
+    }),
+    deps = [":server_lib"],
+    visibility = ["//visibility:public"],
+)

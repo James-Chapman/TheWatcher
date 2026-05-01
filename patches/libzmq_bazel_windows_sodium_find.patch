@@ -1,0 +1,19 @@
+diff --git a/builds/cmake/Modules/Findsodium.cmake b/builds/cmake/Modules/Findsodium.cmake
+index bdc36c9..2e0f7db 100644
+--- a/builds/cmake/Modules/Findsodium.cmake
++++ b/builds/cmake/Modules/Findsodium.cmake
+@@ -30,6 +30,14 @@ find_library(
+     HINTS ${SODIUM_LIBRARY_HINTS}
+ )
+ 
++if (MSVC AND SODIUM_INCLUDE_DIRS AND NOT SODIUM_LIBRARIES)
++  # Bazel supplies libsodium as a cc_library dependency rather than as an
++  # installed library discoverable by CMake. The static libzmq archive can
++  # compile CURVE support here and let Bazel link libsodium into consumers.
++  set(SODIUM_LIBRARIES "libsodium_linked_by_bazel")
++  set(SODIUM_FOUND TRUE)
++endif()
++
+ include(FindPackageHandleStandardArgs)
+ find_package_handle_standard_args(sodium DEFAULT_MSG SODIUM_LIBRARIES SODIUM_INCLUDE_DIRS)
+ mark_as_advanced(SODIUM_FOUND SODIUM_LIBRARIES SODIUM_INCLUDE_DIRS)
