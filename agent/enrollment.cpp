@@ -118,7 +118,7 @@ double get_uptime_seconds()
 #endif
 }
 
-void enroll(AgentConfig& config, zmq::context_t& ctx, const std::atomic<bool>& stop_flag, int poll_interval_seconds)
+void enroll(AgentConfig& config, zmq::context_t& ctx, const std::atomic<bool>& stop_flag, int poll_interval_seconds, int recv_timeout_ms)
 {
     LOG_FUNCTION_TRACE
     LOGF_INFO("Enrollment started agent_id=%s endpoint=%s poll_interval=%d", config.agent_id.c_str(),

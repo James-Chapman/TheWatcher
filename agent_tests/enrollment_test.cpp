@@ -1,7 +1,8 @@
 #include "../agent/config.hpp"
 #include "../agent/enrollment.hpp"
-#include "../common/crypto.hpp"
-#include "../common/protocol.hpp"
+#include "../agent/enrollment_client.cpp"
+#include "common/crypto.hpp"
+#include "common/protocol.hpp"
 
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
@@ -65,7 +66,7 @@ SCENARIO("Enrollment completes when the server immediately approves")
         {
             std::atomic<bool> stop{false};
             zmq::context_t    agent_ctx(1);
-            enroll(cfg, agent_ctx, stop, /*poll_interval=*/0, /*recv_timeout_ms=*/500);
+            thewatcher::agent::enroll(cfg, agent_ctx, stop, /*poll_interval=*/0, /*recv_timeout_ms=*/500);
 
             server_thread.join();
 
@@ -107,7 +108,7 @@ SCENARIO("Enrollment recovers after a transient server non-response")
             std::thread enroll_thread([&]() {
                 try
                 {
-                    enroll(cfg, agent_ctx, stop, /*poll_interval=*/0, /*recv_timeout_ms=*/500);
+                    thewatcher::agent::enroll(cfg, agent_ctx, stop, /*poll_interval=*/0, /*recv_timeout_ms=*/500);
                     enrolled.store(true);
                 }
                 catch (...)
