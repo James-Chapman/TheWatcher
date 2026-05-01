@@ -37,14 +37,14 @@ namespace logging
      */
     enum class LogLevel
     {
-        L_TRACE    = 100,
-        L_DEBUG    = 200,
-        L_INFO     = 300,
-        L_NOTICE   = 400,
-        L_WARNING  = 500,
-        L_ERROR    = 600,
+        L_TRACE = 100,
+        L_DEBUG = 200,
+        L_INFO = 300,
+        L_NOTICE = 400,
+        L_WARNING = 500,
+        L_ERROR = 600,
         L_CRITICAL = 700,
-        L_OFF      = 1000
+        L_OFF = 1000
     };
 
     /**
@@ -56,14 +56,14 @@ namespace logging
         struct LogEntry
         {
             std::string message;
-            bool        flush{false};
+            bool flush{false};
         };
+        static constexpr std::size_t LowSeverityFlushInterval{100};
 
         /**
          * Private Constructor
          */
-        SingleLog()
-            : m_consoleLogLevel(LogLevel::L_INFO), m_fileLogLevel(LogLevel::L_TRACE), m_filePath("")
+        SingleLog() : m_consoleLogLevel(LogLevel::L_INFO), m_fileLogLevel(LogLevel::L_TRACE), m_filePath("")
         {
             m_consoleWriter = std::thread(&SingleLog::ConsoleWriter, this);
             m_fstreamWriter = std::thread(&SingleLog::FstreamWriter, this);
@@ -164,11 +164,11 @@ namespace logging
 
         /**
          * Log the line to console and/or file.
-         * L_ERROR and L_CRITICAL messages are flushed immediately.
+         * L_NOTICE and higher severity messages are flushed immediately.
          */
         void LogIt(LogLevel level, const std::string& line)
         {
-            const bool flush = (level >= LogLevel::L_ERROR);
+            const bool flush = (level >= LogLevel::L_NOTICE);
             if (m_consoleLogLevel.load() <= level)
             {
                 ConsoleLog(line, flush);
@@ -351,25 +351,25 @@ namespace logging
             {
                 const auto c = static_cast<uint8_t>(s[i]);
                 uint32_t cp = 0;
-                size_t   extra = 0;
+                size_t extra = 0;
                 if (c < 0x80U)
                 {
-                    cp    = c;
+                    cp = c;
                     extra = 0;
                 }
                 else if (c < 0xE0U)
                 {
-                    cp    = c & 0x1FU;
+                    cp = c & 0x1FU;
                     extra = 1;
                 }
                 else if (c < 0xF0U)
                 {
-                    cp    = c & 0x0FU;
+                    cp = c & 0x0FU;
                     extra = 2;
                 }
                 else
                 {
-                    cp    = c & 0x07U;
+                    cp = c & 0x07U;
                     extra = 3;
                 }
                 for (size_t k = 1; k <= extra && (i + k) < s.size(); ++k)
@@ -401,9 +401,8 @@ namespace logging
         // Returns current local date/time as "YYYY-MM-DD HH:mm:ss.mmm +ZZZZ"
         static std::string CurrentDateTime()
         {
-            auto       now = std::chrono::system_clock::now();
-            const auto ms =
-                std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
+            auto now = std::chrono::system_clock::now();
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
             const std::time_t ttnow = std::chrono::system_clock::to_time_t(now);
             tm buf{};
 #ifdef _WIN32
@@ -468,7 +467,9 @@ namespace logging
                 LogEntry entry;
                 {
                     std::unique_lock<std::mutex> lock(m_consoleLogDequeLock);
-                    m_consoleCv.wait(lock, [this]() { return m_consoleExit || !m_consoleLogDeque.empty(); });
+                    m_consoleCv.wait(lock, [this]() {
+                        return m_consoleExit || !m_consoleLogDeque.empty();
+                    });
                     if (m_consoleExit && m_consoleLogDeque.empty())
                     {
                         break;
@@ -486,12 +487,15 @@ namespace logging
 
         void FstreamWriter()
         {
+            std::size_t low_severity_since_flush{0};
             while (true)
             {
                 LogEntry entry;
                 {
                     std::unique_lock<std::mutex> lock(m_fstreamLogDequeLock);
-                    m_fstreamCv.wait(lock, [this]() { return m_fstreamExit || !m_fstreamLogDeque.empty(); });
+                    m_fstreamCv.wait(lock, [this]() {
+                        return m_fstreamExit || !m_fstreamLogDeque.empty();
+                    });
                     if (m_fstreamExit && m_fstreamLogDeque.empty())
                     {
                         break;
@@ -506,6 +510,12 @@ namespace logging
                     if (entry.flush)
                     {
                         m_fileOut.flush();
+                        low_severity_since_flush = 0;
+                    }
+                    else if (++low_severity_since_flush >= LowSeverityFlushInterval)
+                    {
+                        m_fileOut.flush();
+                        low_severity_since_flush = 0;
                     }
                 }
             }
@@ -513,13 +523,13 @@ namespace logging
 
         std::atomic<LogLevel> m_consoleLogLevel{LogLevel::L_INFO};
         std::atomic<LogLevel> m_fileLogLevel{LogLevel::L_TRACE};
-        std::ofstream         m_fileOut{};
-        std::string           m_filePath{};
+        std::ofstream m_fileOut{};
+        std::string m_filePath{};
         std::array<char, LoggerInternalBufferSize> m_writeBuffer{};
 
-        std::mutex             m_consoleLogDequeLock{};
-        std::mutex             m_fstreamLogDequeLock{};
-        std::mutex             m_fstreamLock{};
+        std::mutex m_consoleLogDequeLock{};
+        std::mutex m_fstreamLogDequeLock{};
+        std::mutex m_fstreamLock{};
         std::condition_variable m_consoleCv{};
         std::condition_variable m_fstreamCv{};
 
@@ -533,7 +543,7 @@ namespace logging
         std::thread m_fstreamWriter{};
     };
 
-}; // namespace Logging
+}; // namespace logging
 
 namespace
 {
@@ -573,7 +583,7 @@ namespace StringTools
             return {};
         }
         const auto size = static_cast<size_t>(n) + 1;
-        auto       buffer = std::make_unique<char[]>(size);
+        auto buffer = std::make_unique<char[]>(size);
         std::snprintf(buffer.get(), size, format.c_str(), std::forward<Args>(args)...);
         return std::string(buffer.get(), static_cast<size_t>(n));
     }

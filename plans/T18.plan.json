@@ -1,0 +1,92 @@
+{
+  "plan_id": "T18",
+  "title": "Monitoring alert banner readability",
+  "description": "Fix the Monitoring page layout so the table heading does not bleed into data rows when alert notifications are visible, and render each alert notification as a separate themed item using the agent hostname when known.",
+  "status": "complete",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "Monitoring table headers stay attached to the table and do not overlay values below after the alert banner appears.",
+    "Monitoring alert notifications display hostnames for known agents instead of GUIDs.",
+    "Each monitoring alert notification is rendered as its own themed visual item so multiple alerts are clearly separated.",
+    "Dashboard tests cover hostname-based alert display data.",
+    "Docs, CHANGELOG.md, and MODULE.bazel are updated."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T18.1",
+      "title": "Render alert notifications with display identities",
+      "description": "Use the existing display alert enrichment for Monitoring alert notifications and render each alert as a separate themed element.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "The alert strip uses toDisplayAlerts(alerts, agents) rather than raw AlertRecord data.",
+        "Each alert item includes the display hostname and secondary agent id.",
+        "The alert item is themed by severity."
+      ],
+      "tests": {
+        "unit": [
+          "Keep or extend dashboard/src/status.test.ts coverage proving display alerts resolve known agent hostnames and retain ids."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "Modify dashboard/src/main.tsx alert-strip rendering. Reuse AgentIdentity to keep hostname/id presentation consistent."
+    },
+    {
+      "id": "T18.2",
+      "title": "Fix Monitoring table header layout",
+      "description": "Adjust dashboard CSS so Monitoring table headers do not remain sticky at a stale offset and overlap content when alert banners change page layout.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T18.1"
+      ],
+      "acceptance_criteria": [
+        "Monitoring table header cells are positioned normally inside the table.",
+        "Alert strip items have clear spacing, borders, and severity color treatment.",
+        "Responsive layout keeps alert items readable without overlapping the table."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "Run dashboard TypeScript build and focused dashboard tests."
+        ]
+      },
+      "implementation_notes": "Modify dashboard/src/styles.css. Remove the generic sticky positioning from thead th; management-table already overrides it and can remain unchanged. Add alert-card styles."
+    },
+    {
+      "id": "T18.3",
+      "title": "Document and version the UI fix",
+      "description": "Update dashboard documentation, changelog, and module version for the alert notification and header layout fix.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T18.2"
+      ],
+      "acceptance_criteria": [
+        "MODULE.bazel is incremented from 0.2.27 to 0.2.28.",
+        "CHANGELOG.md records the Monitoring alert banner and hostname notification fixes.",
+        "Dashboard docs describe hostname-based alert notifications."
+      ],
+      "tests": {
+        "unit": [
+          "Run git diff --check."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "Modify MODULE.bazel, CHANGELOG.md, and docs/dashboard.md."
+    }
+  ],
+  "dag": {
+    "nodes": [
+      { "id": "T18.1", "label": "Render alert notifications with display identities", "status": "complete", "is_leaf": true },
+      { "id": "T18.2", "label": "Fix Monitoring table header layout", "status": "complete", "is_leaf": true },
+      { "id": "T18.3", "label": "Document and version the UI fix", "status": "complete", "is_leaf": true }
+    ],
+    "edges": [
+      { "from": "T18.1", "to": "T18.2", "label": "CSS depends on final alert markup" },
+      { "from": "T18.2", "to": "T18.3", "label": "Document implemented UI behavior" }
+    ]
+  }
+}

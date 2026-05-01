@@ -6,14 +6,17 @@
 
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <string>
 #include <thread>
 
 namespace httplib
 {
+struct Request;
+struct Response;
 class Server;
-}
+} // namespace httplib
 
 namespace thewatcher::server
 {
@@ -44,6 +47,13 @@ public:
 
 private:
     void setup_routes();
+    std::optional<SessionRecord> current_session(const httplib::Request& req);
+    std::optional<SessionRecord> require_role(const httplib::Request& req, httplib::Response& res,
+                                              const std::string& role);
+    bool can_access_agent(const SessionRecord& session, const std::string& agent_id);
+    std::optional<SessionRecord> require_agent_access(const httplib::Request& req, httplib::Response& res,
+                                                      const std::string& role, const std::string& agent_id);
+    std::string enqueue_simple_command(const std::string& id, CommandType ct);
 
     Store& store_;
     ZapHandler& zap_;

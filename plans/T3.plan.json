@@ -1,0 +1,91 @@
+{
+  "plan_id": "T3",
+  "title": "Dashboard and service runtime",
+  "description": "Implement the dashboard with React, TypeScript, and Vite using the supplied static sample as the visual source, then add service-runtime support for Windows server and agent binaries.",
+  "status": "complete",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "Dashboard uses React, TypeScript, and Vite.",
+    "Dashboard preserves the supplied sample theme and dense server table layout.",
+    "Dashboard consumes existing server API routes for agents and metrics.",
+    "Dashboard has focused tests for status mapping and summary counts.",
+    "Server and agent have a clear path to run foreground or under Windows Service Control Manager.",
+    "Documentation, changelog, and module version are updated."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T3.1",
+      "title": "Scaffold React dashboard",
+      "description": "Create dashboard package metadata, Vite config, TypeScript config, source files, styles, and tests using the supplied sample theme.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "npm install succeeds using npm.cmd.",
+        "npm run build succeeds.",
+        "npm test succeeds."
+      ],
+      "tests": {
+        "unit": [
+          "Test health classification and summary count behavior."
+        ],
+        "integration": [
+          "Build the Vite production bundle."
+        ]
+      },
+      "implementation_notes": "Work under C:/dev/TheWatcher/dashboard. Keep the sample visual language from dashboard/public/server_page_sample.html and call /api/agents plus /api/metrics.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T3.2",
+      "title": "Add Windows service runtime",
+      "description": "Add foreground/service run modes and service install/uninstall commands for the server and agent binaries.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T3.1"
+      ],
+      "acceptance_criteria": [
+        "Foreground mode remains default.",
+        "Windows service mode is explicit through --service.",
+        "Install/uninstall commands document the generated service command line."
+      ],
+      "tests": {
+        "unit": [
+          "Compile-time coverage through existing Bazel targets."
+        ],
+        "integration": [
+          "Bazel package analysis/build succeeds."
+        ]
+      },
+      "implementation_notes": "Prefer shared helpers under common when possible. Windows service control uses SCM APIs and links advapi32.lib only on Windows.",
+      "subtasks": [],
+      "open_questions": []
+    }
+  ],
+  "dag": {
+    "nodes": [
+      {
+        "id": "T3.1",
+        "label": "Scaffold React dashboard",
+        "status": "complete",
+        "is_leaf": true
+      },
+      {
+        "id": "T3.2",
+        "label": "Add Windows service runtime",
+        "status": "complete",
+        "is_leaf": true
+      }
+    ],
+    "edges": [
+      {
+        "from": "T3.1",
+        "to": "T3.2",
+        "label": "dashboard first, then runtime/service changes"
+      }
+    ]
+  }
+}

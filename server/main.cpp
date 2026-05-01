@@ -105,7 +105,7 @@ int main(int argc, char* argv[])
     }
 
     fs::path cfg_path = config_path.empty() ? ServerConfig::default_path() : fs::path(config_path);
-    auto log_path = log_path_for_config(cfg_path, "server.log");
+    auto log_path = log_path_for_config(cfg_path, "TheWatcherServer.log");
     auto& logger = thewatcher::logging::SingleLog::GetInstance();
     logger.SetConsoleLogLevel(thewatcher::logging::LogLevel::L_INFO);
     logger.SetFileLogLevel(thewatcher::logging::LogLevel::L_TRACE);

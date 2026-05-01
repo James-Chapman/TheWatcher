@@ -1,0 +1,126 @@
+{
+  "plan_id": "T17",
+  "title": "Agent identity display and per-agent thresholds",
+  "description": "Make Pending Enrollments and Alerts display agent hostnames with the agent id as secondary text, and add per-agent CPU, memory, disk, and network percentage-of-five-minute-average thresholds for warning, degraded, and critical transitions while retaining the existing absolute fallback caps.",
+  "status": "complete",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "Pending Enrollments shows hostname as the primary agent text and agent id as smaller secondary text.",
+    "Alerts shows hostname as the primary agent text and agent id as smaller secondary text when the alert agent is known.",
+    "Each approved agent can configure CPU, memory, disk, and network warning/degraded/critical percentage thresholds.",
+    "Per-agent thresholds override global server settings for that agent while existing absolute 70/85/95 fallback caps still apply.",
+    "Threshold settings persist across server restarts and are returned by the agents API.",
+    "BDD-style tests cover storage persistence, status-engine per-agent overrides, API payloads, and dashboard transformation/API client behavior.",
+    "Docs, CHANGELOG.md, and MODULE.bazel are updated."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T17.1",
+      "title": "Persist and evaluate per-agent thresholds",
+      "description": "Add threshold columns to AgentRecord and SQLite storage, then teach StatusEngine to read agent-specific values before falling back to global settings.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "AgentRecord includes cpu/memory/disk/network warning, degraded, and critical percentage fields.",
+        "SqliteStore creates/migrates the threshold columns and preserves them on upsert.",
+        "StatusEngine::classify_percent accepts the agent id or threshold source and uses per-agent values before global settings.",
+        "Store and status engine tests cover threshold persistence and override behavior."
+      ],
+      "tests": {
+        "unit": [
+          "Update server_tests/store_test.cpp with a GIVEN/WHEN/THEN scenario for persisting per-agent threshold columns.",
+          "Update server_tests/status_engine_test.cpp with a scenario proving a per-agent CPU threshold changes the generated status while absolute caps remain active."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "Modify server/store.hpp AgentRecord, server/store_sqlite.cpp schema/map_agent/upsert/selects, and server/status_engine.cpp classify_percent/evaluate_metrics. Use default values 125/150/200 to match current global settings."
+    },
+    {
+      "id": "T17.2",
+      "title": "Expose threshold settings through API",
+      "description": "Return threshold settings in agent JSON and add an operator/admin endpoint to update per-agent thresholds.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T17.1"
+      ],
+      "acceptance_criteria": [
+        "GET /api/agents includes per-agent threshold values.",
+        "POST /api/agents/:id/thresholds validates CPU, memory, disk, and network warning/degraded/critical values.",
+        "Only users who can manage the agent can update thresholds."
+      ],
+      "tests": {
+        "unit": [
+          "Update dashboard/src/api.test.ts for the new client endpoint payload."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "Modify server/api.cpp agent_to_json and routes near existing settings endpoints. Add Store interface and SqliteStore method for threshold updates."
+    },
+    {
+      "id": "T17.3",
+      "title": "Update dashboard identity display and controls",
+      "description": "Render host/id identity consistently on Pending and Alerts pages and add per-agent threshold controls to Agent Management.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T17.2"
+      ],
+      "acceptance_criteria": [
+        "Pending rows use the same primary hostname and secondary id pattern as Agent Management.",
+        "Alert rows use hostname plus agent id when the alert maps to a known agent.",
+        "Agent Management has editable CPU/memory/disk/network warning/degraded/critical controls.",
+        "Dashboard models and status tests cover alert-agent enrichment and threshold defaults."
+      ],
+      "tests": {
+        "unit": [
+          "Update dashboard/src/status.test.ts to assert alerts can be enriched with agent display names and ids.",
+          "Update dashboard/src/api.test.ts to assert setAgentThresholds posts the expected JSON."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "Modify dashboard/src/models.ts, api.ts, status.ts, main.tsx, and styles.css. Build a small AgentIdentity component to avoid markup drift."
+    },
+    {
+      "id": "T17.4",
+      "title": "Document, version, and verify",
+      "description": "Update configuration/dashboard docs, changelog, module version, format, and run focused tests plus a binary build.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T17.3"
+      ],
+      "acceptance_criteria": [
+        "MODULE.bazel is incremented from 0.2.26 to 0.2.27.",
+        "CHANGELOG.md documents per-agent thresholds and identity rendering changes.",
+        "Docs describe threshold options and where to configure them.",
+        "Focused C++ and dashboard tests pass."
+      ],
+      "tests": {
+        "unit": [
+          "Run server_tests:store_test and server_tests:status_engine_test.",
+          "Run dashboard status/api tests."
+        ],
+        "integration": [
+          "Build TheWatcherServer and TheWatcherAgent."
+        ]
+      },
+      "implementation_notes": "Use clang-format on touched C++ files and npm/vitest for dashboard tests. Update docs/configuration.md, docs/dashboard.md, docs/running.md if needed."
+    }
+  ],
+  "dag": {
+    "nodes": [
+      { "id": "T17.1", "label": "Persist and evaluate per-agent thresholds", "status": "complete", "is_leaf": true },
+      { "id": "T17.2", "label": "Expose threshold settings through API", "status": "complete", "is_leaf": true },
+      { "id": "T17.3", "label": "Update dashboard identity display and controls", "status": "complete", "is_leaf": true },
+      { "id": "T17.4", "label": "Document, version, and verify", "status": "complete", "is_leaf": true }
+    ],
+    "edges": [
+      { "from": "T17.1", "to": "T17.2", "label": "API depends on stored threshold fields" },
+      { "from": "T17.2", "to": "T17.3", "label": "Dashboard controls depend on API contract" },
+      { "from": "T17.3", "to": "T17.4", "label": "Document implemented behavior" }
+    ]
+  }
+}

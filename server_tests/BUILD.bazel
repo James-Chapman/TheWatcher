@@ -3,12 +3,41 @@ load("@rules_cc//cc:defs.bzl", "cc_test")
 package(default_visibility = ["//visibility:private"])
 
 cc_test(
+    name = "config_test",
+    srcs = ["config_test.cpp"],
+    deps = [
+        "//common",
+        "//server:server_config",
+        "@catch2//:catch2_main",
+        "@nlohmann_json//:json",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default":   ["-lpthread"],
+    }),
+)
+
+cc_test(
     name = "store_test",
     srcs = ["store_test.cpp"],
     deps = [
-        "//common",
-        "//server:server_lib",
+        "//server:server_store",
         "@catch2//:catch2_main",
+        "@sqlite3//:sqlite3",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default":   ["-lpthread"],
+    }),
+)
+
+cc_test(
+    name = "status_engine_test",
+    srcs = ["status_engine_test.cpp"],
+    deps = [
+        "//server:server_store",
+        "@catch2//:catch2_main",
+        "@nlohmann_json//:json",
         "@sqlite3//:sqlite3",
     ],
     linkopts = select({

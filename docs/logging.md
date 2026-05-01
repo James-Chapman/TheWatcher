@@ -9,10 +9,10 @@ Foreground and service modes write logs beside the active config file:
 
 ```text
 server config: <config-directory>\server.json
-server log:    <config-directory>\server.log
+server log:    <config-directory>\TheWatcherServer.log
 
 agent config:  <config-directory>\TheWatcherAgent.conf
-agent log:     <config-directory>\agent.log
+agent log:     <config-directory>\TheWatcherAgent.log
 ```
 
 When a config path has no parent directory, logs are written to the current
@@ -21,8 +21,8 @@ working directory.
 Recommended Windows service locations:
 
 ```text
-C:\ProgramData\TheWatcher\server.log
-C:\ProgramData\TheWatcher\agent.log
+C:\ProgramData\TheWatcher\TheWatcherServer.log
+C:\ProgramData\TheWatcher\TheWatcherAgent.log
 ```
 
 ## Levels
@@ -31,7 +31,8 @@ Each binary configures its own logging before runtime work begins:
 
 - console logging at `INFO`;
 - file logging at `TRACE`;
-- immediate flushing for errors and critical messages.
+- live file flushing every 100 trace, debug, or info file entries;
+- immediate file flushing for notice, warning, error, and critical entries.
 
 `TheWatcherServer` and `TheWatcherAgent` call
 `SingleLog::GetInstance().SetConsoleLogLevel(...)`,
@@ -53,8 +54,36 @@ when formatting values.
 
 `LOG_FUNCTION_TRACE` creates a scope logger that emits entry and exit trace
 messages. Use it on lifecycle, setup, config, and infrequent control-flow
-functions. Avoid it in hot loops, per-frame handlers, and collector update
-methods unless diagnosing a specific issue.
+functions. Avoid it in hot loops and per-frame handlers. Collector update
+methods use one scope trace per collection cycle and concise trace/debug
+summary lines so operators can see whether collection is running without logging
+every mount, process, sensor, or network interface as a separate normal-path
+entry.
+
+## Collector Diagnostics
+
+Collectors write file-level `TRACE` and `DEBUG` diagnostics through the same
+agent logger:
+
+- CPU logs unsupported platforms, missing valid samples, and usage summaries.
+- Memory logs unavailable OS APIs or `/proc/meminfo` and usage summaries.
+- Disk logs mount counts after each update.
+- Network logs interface counts on supported platforms and unsupported-platform
+  notices otherwise.
+- Process logs discovered and reported process counts.
+- Temperature logs sensor counts where implemented and unsupported Windows
+  collection otherwise.
+
+The agent also logs a collected metrics summary after each collection cycle,
+including host, platform, uptime, CPU usage, memory usage, and disk, network,
+temperature, and process counts. The agent logs queued and sent frame details
+for metrics, config requests, heartbeat frames, and command acknowledgements.
+
+The server logs every decoded inbound agent frame with identity, frame type,
+payload size, and frame timestamp. Metric frames include decoded CPU, memory,
+disk, network, temperature, process, host, platform, and uptime summaries before
+the metrics are stored. Heartbeat frames include the agent id and heartbeat
+timestamp.
 
 ## Startup Diagnostics
 
@@ -71,20 +100,20 @@ server logs a critical `Startup failed: ...` message and exits non-zero.
 ## Useful Commands
 
 ```powershell
-Get-Content C:\ProgramData\TheWatcher\server.log -Tail 100
-Get-Content C:\ProgramData\TheWatcher\agent.log -Tail 100
+Get-Content C:\ProgramData\TheWatcher\TheWatcherServer.log -Tail 100
+Get-Content C:\ProgramData\TheWatcher\TheWatcherAgent.log -Tail 100
 ```
 
 Search for enrollment:
 
 ```powershell
-Select-String -Path C:\ProgramData\TheWatcher\server.log -Pattern "New agent|pending|approved|rejected"
+Select-String -Path C:\ProgramData\TheWatcher\TheWatcherServer.log -Pattern "New agent|pending|approved|rejected"
 ```
 
 Search for agent runtime errors:
 
 ```powershell
-Select-String -Path C:\ProgramData\TheWatcher\agent.log -Pattern "Fatal|error|warning"
+Select-String -Path C:\ProgramData\TheWatcher\TheWatcherAgent.log -Pattern "Fatal|error|warning"
 ```
 
 ## Service Mode

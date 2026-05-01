@@ -1,0 +1,111 @@
+{
+  "plan_id": "T12",
+  "title": "Fix server-agent integration SIGSEGV",
+  "description": "Diagnose and fix the segmentation fault in integration_tests/server_agent_integration_test.cpp when the test logs in to the server API after server startup. The likely scope is the integration harness startup/readiness path, the API server thread, or shared server state accessed by API and ZMQ worker threads.",
+  "status": "complete",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "The server-agent integration test no longer crashes with SIGSEGV at the login wait.",
+    "The integration test still verifies enrollment approval, metric ingestion, and disconnect lifecycle behavior.",
+    "The change is documented in docs and CHANGELOG.md, and the module version is incremented for this change set."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T12.1",
+      "title": "Reproduce and isolate the crash",
+      "description": "Run the failing integration test and inspect the server, API, and agent lifecycle code around startup, request handling, and teardown.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "The crash has a concrete suspected owner in code, not just the reported Catch2 line."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "Run //integration_tests:server_agent_integration_test and capture the failure mode."
+        ]
+      },
+      "implementation_notes": "The crash reproduced after login passed and before the next authenticated route assertion reported. server/api.cpp registered callbacks that captured stack-local helper lambdas from ApiServer::setup_routes(), so authenticated callbacks dereferenced destroyed helper objects.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T12.2",
+      "title": "Apply the lifecycle fix",
+      "description": "Make the smallest code change that removes the unsafe lifecycle or concurrency behavior while preserving the test's end-to-end behavior.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T12.1"
+      ],
+      "acceptance_criteria": [
+        "The server API is stable during startup and the real agent can enroll and send metrics."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "Run the server-agent integration test after the fix."
+        ]
+      },
+      "implementation_notes": "Moved session, authorization, agent-access, and simple-command helper logic to ApiServer methods in server/api.cpp and server/api.hpp. Route callbacks now capture this or copied values, removing dangling references.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T12.3",
+      "title": "Document and version the fix",
+      "description": "Update MODULE.bazel, CHANGELOG.md, and relevant docs after the code fix.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T12.2"
+      ],
+      "acceptance_criteria": [
+        "Version and docs reflect the integration stability change."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": []
+      },
+      "implementation_notes": "Bumped MODULE.bazel to 0.2.22, added CHANGELOG.md entry, and documented safe httplib callback capture expectations in docs/development.md.",
+      "subtasks": [],
+      "open_questions": []
+    }
+  ],
+  "dag": {
+    "nodes": [
+      {
+        "id": "T12.1",
+        "label": "Reproduce and isolate the crash",
+        "status": "complete",
+        "is_leaf": true
+      },
+      {
+        "id": "T12.2",
+        "label": "Apply the lifecycle fix",
+        "status": "complete",
+        "is_leaf": true
+      },
+      {
+        "id": "T12.3",
+        "label": "Document and version the fix",
+        "status": "complete",
+        "is_leaf": true
+      }
+    ],
+    "edges": [
+      {
+        "from": "T12.1",
+        "to": "T12.2",
+        "label": "Fix depends on root cause"
+      },
+      {
+        "from": "T12.2",
+        "to": "T12.3",
+        "label": "Document final behavior"
+      }
+    ]
+  }
+}

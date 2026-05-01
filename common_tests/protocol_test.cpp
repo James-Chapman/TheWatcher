@@ -110,15 +110,19 @@ SCENARIO("EnrollResponse carries approval status correctly")
         EnrollResponse resp;
         resp.approved = true;
         resp.message = "approved";
+        resp.server_public_key_z85 = "abcdefghijklmnopqrstuvwxyz0123456789ABCD";
+        resp.server_public_key_fingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
         WHEN("packed and unpacked")
         {
             auto unpacked = unpack<EnrollResponse>(pack(resp));
 
-            THEN("approved is true and message is preserved")
+            THEN("approved, message, server key, and fingerprint are preserved")
             {
                 REQUIRE(unpacked.approved == true);
                 REQUIRE(unpacked.message == "approved");
+                REQUIRE(unpacked.server_public_key_z85 == resp.server_public_key_z85);
+                REQUIRE(unpacked.server_public_key_fingerprint == resp.server_public_key_fingerprint);
             }
         }
     }

@@ -1,8 +1,11 @@
 # TheWatcher
 
-TheWatcher is a C++20 server monitoring platform with deployable user-space
-agents, a ZeroMQ/LibSodium data plane, a SQLite-backed server, and a React
-dashboard.
+## Currently under active development.
+
+TheWatcher is a platform agnostic server/endpoint monitoring platform trying to be better than the complex and ugly solutions that are currently out there.
+
+It's been created in C++20 with deployable user-space
+agents, a ZeroMQ/LibSodium data plane, a SQLite-backed server (PostgreSQL to come), and a React dashboard.
 
 Agents initiate all network connections. They enroll with the server, submit
 metrics periodically, send heartbeats, and request current runtime config after
@@ -30,7 +33,6 @@ Create or edit the agent config:
 
 ```text
 THEWATCHER_SERVER=127.0.0.1
-SERVER_PUBLIC_KEY=<server-public-key>
 ```
 
 Start the agent in foreground mode:
@@ -47,8 +49,10 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-Open `http://127.0.0.1:5173`, approve the pending agent on the Agents page, and
-wait for metrics to arrive.
+Open `http://127.0.0.1:5173`, approve the pending agent on the Pending
+Enrollments page, and wait for metrics to arrive. The approved enrollment
+response gives the agent the server public key plus a pinned fingerprint, which
+the agent writes back to `TheWatcherAgent.conf`.
 
 ## Documentation
 
@@ -89,3 +93,10 @@ cd dashboard
 npm.cmd run build
 npm.cmd test
 ```
+## Screenshots
+
+![Monitoring](screenshots/monitoring.png "Monitoring")
+
+![Agents](screenshots/agents.png "Agents")
+
+![Alerts](screenshots/alerts.png "Alerts")

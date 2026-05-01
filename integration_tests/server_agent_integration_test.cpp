@@ -63,6 +63,23 @@ std::optional<json> get_json(httplib::Client& client, const std::string& path)
     return json::parse(res->body);
 }
 
+bool login_as_default_admin(httplib::Client& client)
+{
+    auto res = client.Post("/api/login", R"({"username":"thewatcher","password":"look_at_me"})", "application/json");
+    if (!res || res->status != 200)
+        return false;
+
+    const auto set_cookie = res->get_header_value("Set-Cookie");
+    const auto end = set_cookie.find(';');
+    if (set_cookie.empty() || end == std::string::npos)
+        return false;
+
+    client.set_default_headers({
+        {"Cookie", set_cookie.substr(0, end)}
+    });
+    return true;
+}
+
 bool post_ok(httplib::Client& client, const std::string& path)
 {
     auto res = client.Post(path);
@@ -72,6 +89,20 @@ bool post_ok(httplib::Client& client, const std::string& path)
 std::optional<json> find_agent(httplib::Client& client, const std::string& agent_id)
 {
     auto body = get_json(client, "/api/agents");
+    if (!body)
+        return std::nullopt;
+
+    for (const auto& agent : *body)
+    {
+        if (agent.value("agent_id", "") == agent_id)
+            return agent;
+    }
+    return std::nullopt;
+}
+
+std::optional<json> find_pending_agent(httplib::Client& client, const std::string& agent_id)
+{
+    auto body = get_json(client, "/api/pending-enrollments");
     if (!body)
         return std::nullopt;
 
@@ -182,7 +213,6 @@ SCENARIO("A real agent enrolls, sends metrics, disconnects, and the server recor
         agent_config.agent_id = agent_id;
         agent_config.server_address = server_config.bind_address;
         agent_config.enrollment_address = server_config.enrollment_address;
-        agent_config.server_public_key = server_config.server_public_key;
         agent_config.agent_public_key = agent_keys.public_key_z85;
         agent_config.agent_secret_key = agent_keys.secret_key_z85;
         agent_config.collection_interval = 1;
@@ -217,6 +247,12 @@ SCENARIO("A real agent enrolls, sends metrics, disconnects, and the server recor
         {
             REQUIRE(eventually(
                 [&] {
+                    return login_as_default_admin(client);
+                },
+                5s));
+
+            REQUIRE(eventually(
+                [&] {
                     return get_json(client, "/api/agents").has_value();
                 },
                 5s));
@@ -227,7 +263,7 @@ SCENARIO("A real agent enrolls, sends metrics, disconnects, and the server recor
 
             REQUIRE(eventually(
                 [&] {
-                    const auto pending = find_agent(client, agent_id);
+                    const auto pending = find_pending_agent(client, agent_id);
                     return pending && !pending->value("approved", true) && !pending->value("rejected", true);
                 },
                 5s));
@@ -236,6 +272,16 @@ SCENARIO("A real agent enrolls, sends metrics, disconnects, and the server recor
             const auto approved_response = send_enrollment_request(agent_config);
             REQUIRE(approved_response.approved);
             REQUIRE(approved_response.message == "approved");
+            REQUIRE(approved_response.server_public_key_z85 == server_config.server_public_key);
+            REQUIRE(approved_response.server_public_key_fingerprint ==
+                    thewatcher::crypto::server_public_key_fingerprint(server_config.server_public_key));
+
+            REQUIRE(eventually(
+                [&] {
+                    const auto approved = find_agent(client, agent_id);
+                    return approved && approved->value("approved", false);
+                },
+                5s));
 
             thewatcher::agent::Agent agent(agent_config);
             std::thread agent_thread([&] {

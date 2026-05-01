@@ -13,7 +13,7 @@ Expected log lines include:
 
 ```text
 Config: C:\ProgramData\TheWatcher\server.json
-Log: C:\ProgramData\TheWatcher\server.log
+Log: C:\ProgramData\TheWatcher\TheWatcherServer.log
 Public key: <server-public-key>
 Running. Press Ctrl+C to stop.
 ```
@@ -26,7 +26,6 @@ Create or edit the agent config first:
 
 ```text
 THEWATCHER_SERVER=127.0.0.1
-SERVER_PUBLIC_KEY=<server-public-key>
 ```
 
 Start:
@@ -70,6 +69,13 @@ http://127.0.0.1:5173
 
 Vite proxies `/api` to `http://127.0.0.1:8080`.
 
+Initial login after the server creates its SQLite database:
+
+```text
+username: thewatcher
+password: look_at_me
+```
+
 Production dashboard bundle:
 
 ```powershell
@@ -84,14 +90,21 @@ dashboard.
 ## First Enrollment Workflow
 
 1. Start the server.
-2. Copy the server public key into the agent config as `SERVER_PUBLIC_KEY`.
+2. Configure the agent with `THEWATCHER_SERVER=<server-host-or-ip>`.
 3. Start the agent.
-4. Open the dashboard Agents page.
-5. Approve the pending agent.
-6. Wait for the agent to reconnect with CURVE and submit metrics.
+4. Open the dashboard and sign in.
+5. Open Pending Enrollments.
+6. Approve the pending agent and assign it to a group.
+7. Wait for the agent to persist the approved server public key and pinned
+   fingerprint, reconnect with CURVE, submit metrics, and appear in
+   Monitoring and Agents.
 
 Rejected agents receive a rejection response on their next enrollment attempt.
 Delete the rejected row to allow a fresh enrollment.
+
+`SERVER_PUBLIC_KEY` and `SERVER_PUBLIC_KEY_FINGERPRINT` are written to
+`TheWatcherAgent.conf` after approval. You only need to set them manually when
+pre-pinning a known server identity before first enrollment.
 
 ## Health Checks
 
@@ -105,8 +118,8 @@ Invoke-RestMethod http://127.0.0.1:8080/api/metrics
 Check logs:
 
 ```powershell
-Get-Content C:\ProgramData\TheWatcher\server.log -Tail 50
-Get-Content C:\ProgramData\TheWatcher\agent.log -Tail 50
+Get-Content C:\ProgramData\TheWatcher\TheWatcherServer.log -Tail 50
+Get-Content C:\ProgramData\TheWatcher\TheWatcherAgent.log -Tail 50
 ```
 
 Run the end-to-end integration test:
@@ -127,3 +140,12 @@ agents are marked disconnected when the server has not seen them for more than
 
 Explicit disconnect still marks an agent disconnected immediately when the agent
 ACKs the command.
+
+## Per-Agent Thresholds
+
+Open Agents, edit the CPU, memory, disk, or network threshold values, then use
+the Thresholds button on that row. Values are percentages of that agent's
+five-minute average and must be ordered warning, degraded, then critical.
+
+The status engine still applies the absolute fallback caps: `70` is at least
+warning, `85` is at least degraded, and `95` is critical.

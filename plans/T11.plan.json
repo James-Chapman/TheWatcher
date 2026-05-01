@@ -1,0 +1,232 @@
+{
+  "plan_id": "T11",
+  "title": "Dashboard-driven operations model",
+  "description": "Implement persistent agents, alert/status history, maintenance suppression, pending enrollment workflow, authentication, RBAC groups, dashboard status/alert UI behavior, webhook notifications, and Windows EXE installers.",
+  "status": "complete",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "Server restarts keep enrolled agents and all mutable runtime state by using a stable persisted SQLite database path.",
+    "Approved agents are separated from pending enrollments in API and dashboard views.",
+    "Status history records every indicator transition with timestamps.",
+    "Alerts are generated only on worsening transitions, are suppressed and cleared by maintenance, are soft-deleted, and are acknowledged by users.",
+    "Dashboard overview shows approved agents only, with Healthy | Warning | Degraded | Critical | Maintenance | Offline counters.",
+    "Indicator dots show grey for no data, blue for maintenance, and the derived Status column prioritizes red > amber > yellow > grey > green.",
+    "Agents page manages approved agents only and can enter/exit maintenance with optional reason and expiry.",
+    "Pending Enrollments page lets admins approve/reject and assign groups on approval.",
+    "Login uses secure local SQLite-backed sessions with default admin credentials documented as thewatcher/look_at_me.",
+    "Users, groups, roles, user-group membership, and agent-group membership enforce visibility and permissions.",
+    "Windows EXE installers install server and agent as services under C:\\Program Files\\TheWatcher\\.",
+    "Docs, changelog, version, and BDD tests are updated."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T11.1",
+      "title": "Persistence foundation",
+      "description": "Make server persistence stable across restarts, extend store records for maintenance metadata and group membership, and add backend schema for users, groups, alerts, status history, webhook config, and sessions.",
+      "status": "complete",
+      "is_leaf": false,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Relative server db_path resolves beside the active server config file.",
+        "Agent mutable state persists: connected/offline, maintenance, maintenance reason/expiry, runtime settings, groups, active alerts.",
+        "Store schema can represent alerts, status history, users, groups, roles, sessions, and webhook URL/config.",
+        "Existing SQLite databases migrate in place without dropping agents."
+      ],
+      "tests": {
+        "unit": [
+          "GIVEN a server config with relative db_path WHEN it is loaded or created THEN db_path resolves under the config directory.",
+          "GIVEN a store with agent maintenance metadata and groups WHEN it is reopened THEN all fields are retained.",
+          "GIVEN alert and status history rows WHEN queried THEN soft-deleted alerts are hidden from active results."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "Touch server/config.cpp,hpp, server/store.hpp, server/store_sqlite.cpp,hpp, server_tests/store_test.cpp, server_tests/config tests if present. Avoid destructive migrations. Use ALTER TABLE for agent columns and CREATE TABLE IF NOT EXISTS for new entities.",
+      "subtasks": [
+        {
+          "id": "T11.1.1",
+          "title": "Stable SQLite path",
+          "description": "Resolve relative ServerConfig::db_path against the active config directory so restarts from different working directories reuse the same SQLite database.",
+          "status": "complete",
+          "is_leaf": true,
+          "dependencies": [],
+          "acceptance_criteria": [
+            "Relative db_path in a loaded config becomes config_directory/db_path.",
+            "First-run default config writes an absolute db_path under the config directory.",
+            "Absolute db_path values are preserved."
+          ],
+          "tests": {
+            "unit": [
+              "GIVEN a temp config directory WHEN load_or_create creates the config THEN db_path is temp_dir/thewatcher.db.",
+              "GIVEN an existing config with relative db_path WHEN loaded THEN db_path is resolved against that config directory."
+            ],
+            "integration": []
+          },
+          "implementation_notes": "Update ServerConfig::load_or_create after JSON decode and before save. Use std::filesystem::absolute/path logic without assuming Windows-only paths."
+        },
+        {
+          "id": "T11.1.2",
+          "title": "Operations schema",
+          "description": "Add persisted schema and store methods for groups, user auth records, sessions, status history, alerts, and webhook config.",
+          "status": "complete",
+          "is_leaf": true,
+          "dependencies": [
+            "T11.1.1"
+          ],
+          "acceptance_criteria": [
+            "Tables exist for users, groups, user_groups, agent_groups, sessions, status_history, alerts, and server_settings.",
+            "Default admin user and Admins group are bootstrapped idempotently.",
+            "Alerts include agent, indicator, old_status, new_status, message, created_at, acknowledged_by, acknowledged_at, deleted_at.",
+            "Status history includes agent, indicator, old_status, new_status, created_at, and message."
+          ],
+          "tests": {
+            "unit": [
+              "GIVEN an empty store WHEN schema initializes THEN default admin and Admins group exist.",
+              "GIVEN an alert is soft deleted WHEN active alerts are listed THEN it is omitted but historical query can include it."
+            ],
+            "integration": []
+          },
+          "implementation_notes": "Password storage must use a password hash, not plaintext. Prefer libsodium password hashing because libsodium is already a dependency."
+        }
+      ],
+      "open_questions": []
+    },
+    {
+      "id": "T11.2",
+      "title": "Status engine and alerting",
+      "description": "Evaluate latest metrics against configurable thresholds based on the average of the last five minutes, record all transitions, and generate alerts only when an indicator worsens.",
+      "status": "complete",
+      "is_leaf": false,
+      "dependencies": [
+        "T11.1"
+      ],
+      "acceptance_criteria": [
+        "Thresholds are configurable per indicator as percentages of the five-minute average.",
+        "Green means Healthy, Yellow means Warning, Amber means Degraded, Red means Critical/Failure, Grey means No Data, Blue means Maintenance.",
+        "Only worsening transitions create alerts.",
+        "Recoveries and lateral changes are recorded in status history but do not create alerts.",
+        "Maintenance suppresses and clears active alerts for the agent.",
+        "Webhook notifications are sent for generated alerts when configured."
+      ],
+      "tasks": [],
+      "dag": {
+        "nodes": [],
+        "edges": []
+      }
+    },
+    {
+      "id": "T11.3",
+      "title": "Enrollment and agent APIs",
+      "description": "Split pending enrollment from approved agent management and require group assignment on approval.",
+      "status": "complete",
+      "is_leaf": false,
+      "dependencies": [
+        "T11.1"
+      ],
+      "acceptance_criteria": [
+        "Overview and agents APIs expose approved agents only.",
+        "Pending enrollment API exposes pending agents to admins only.",
+        "Approve endpoint accepts group ids and stores agent-group membership.",
+        "Rejected/deleted pending agents can re-enroll."
+      ],
+      "tasks": [],
+      "dag": {
+        "nodes": [],
+        "edges": []
+      }
+    },
+    {
+      "id": "T11.4",
+      "title": "Authentication and RBAC",
+      "description": "Add local SQLite-backed login, secure sessions, default admin credentials, users, groups, and role permissions.",
+      "status": "complete",
+      "is_leaf": false,
+      "dependencies": [
+        "T11.1"
+      ],
+      "acceptance_criteria": [
+        "Default admin login is username thewatcher and password look_at_me.",
+        "Passwords are hashed with libsodium.",
+        "Sessions use secure HTTP-only cookies with CSRF-conscious mutation handling.",
+        "Roles admin/operator/viewer gate actions.",
+        "Users see union access across their groups; built-in admin sees all groups."
+      ],
+      "tasks": [],
+      "dag": {
+        "nodes": [],
+        "edges": []
+      }
+    },
+    {
+      "id": "T11.5",
+      "title": "Dashboard workflow",
+      "description": "Implement overview, approved agents, pending enrollments, alerts, login, user/group management, status/alert columns, counters, and maintenance interactions.",
+      "status": "complete",
+      "is_leaf": false,
+      "dependencies": [
+        "T11.2",
+        "T11.3",
+        "T11.4"
+      ],
+      "acceptance_criteria": [
+        "Top counters are Healthy | Warning | Degraded | Critical | Maintenance | Offline.",
+        "Approval column is removed.",
+        "Overview and Agents pages exclude pending enrollments.",
+        "Pending Enrollments page displays only unapproved agents awaiting admin action.",
+        "No-data indicators are grey and derived host Status is yellow when any required indicator has no data.",
+        "Alerts dot is green unless the host has unacknowledged alerts, then red.",
+        "Thin unacknowledged alert banner appears between counters and server list.",
+        "Alerts page supports acknowledge and soft delete.",
+        "Maintenance mode turns indicators blue and suppresses/clears alerts."
+      ],
+      "tasks": [],
+      "dag": {
+        "nodes": [],
+        "edges": []
+      }
+    },
+    {
+      "id": "T11.6",
+      "title": "Windows EXE installers",
+      "description": "Build Windows EXE installers for server and agent that install binaries under C:\\Program Files\\TheWatcher\\ and register services automatically.",
+      "status": "complete",
+      "is_leaf": false,
+      "dependencies": [
+        "T11.4"
+      ],
+      "acceptance_criteria": [
+        "Server installer installs TheWatcherServer as a Windows service.",
+        "Agent installer installs TheWatcherAgent as a Windows service.",
+        "Config and log paths remain writable and documented.",
+        "Installer docs describe install, upgrade, uninstall, and default admin login."
+      ],
+      "tasks": [],
+      "dag": {
+        "nodes": [],
+        "edges": []
+      }
+    }
+  ],
+  "dag": {
+    "nodes": [
+      { "id": "T11.1", "label": "Persistence foundation", "status": "complete", "is_leaf": false },
+      { "id": "T11.1.1", "label": "Stable SQLite path", "status": "complete", "is_leaf": true },
+      { "id": "T11.1.2", "label": "Operations schema", "status": "complete", "is_leaf": true },
+      { "id": "T11.2", "label": "Status engine and alerting", "status": "complete", "is_leaf": false },
+      { "id": "T11.3", "label": "Enrollment and agent APIs", "status": "complete", "is_leaf": false },
+      { "id": "T11.4", "label": "Authentication and RBAC", "status": "complete", "is_leaf": false },
+      { "id": "T11.5", "label": "Dashboard workflow", "status": "complete", "is_leaf": false },
+      { "id": "T11.6", "label": "Windows EXE installers", "status": "complete", "is_leaf": false }
+    ],
+    "edges": [
+      { "from": "T11.1.1", "to": "T11.1.2", "label": "Stable DB location before broader schema." },
+      { "from": "T11.1", "to": "T11.2", "label": "Alert/status engine needs schema." },
+      { "from": "T11.1", "to": "T11.3", "label": "Enrollment grouping needs schema." },
+      { "from": "T11.1", "to": "T11.4", "label": "Auth/RBAC needs users/groups/session schema." },
+      { "from": "T11.2", "to": "T11.5", "label": "Dashboard status depends on evaluated backend state." },
+      { "from": "T11.3", "to": "T11.5", "label": "Dashboard pages depend on split APIs." },
+      { "from": "T11.4", "to": "T11.5", "label": "Dashboard requires login and permissions." },
+      { "from": "T11.4", "to": "T11.6", "label": "Installer docs include default admin/auth behavior." }
+    ]
+  }
+}

@@ -1,5 +1,7 @@
 #include "cpu_collector.hpp"
 
+#include "common/SingleLog.hpp"
+
 #include <algorithm>
 #include <thread>
 #include <utility>
@@ -122,6 +124,7 @@ namespace
 
 void CpuCollector::update(SystemMetrics& metrics)
 {
+    LOG_FUNCTION_TRACE
     auto& cpu = metrics.cpu;
     cpu.num_logical_cores = static_cast<int>(std::thread::hardware_concurrency());
 
@@ -129,6 +132,7 @@ void CpuCollector::update(SystemMetrics& metrics)
     auto sample = read_sample();
     if (sample.total == 0)
     {
+        LOG_DEBUG("CPU collector could not read a valid CPU sample");
         return;
     }
 
@@ -152,6 +156,10 @@ void CpuCollector::update(SystemMetrics& metrics)
 
     prev_ = std::move(sample);
     first_sample_ = false;
+    LOGF_TRACE("CPU collector updated usage=%.2f cores=%d per_core_samples=%zu", cpu.usage_percent,
+               cpu.num_logical_cores, cpu.per_core_usage.size());
+#else
+    LOG_DEBUG("CPU collector has no implementation for this platform");
 #endif
 }
 

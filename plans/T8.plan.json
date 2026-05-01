@@ -1,0 +1,95 @@
+{
+  "plan_id": "T8",
+  "title": "Complete operator and developer documentation",
+  "description": "Restructure and expand the documentation so an operator can build, install, configure, start, stop, and troubleshoot TheWatcher, and a developer can extend every component end to end.",
+  "status": "completed",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "README provides a concise entry point and links to the complete docs set.",
+    "Docs cover build steps, install steps, foreground running, service running, start/stop, logging, and troubleshooting.",
+    "A configuration document lists server and agent config paths, file formats, CLI overrides, and every config option.",
+    "Every component has documentation: server, agent, common protocol, dashboard, storage, tests, scripts, and third-party build wrappers.",
+    "Developer docs explain how to add a new collector end to end.",
+    "Version and changelog are updated."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T8.1",
+      "title": "Create docs map and operator docs",
+      "description": "Update README.md and create/expand installation, configuration, running, architecture, dashboard, logging, and service documentation.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Operator can find build, install, configure, start, stop, and uninstall commands.",
+        "Configuration paths and options are explicit for Windows, Linux, and BSD.",
+        "Docs describe that agents initiate connections and submit data."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": []
+      },
+      "implementation_notes": "Use docs/configuration.md, docs/installation.md, docs/running.md, and docs/architecture.md as primary docs. Update existing docs/service-installation.md, docs/dashboard.md, docs/logging.md, and README.md to avoid stale agent.json references.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T8.2",
+      "title": "Create developer extension docs",
+      "description": "Document repository layout, build targets, test targets, protocol/storage/dashboard extension points, and the full workflow for adding a collector.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [
+        "T8.1"
+      ],
+      "acceptance_criteria": [
+        "Developer docs list important Bazel targets.",
+        "Adding a collector covers metrics model, collector class, agent registration, dashboard model/status UI, tests, and docs.",
+        "Third-party build wrapper docs remain available."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": []
+      },
+      "implementation_notes": "Expand docs/collector-contract.md and create docs/development.md. Keep docs/bazel-build.md and docs/build-environment.md aligned with the new entry points.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T8.3",
+      "title": "Release bookkeeping and verification",
+      "description": "Bump MODULE.bazel, update CHANGELOG.md, complete the plan, and run lightweight documentation verification.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [
+        "T8.2"
+      ],
+      "acceptance_criteria": [
+        "Version increments from 0.2.14.",
+        "Changelog records the documentation expansion.",
+        "Docs no longer contain stale agent.json references except compatibility notes."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "Search docs for stale config and target names."
+        ]
+      },
+      "implementation_notes": "Use Select-String checks for agent.json/server.exe/old target names and review intentional compatibility mentions.",
+      "subtasks": [],
+      "open_questions": []
+    }
+  ],
+  "dag": {
+    "nodes": [
+      { "id": "T8.1", "label": "Create docs map and operator docs", "status": "completed", "is_leaf": true },
+      { "id": "T8.2", "label": "Create developer extension docs", "status": "completed", "is_leaf": true },
+      { "id": "T8.3", "label": "Release bookkeeping and verification", "status": "completed", "is_leaf": true }
+    ],
+    "edges": [
+      { "from": "T8.1", "to": "T8.2", "label": "Developer docs link back to operator/component docs." },
+      { "from": "T8.2", "to": "T8.3", "label": "Bookkeeping follows final document content." }
+    ]
+  }
+}

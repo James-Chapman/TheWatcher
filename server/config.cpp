@@ -21,6 +21,25 @@ namespace thewatcher::server
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
+namespace
+{
+    std::string resolve_sqlite_db_path(const fs::path& config_path, const std::string& db_path)
+    {
+        fs::path raw = db_path.empty() ? fs::path("thewatcher.db") : fs::path(db_path);
+        if (raw.is_absolute())
+            return raw.lexically_normal().string();
+
+        const auto base = config_path.has_parent_path() ? config_path.parent_path() : fs::current_path();
+        return (base / raw).lexically_normal().string();
+    }
+
+    void resolve_runtime_paths(ServerConfig& cfg, const fs::path& config_path)
+    {
+        if (cfg.db_type == "sqlite")
+            cfg.db_path = resolve_sqlite_db_path(config_path, cfg.db_path);
+    }
+} // namespace
+
 void to_json(json& j, const ServerConfig& cfg)
 {
     j = json{
@@ -76,6 +95,7 @@ ServerConfig ServerConfig::load_or_create(const fs::path& path)
         json j;
         f >> j;
         auto cfg = j.get<ServerConfig>();
+        resolve_runtime_paths(cfg, path);
         LOGF_DEBUG("Loaded server config bind=%s enrollment=%s api=%s:%d db_type=%s db_path=%s offline_after=%d",
                    cfg.bind_address.c_str(), cfg.enrollment_address.c_str(), cfg.api_host.c_str(), cfg.api_port,
                    cfg.db_type.c_str(), cfg.db_path.c_str(), cfg.offline_after_seconds);
@@ -88,8 +108,10 @@ ServerConfig ServerConfig::load_or_create(const fs::path& path)
     auto kp = thewatcher::crypto::generate_curve_keypair();
     cfg.server_public_key = kp.public_key_z85;
     cfg.server_secret_key = kp.secret_key_z85;
+    resolve_runtime_paths(cfg, path);
 
-    fs::create_directories(path.parent_path());
+    if (path.has_parent_path())
+        fs::create_directories(path.parent_path());
     cfg.save(path);
     return cfg;
 }

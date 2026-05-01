@@ -4,6 +4,10 @@ This is the focused Windows Service Control Manager command reference. Full
 operator setup is in [Installation](installation.md), [Configuration](configuration.md),
 and [Running](running.md).
 
+For packaged Windows installs, use `packaging\windows\TheWatcher.iss` with
+Inno Setup. The installer runs the same service install/uninstall commands
+shown below and installs files under `C:\Program Files\TheWatcher`.
+
 The server and agent run in foreground mode by default. Use the service flags
 only when installing or running under Windows Service Control Manager.
 
@@ -36,8 +40,11 @@ Create or edit `C:\ProgramData\TheWatcher\TheWatcherAgent.conf`:
 
 ```text
 THEWATCHER_SERVER=<server-host-or-ip>
-SERVER_PUBLIC_KEY=<server-public-key>
 ```
+
+The agent learns `SERVER_PUBLIC_KEY` and `SERVER_PUBLIC_KEY_FINGERPRINT` from
+the approved enrollment response and persists them. Add those values manually
+only when pre-pinning a known server identity before first enrollment.
 
 Install:
 
@@ -48,7 +55,7 @@ Install:
 You can also pass one-time overrides at install time:
 
 ```powershell
-.\bazel-bin\agent\TheWatcherAgent.exe --install-service --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf --server tcp://monitor.local:5555 --enrollment tcp://monitor.local:5556 --server-key <server-public-key>
+.\bazel-bin\agent\TheWatcherAgent.exe --install-service --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf --server tcp://monitor.local:5555 --enrollment tcp://monitor.local:5556
 ```
 
 Start and stop:
@@ -80,8 +87,8 @@ sc.exe start TheWatcherAgentLab
 Runtime logs are written beside the selected config file:
 
 ```text
-C:\ProgramData\TheWatcher\server.log
-C:\ProgramData\TheWatcher\agent.log
+C:\ProgramData\TheWatcher\TheWatcherServer.log
+C:\ProgramData\TheWatcher\TheWatcherAgent.log
 ```
 
 ## Non-Windows

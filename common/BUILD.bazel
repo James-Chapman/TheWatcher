@@ -3,6 +3,19 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
+    name = "common_core",
+    hdrs = [
+        "SingleLog.hpp",
+        "metrics.hpp",
+    ],
+    strip_include_prefix = ".",
+    deps = [
+        "@msgpack_cxx//:msgpack",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
     name = "common",
     srcs = [
         "windows_service.cpp",
@@ -21,6 +34,7 @@ cc_library(
     }),
     strip_include_prefix = ".",
     deps = [
+        ":common_core",
         "@cppzmq//:cppzmq",
         "@libsodium//:libsodium",
         "@msgpack_cxx//:msgpack",

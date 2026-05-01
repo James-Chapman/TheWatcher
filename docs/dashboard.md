@@ -9,10 +9,13 @@ not connect to agents.
 
 Current capabilities:
 
-- overview of agent health and latest metrics;
-- pending enrollment approval/rejection;
-- approved/rejected/maintenance grouping;
-- poll interval and process limit updates;
+- login/logout with SQLite-backed sessions;
+- monitoring view of agent health and latest metrics;
+- approved-agent-only monitoring;
+- pending enrollment approval/rejection with group assignment;
+- hostname-based alert notifications and alert acknowledgement/delete workflow;
+- user and group creation for admins;
+- poll interval, process limit, and per-agent threshold updates;
 - pause/resume maintenance mode;
 - restart collectors;
 - request immediate status;
@@ -53,29 +56,83 @@ cd dashboard
 npm.cmd test
 ```
 
-The current tests cover health thresholds, worst-status summary counts,
-missing-metrics behavior, rejected enrollment grouping, maintenance state,
-agent row action state, and agent management API calls.
+The current tests cover health thresholds, alert display enrichment,
+worst-status summary counts, missing-metrics behavior, maintenance state, agent
+management API calls, and admin user/group API calls.
 
 ## Views
 
-### Overview
+### Monitoring
 
-The Overview view shows health state by agent and expands each row into current
-component metrics. The dashboard joins `/api/agents` and `/api/metrics` by
-`agent_id`.
+The Monitoring view shows approved agents only. It joins `/api/agents`,
+`/api/metrics`, and `/api/alerts/unacknowledged` by `agent_id`.
+
+Approved agents are grouped by their assigned group names. Administrators see
+all approved agents they can access, with each group rendered as a section
+heading above its agents. Agents that belong to multiple groups appear in each
+matching group section. Agents without an assigned or visible group appear in
+the `Ungrouped` section.
+
+The group filter can show all groups, a single group, or only ungrouped agents.
+
+Columns:
+
+```text
+Server | Uptime | Status | Alerts | CPU | Memory | Disk | Network | Temp | Proc | Heartbeat
+```
+
+The top counters are:
+
+```text
+Healthy | Warning | Degraded | Critical | Maintenance | Offline
+```
+
+Status priority is red, amber, yellow, grey, then green. A host with no data is
+shown as yellow in the derived Status column while its missing component dots
+are grey. Maintenance turns all component dots blue.
+
+The Heartbeat dot is the final component dot. It is green when the server still
+considers the agent connected, grey when the agent is offline or has never sent
+a heartbeat, and blue during maintenance.
+
+Unacknowledged alerts appear between the top counters and the Monitoring table.
+Each alert is rendered as its own severity-themed item using the known hostname
+as primary text and the agent id as smaller secondary text.
 
 ### Agents
 
-The Agents view manages enrollment and operations:
+The Agents view manages approved agents only:
 
-- pending agents show Approve and Reject;
-- approved/rejected agents no longer show enrollment decision buttons;
-- rejected agents should be deleted before retrying enrollment;
 - approved agents can update poll interval and process limit;
-- approved agents can enter or leave maintenance mode;
+- approved agents can update CPU, memory, disk, and network warning,
+  degraded, and critical percentage thresholds;
+- approved agents can enter or leave maintenance mode with a stored reason and
+  optional expiry timestamp;
 - approved agents can restart collectors, request status, or disconnect;
 - any agent row can be deleted.
+
+### Pending Enrollments
+
+The Pending Enrollments view is admin-only. It shows unapproved agents awaiting
+approval. Approving an agent accepts a list of group ids; rejecting an agent
+marks enrollment rejected. Approved/rejected buttons disappear from approved
+agent management because decided enrollments are no longer pending. Pending
+rows show the hostname as primary text and the agent id as smaller secondary
+text.
+
+### Alerts
+
+The Alerts view lists active, non-deleted alerts. Operators and admins can
+acknowledge alerts or soft-delete them. The Monitoring alert dot is green unless
+the host has an unacknowledged alert, in which case it is red. Monitoring alert
+notifications and Alert rows show the known hostname as primary text and the
+agent id as smaller secondary text.
+
+### Users & Groups
+
+The Users & Groups view is admin-only. It lists users, roles, groups, and state.
+Admins can create groups and create users with `viewer`, `operator`, or `admin`
+roles and an initial group assignment.
 
 ## API Contract
 
@@ -83,13 +140,28 @@ The dashboard consumes:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/agents` | Agent identity, enrollment, connection, maintenance, settings, and timestamps. |
+| `POST /api/login` | Create a session for a local SQLite user. |
+| `POST /api/logout` | Delete the current session. |
+| `GET /api/session` | Return the current authenticated session. |
+| `GET /api/agents` | Approved agent identity, connection, maintenance, settings, groups, and timestamps. |
+| `GET /api/pending-enrollments` | Pending enrollment records for admins. |
 | `GET /api/metrics` | Latest metrics snapshot per agent. |
-| `POST /api/agents/:id/approve` | Approve pending enrollment. |
+| `GET /api/groups` | List groups. |
+| `POST /api/groups` | Create a group. |
+| `GET /api/users` | List users and group memberships. |
+| `POST /api/users` | Create a user with hashed password, role, and group memberships. |
+| `GET /api/alerts` | List active, non-deleted alerts. |
+| `GET /api/alerts/unacknowledged` | List active unacknowledged alerts. |
+| `POST /api/alerts/:id/ack` | Acknowledge an alert. |
+| `DELETE /api/alerts/:id` | Soft-delete an alert. |
+| `POST /api/agents/:id/approve` | Approve pending enrollment and assign groups. |
 | `POST /api/agents/:id/reject` | Reject pending enrollment. |
+| `POST /api/agents/:id/groups` | Replace an approved agent's group memberships. |
 | `DELETE /api/agents/:id` | Delete agent and metrics. |
 | `POST /api/agents/:id/set_interval` | Persist and queue poll interval update. |
 | `POST /api/agents/:id/set_process_limit` | Persist and queue process limit update. |
+| `POST /api/agents/:id/thresholds` | Persist per-agent CPU, memory, disk, and network thresholds. |
+| `POST /api/agents/:id/maintenance` | Enter maintenance with optional reason and expiry. |
 | `POST /api/agents/:id/pause` | Queue maintenance pause. |
 | `POST /api/agents/:id/resume` | Queue maintenance resume. |
 | `POST /api/agents/:id/restart_collectors` | Queue collector restart. |
@@ -106,10 +178,14 @@ approved
 rejected
 connected
 maintenance
+maintenance_reason
+maintenance_until
 collection_interval
 process_limit
+thresholds
 first_seen
 last_seen
+group_ids
 ```
 
 Metric rows include:
@@ -125,12 +201,19 @@ metrics
 ## State Rules
 
 - Pending agents receive `approved=false` until an operator approves them.
+- Approved enrollment responses include the server public key and pinned
+  fingerprint the agent persists before connecting to the data socket.
 - Rejected agents receive an enrollment rejection on the next attempt.
+- Per-agent CPU, memory, disk, and network thresholds override global threshold
+  settings and retain the absolute 70/85/95 fallback caps.
 - `connected` becomes true after inbound agent traffic.
 - `connected` becomes false after successful disconnect ACK or after
   `offline_after_seconds` with no inbound frame.
-- `maintenance` becomes true after successful pause ACK.
+- `maintenance` becomes true from the maintenance action or pause ACK.
 - `maintenance` becomes false after successful resume ACK.
+- Maintenance suppresses and clears active alerts for that host.
+- Worsening indicator transitions create alerts. Recoveries are history-only.
+- Alert delete is a soft delete; alert history remains in SQLite.
 - Runtime settings are persisted on the server and returned to agents after
   each metrics submission via config refresh.
 

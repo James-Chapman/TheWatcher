@@ -1,0 +1,126 @@
+{
+  "plan_id": "T5",
+  "title": "Server agent end-to-end integration test",
+  "description": "Add a BDD integration test that starts the real server and agent, exercises enrollment approval through the API, verifies collected metrics arrive at the server, sends a disconnect command, and asserts the server observes disconnection before shutdown.",
+  "status": "complete",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "The test starts a server on isolated local ports with a temporary SQLite database.",
+    "The test starts a real Agent instance with real collectors and generated CURVE keys.",
+    "The agent enrolls, appears pending through the server API, is approved through the API, and connects.",
+    "The server receives metrics containing CPU, memory, disk, process, network, temperature, OS, platform, and uptime fields.",
+    "The test sends the disconnect command through the API and the server records the agent as disconnected.",
+    "Server and agent shut down cleanly at the end of the test."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T5.1",
+      "title": "Add integration test target",
+      "description": "Create integration_tests/server_agent_integration_test.cpp and BUILD.bazel with dependencies on server_lib, agent_lib, common, cpp-httplib, Catch2, libsodium, nlohmann_json, and ZeroMQ.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "The test uses GIVEN/WHEN/THEN structure.",
+        "The test drives server approval through HTTP rather than bypassing enrollment.",
+        "The test asserts server-visible metrics and connected state through API responses."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "GIVEN a running server and agent WHEN the agent is approved THEN server metrics include collected CPU, memory, disk, process, network, temperature, OS, platform, and uptime data.",
+          "GIVEN the approved agent is connected WHEN disconnect is sent THEN /api/agents reports connected=false."
+        ]
+      },
+      "implementation_notes": "Use Server::run with StartupSignal in a worker thread, Agent::start in a worker thread, httplib::Client for API polling, and temporary SQLite files under std::filesystem::temp_directory_path().",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T5.2",
+      "title": "Expose server-observed connection state",
+      "description": "Extend AgentRecord, SqliteStore, API JSON, and Server ACK handling so the server marks agents connected on inbound traffic and disconnected after a successful DISCONNECT command ACK.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T5.1"
+      ],
+      "acceptance_criteria": [
+        "Agent JSON includes connected.",
+        "Existing databases migrate the connected column.",
+        "Any inbound frame marks the agent connected.",
+        "A successful disconnect ACK marks the agent disconnected."
+      ],
+      "tests": {
+        "unit": [
+          "Existing store tests compile with the new field default."
+        ],
+        "integration": [
+          "The new server-agent integration test observes connected=true before disconnect and connected=false after disconnect."
+        ]
+      },
+      "implementation_notes": "Server::dispatch_commands can remember command IDs and command types; Server::handle_router_frame can apply the DISCONNECT ACK transition without parsing log messages.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T5.3",
+      "title": "Update docs and release metadata",
+      "description": "Bump MODULE.bazel, add CHANGELOG.md notes, and document the integration test in docs.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T5.2"
+      ],
+      "acceptance_criteria": [
+        "Version increments from 0.2.11.",
+        "CHANGELOG.md records the integration test and connected-state tracking.",
+        "Docs mention the end-to-end server-agent test command."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "Run the new integration test and relevant existing tests."
+        ]
+      },
+      "implementation_notes": "docs/dashboard.md is the existing API/state documentation; add a test note to docs/build-environment.md or dashboard docs as appropriate.",
+      "subtasks": [],
+      "open_questions": []
+    }
+  ],
+  "dag": {
+    "nodes": [
+      {
+        "id": "T5.1",
+        "label": "Add integration test target",
+        "status": "complete",
+        "is_leaf": true
+      },
+      {
+        "id": "T5.2",
+        "label": "Expose server-observed connection state",
+        "status": "complete",
+        "is_leaf": true
+      },
+      {
+        "id": "T5.3",
+        "label": "Update docs and release metadata",
+        "status": "complete",
+        "is_leaf": true
+      }
+    ],
+    "edges": [
+      {
+        "from": "T5.1",
+        "to": "T5.2",
+        "label": "The test defines the observable connected-state requirement."
+      },
+      {
+        "from": "T5.2",
+        "to": "T5.3",
+        "label": "Documentation reflects final behavior."
+      }
+    ]
+  }
+}

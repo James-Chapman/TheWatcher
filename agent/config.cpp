@@ -116,6 +116,8 @@ namespace
             cfg.enrollment_address = it->second;
         if (auto it = values.find("SERVER_PUBLIC_KEY"); it != values.end())
             cfg.server_public_key = it->second;
+        if (auto it = values.find("SERVER_PUBLIC_KEY_FINGERPRINT"); it != values.end())
+            cfg.server_public_key_fingerprint = it->second;
         if (auto it = values.find("AGENT_ID"); it != values.end())
             cfg.agent_id = it->second;
         if (auto it = values.find("AGENT_PUBLIC_KEY"); it != values.end())
@@ -165,10 +167,13 @@ AgentConfig AgentConfig::load_or_create(const std::filesystem::path& path)
             std::ifstream f(path);
             nlohmann::json j;
             f >> j;
-            return j.get<AgentConfig>();
+            auto cfg = j.get<AgentConfig>();
+            cfg.config_path = path.string();
+            return cfg;
         }
 
         AgentConfig cfg;
+        cfg.config_path = path.string();
         LOG_DEBUG("Loading key-value agent config");
         apply_key_value(cfg, read_key_value_file(path));
         if (cfg.agent_id.empty() || cfg.agent_public_key.empty() || cfg.agent_secret_key.empty())
@@ -192,6 +197,7 @@ AgentConfig AgentConfig::load_or_create(const std::filesystem::path& path)
     // First run: generate new agent identity
     LOG_INFO("Agent config does not exist; creating a new config with generated identity");
     AgentConfig cfg;
+    cfg.config_path = path.string();
     cfg.agent_id = generate_uuid();
     auto kp = thewatcher::crypto::generate_curve_keypair();
     cfg.agent_public_key = kp.public_key_z85;
@@ -217,6 +223,7 @@ void AgentConfig::save(const std::filesystem::path& path) const
     f << "SERVER_ADDRESS=" << server_address << '\n';
     f << "ENROLLMENT_ADDRESS=" << enrollment_address << '\n';
     f << "SERVER_PUBLIC_KEY=" << server_public_key << '\n';
+    f << "SERVER_PUBLIC_KEY_FINGERPRINT=" << server_public_key_fingerprint << '\n';
     f << "AGENT_ID=" << agent_id << '\n';
     f << "AGENT_PUBLIC_KEY=" << agent_public_key << '\n';
     f << "AGENT_SECRET_KEY=" << agent_secret_key << '\n';

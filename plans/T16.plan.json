@@ -1,0 +1,102 @@
+{
+  "plan_id": "T16",
+  "title": "Enrollment server key and fingerprint pinning",
+  "description": "Return the server public key and its pinned fingerprint in approved enrollment responses, persist the pin in agent config, and reject later enrollment responses whose fingerprint changes.",
+  "status": "completed",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "Approved EnrollResponse carries server_public_key_z85 and server_public_key_fingerprint.",
+    "Pending/rejected enrollment responses do not require a server public key.",
+    "AgentConfig persists SERVER_PUBLIC_KEY_FINGERPRINT in TheWatcherAgent.conf and legacy JSON config.",
+    "The agent saves the server key and fingerprint after first approved enrollment.",
+    "The agent rejects an approved enrollment response if an existing pinned fingerprint does not match.",
+    "Docs, CHANGELOG.md, and MODULE.bazel are updated."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T16.1",
+      "title": "Add fingerprint support to protocol and config",
+      "description": "Extend common protocol/config structures and tests for server public key fingerprinting.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "common/protocol.hpp EnrollResponse includes server_public_key_z85 and server_public_key_fingerprint.",
+        "common/crypto.hpp exposes a deterministic server_public_key_fingerprint helper.",
+        "agent/config.hpp/cpp loads and saves SERVER_PUBLIC_KEY_FINGERPRINT.",
+        "Protocol and config tests cover round-trip behavior."
+      ],
+      "tests": {
+        "unit": [
+          "Update common_tests/protocol_test.cpp to assert EnrollResponse key and fingerprint round-trip.",
+          "Update agent_tests/config_test.cpp to assert SERVER_PUBLIC_KEY and SERVER_PUBLIC_KEY_FINGERPRINT persist."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "Use libsodium crypto_generichash over the z85 public key text and hex-encode the 32-byte digest. This pins what the agent receives and uses to configure CURVE.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T16.2",
+      "title": "Return and pin key during enrollment",
+      "description": "Have the server include the public key/fingerprint in approved enrollment responses and have the agent persist or verify the fingerprint.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [
+        "T16.1"
+      ],
+      "acceptance_criteria": [
+        "Server approved enrollment responses include config_.server_public_key and its fingerprint.",
+        "Agent stores server_public_key and server_public_key_fingerprint on first approval.",
+        "Agent throws if a later approved response has a fingerprint that differs from the pinned fingerprint."
+      ],
+      "tests": {
+        "unit": [
+          "Update agent_tests/enrollment_test.cpp for approved enrollment key persistence and fingerprint mismatch rejection."
+        ],
+        "integration": [
+          "Update integration_tests/server_agent_integration_test.cpp so the agent starts without a manually configured server public key and learns it through enrollment."
+        ]
+      },
+      "implementation_notes": "Change enroll(AgentConfig&) in agent/enrollment.cpp. It has a mutable AgentConfig reference but not a config path, so persist after enroll returns from agent/main or Agent::start if this object was loaded by main. For tests on enroll(), assert the in-memory config updates; AgentConfig save test covers persistence format.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T16.3",
+      "title": "Document and version",
+      "description": "Update configuration/running/security docs, changelog, and module version.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [
+        "T16.1",
+        "T16.2"
+      ],
+      "acceptance_criteria": [
+        "MODULE.bazel version is incremented.",
+        "CHANGELOG.md records enrollment key return and pinning.",
+        "Docs describe SERVER_PUBLIC_KEY_FINGERPRINT and enrollment key learning."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": []
+      },
+      "implementation_notes": "Current version is 0.2.25; bump to 0.2.26. Update docs/configuration.md, docs/running.md, docs/architecture.md, and docs/dashboard.md if relevant.",
+      "subtasks": [],
+      "open_questions": []
+    }
+  ],
+  "dag": {
+    "nodes": [
+      { "id": "T16.1", "label": "Add fingerprint support to protocol and config", "status": "completed", "is_leaf": true },
+      { "id": "T16.2", "label": "Return and pin key during enrollment", "status": "completed", "is_leaf": true },
+      { "id": "T16.3", "label": "Document and version", "status": "completed", "is_leaf": true }
+    ],
+    "edges": [
+      { "from": "T16.1", "to": "T16.2", "label": "Enrollment uses protocol/config fields" },
+      { "from": "T16.2", "to": "T16.3", "label": "Document implemented behavior" }
+    ]
+  }
+}

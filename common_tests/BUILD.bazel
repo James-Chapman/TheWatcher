@@ -14,3 +14,16 @@ cc_test(
         "//conditions:default":   ["-lpthread"],
     }),
 )
+
+cc_test(
+    name = "singlelog_test",
+    srcs = ["singlelog_test.cpp"],
+    deps = [
+        "//common:common_core",
+        "@catch2//:catch2_main",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default":   ["-lpthread"],
+    }),
+)

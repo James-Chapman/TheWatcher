@@ -1,8 +1,23 @@
 #include "../server/store_sqlite.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <filesystem>
 
 using namespace thewatcher::server;
+
+namespace
+{
+std::filesystem::path unique_store_path(const char* name)
+{
+    auto dir = std::filesystem::temp_directory_path() / "thewatcher-store-tests";
+    std::filesystem::create_directories(dir);
+    auto path = dir / name;
+    std::filesystem::remove(path);
+    std::filesystem::remove(path.string() + "-wal");
+    std::filesystem::remove(path.string() + "-shm");
+    return path;
+}
+} // namespace
 
 // Each SCENARIO creates its own in-memory SQLite database, so tests are
 // fully isolated and leave no files on disk.
@@ -264,6 +279,177 @@ SCENARIO("Agent runtime settings are persisted across upserts")
                 REQUIRE(got.has_value());
                 REQUIRE(got->collection_interval == 12);
                 REQUIRE(got->process_limit == 7);
+            }
+        }
+    }
+}
+
+SCENARIO("Agent threshold settings are persisted across upserts")
+{
+    GIVEN("a store with an approved agent")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord rec;
+        rec.agent_id = "agent-thresholds";
+        rec.approved = true;
+        rec.first_seen = 1;
+        rec.last_seen = 1;
+        store.upsert_agent(rec);
+
+        WHEN("per-agent indicator thresholds are saved")
+        {
+            rec.cpu_warning_pct_of_avg = 110.0;
+            rec.cpu_degraded_pct_of_avg = 140.0;
+            rec.cpu_critical_pct_of_avg = 180.0;
+            rec.memory_warning_pct_of_avg = 115.0;
+            rec.memory_degraded_pct_of_avg = 145.0;
+            rec.memory_critical_pct_of_avg = 185.0;
+            rec.disk_warning_pct_of_avg = 120.0;
+            rec.disk_degraded_pct_of_avg = 150.0;
+            rec.disk_critical_pct_of_avg = 190.0;
+            rec.network_warning_pct_of_avg = 130.0;
+            rec.network_degraded_pct_of_avg = 160.0;
+            rec.network_critical_pct_of_avg = 210.0;
+            store.set_agent_thresholds(rec);
+
+            THEN("get_agent returns the stored threshold values")
+            {
+                auto got = store.get_agent("agent-thresholds");
+                REQUIRE(got.has_value());
+                REQUIRE(got->cpu_warning_pct_of_avg == 110.0);
+                REQUIRE(got->cpu_degraded_pct_of_avg == 140.0);
+                REQUIRE(got->cpu_critical_pct_of_avg == 180.0);
+                REQUIRE(got->memory_warning_pct_of_avg == 115.0);
+                REQUIRE(got->memory_degraded_pct_of_avg == 145.0);
+                REQUIRE(got->memory_critical_pct_of_avg == 185.0);
+                REQUIRE(got->disk_warning_pct_of_avg == 120.0);
+                REQUIRE(got->disk_degraded_pct_of_avg == 150.0);
+                REQUIRE(got->disk_critical_pct_of_avg == 190.0);
+                REQUIRE(got->network_warning_pct_of_avg == 130.0);
+                REQUIRE(got->network_degraded_pct_of_avg == 160.0);
+                REQUIRE(got->network_critical_pct_of_avg == 210.0);
+            }
+        }
+    }
+}
+
+SCENARIO("Agent maintenance metadata and group membership survive reopening the store")
+{
+    GIVEN("a file-backed store with a maintained approved agent assigned to groups")
+    {
+        auto path = unique_store_path("agent-groups-maintenance.db");
+        int64_t engineering = 0;
+        int64_t production = 0;
+
+        {
+            SqliteStore store(path.string());
+            engineering = store.create_group("Engineering");
+            production = store.create_group("Production");
+
+            AgentRecord rec;
+            rec.agent_id = "agent-grouped";
+            rec.hostname = "grouped-host";
+            rec.approved = true;
+            rec.maintenance = true;
+            rec.maintenance_reason = "patch window";
+            rec.maintenance_until = 123456;
+            rec.first_seen = 1;
+            rec.last_seen = 2;
+            store.upsert_agent(rec);
+            store.set_agent_groups(rec.agent_id, {engineering, production});
+        }
+
+        WHEN("the store is reopened")
+        {
+            SqliteStore reopened(path.string());
+
+            THEN("the agent maintenance metadata is retained")
+            {
+                auto got = reopened.get_agent("agent-grouped");
+                REQUIRE(got.has_value());
+                REQUIRE(got->maintenance == true);
+                REQUIRE(got->maintenance_reason == "patch window");
+                REQUIRE(got->maintenance_until == 123456);
+            }
+
+            AND_THEN("the agent group membership is retained")
+            {
+                auto groups = reopened.get_agent_groups("agent-grouped");
+                REQUIRE(groups.size() == 2);
+                REQUIRE(groups[0] == engineering);
+                REQUIRE(groups[1] == production);
+            }
+        }
+    }
+}
+
+SCENARIO("A new store bootstraps the default admin user and Admins group")
+{
+    GIVEN("an empty in-memory store")
+    {
+        SqliteStore store(":memory:");
+
+        WHEN("users and groups are listed")
+        {
+            auto user = store.get_user_by_username("thewatcher");
+            auto groups = store.list_groups();
+
+            THEN("the default admin user exists without storing the plaintext password")
+            {
+                REQUIRE(user.has_value());
+                REQUIRE(user->role == "admin");
+                REQUIRE(user->built_in == true);
+                REQUIRE(user->password_hash != "look_at_me");
+            }
+
+            AND_THEN("the Admins group exists")
+            {
+                bool found = false;
+                for (const auto& group : groups)
+                    found = found || (group.name == "Admins" && group.built_in);
+                REQUIRE(found);
+            }
+        }
+    }
+}
+
+SCENARIO("Soft-deleted alerts are hidden from active alert queries but remain historical")
+{
+    GIVEN("a store with an agent and an alert")
+    {
+        SqliteStore store(":memory:");
+        AgentRecord rec;
+        rec.agent_id = "agent-alert";
+        rec.approved = true;
+        rec.first_seen = 1;
+        rec.last_seen = 1;
+        store.upsert_agent(rec);
+
+        AlertRecord alert;
+        alert.agent_id = rec.agent_id;
+        alert.indicator = "cpu";
+        alert.old_status = "green";
+        alert.new_status = "red";
+        alert.message = "cpu changed from green to red";
+        alert.created_at = 100;
+        auto alert_id = store.insert_alert(alert);
+
+        WHEN("the alert is soft-deleted")
+        {
+            store.soft_delete_alert(alert_id, 200);
+
+            THEN("active alert queries hide it")
+            {
+                REQUIRE(store.list_alerts(false).empty());
+                REQUIRE(store.list_unacknowledged_alerts().empty());
+            }
+
+            AND_THEN("historical queries can still include it")
+            {
+                auto all = store.list_alerts(true);
+                REQUIRE(all.size() == 1);
+                REQUIRE(all[0].deleted_at == 200);
             }
         }
     }

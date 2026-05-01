@@ -1,5 +1,7 @@
 #include "network_collector.hpp"
 
+#include "common/SingleLog.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -81,6 +83,7 @@ namespace
 
 void NetworkCollector::update(SystemMetrics& metrics)
 {
+    LOG_FUNCTION_TRACE
     metrics.networks.clear();
 
 #ifdef __linux__
@@ -110,6 +113,9 @@ void NetworkCollector::update(SystemMetrics& metrics)
         };
         metrics.networks.push_back(std::move(network));
     }
+    LOGF_TRACE("Network collector updated interfaces=%zu", metrics.networks.size());
+#else
+    LOG_DEBUG("Network collector has no implementation for this platform");
 #endif
 }
 

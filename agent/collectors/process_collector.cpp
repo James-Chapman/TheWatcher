@@ -1,5 +1,7 @@
 #include "process_collector.hpp"
 
+#include "common/SingleLog.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -269,8 +271,10 @@ namespace
 // ── Common update ─────────────────────────────────────────────────────────────
 void ProcessCollector::update(SystemMetrics& metrics)
 {
+    LOG_FUNCTION_TRACE
     auto now = std::chrono::steady_clock::now();
     auto procs = get_all_procs();
+    const auto discovered_count = procs.size();
 
     // Compute CPU % using stored previous sample
     for (auto& p : procs)
@@ -330,6 +334,8 @@ void ProcessCollector::update(SystemMetrics& metrics)
         });
         it = alive ? std::next(it) : prev_cpu_.erase(it);
     }
+    LOGF_TRACE("Process collector updated discovered=%zu reported=%zu limit=%d", discovered_count,
+               metrics.top_processes.size(), limit_);
 }
 
 } // namespace thewatcher::agent

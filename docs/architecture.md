@@ -12,6 +12,7 @@ server/main.cpp
 server/server.cpp
 server/api.cpp
 server/store_sqlite.cpp
+server/status_engine.cpp
 server/zap_handler.cpp
 server/config.cpp
 ```
@@ -23,10 +24,14 @@ Responsibilities:
 - Bind the ZeroMQ REP enrollment socket on `enrollment_address`.
 - Start the HTTP REST API on `api_host:api_port`.
 - Persist agents and metrics through `Store`, currently `SqliteStore`.
+- Persist users, groups, sessions, status history, alerts, and server settings.
+- Persist per-agent CPU, memory, disk, and network status thresholds.
 - Approve/reject/delete enrolled agents.
 - Dispatch queued commands to agents over the existing agent connection.
 - Respond to agent config refresh requests.
 - Mark approved connected agents offline after `offline_after_seconds`.
+- Evaluate submitted metrics, record status transitions, and create alerts only
+  on worsening transitions.
 
 The server does not initiate network connections to agents.
 
@@ -47,6 +52,8 @@ Responsibilities:
 - Load or create `TheWatcherAgent.conf`.
 - Generate a stable agent id and CURVE keypair on first run.
 - Submit enrollment requests until approved or rejected.
+- Learn the approved server public key, persist its pinned fingerprint, and
+  reject later approvals from a different server key.
 - Establish a ZeroMQ DEALER connection to the server data endpoint.
 - Collect metrics periodically and submit `METRICS` frames.
 - Send `HEARTBEAT` frames.
@@ -83,7 +90,7 @@ Frame types:
 | `COMMAND_ACK` | Agent to server | Command result. |
 | `CONFIG_UPDATE` | Server to agent | Runtime settings response. |
 | `ENROLL_REQUEST` | Agent to server | Enrollment request on the enrollment socket. |
-| `ENROLL_RESPONSE` | Server to agent | Pending, approved, or rejected enrollment state. |
+| `ENROLL_RESPONSE` | Server to agent | Pending, approved, or rejected enrollment state. Approved responses include the server public key and BLAKE2b-256 fingerprint. |
 | `CONFIG_REQUEST` | Agent to server | Requests current runtime settings after metrics submission. |
 
 Commands are defined in `common/commands.hpp`. Metrics are defined in
@@ -104,7 +111,12 @@ server/store_sqlite.hpp
 - agent identity and enrollment state;
 - approved/rejected flags;
 - connected and maintenance state;
+- maintenance reason and optional expiry;
 - collection interval and process limit;
+- agent and user group membership;
+- users, roles, password hashes, and sessions;
+- status history and soft-deletable alerts;
+- runtime server settings such as thresholds and webhook URL;
 - first seen and last seen timestamps;
 - metric snapshots.
 
@@ -119,14 +131,29 @@ Important endpoints:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/agents` | List agents and runtime state. |
-| `POST /api/agents/:id/approve` | Approve enrollment and add the agent key to ZAP. |
+| `POST /api/login` | Create a SQLite-backed authenticated session. |
+| `POST /api/logout` | Delete the current session. |
+| `GET /api/session` | Return the current session. |
+| `GET /api/agents` | List approved agents and runtime state. |
+| `GET /api/pending-enrollments` | List pending enrollment records. |
+| `POST /api/agents/:id/approve` | Approve enrollment, assign groups, and add the agent key to ZAP. |
 | `POST /api/agents/:id/reject` | Reject enrollment and remove the key from ZAP. |
+| `POST /api/agents/:id/groups` | Replace an approved agent's group memberships. |
 | `DELETE /api/agents/:id` | Delete the agent and its metrics. |
+| `GET /api/groups` | List groups. |
+| `POST /api/groups` | Create a group. |
+| `GET /api/users` | List users. |
+| `POST /api/users` | Create a user with role and groups. |
+| `GET /api/alerts` | List active alerts. |
+| `GET /api/alerts/unacknowledged` | List active unacknowledged alerts. |
+| `POST /api/alerts/:id/ack` | Acknowledge an alert. |
+| `DELETE /api/alerts/:id` | Soft-delete an alert. |
 | `GET /api/metrics` | Latest metrics row per agent. |
 | `GET /api/metrics/:id?limit=N` | Metric history for one agent. |
 | `POST /api/agents/:id/set_interval` | Persist and queue interval update. |
 | `POST /api/agents/:id/set_process_limit` | Persist and queue process limit update. |
+| `POST /api/agents/:id/thresholds` | Persist CPU, memory, disk, and network thresholds for one agent. |
+| `POST /api/agents/:id/maintenance` | Enter maintenance with reason and expiry metadata. |
 | `POST /api/agents/:id/pause` | Queue pause command. |
 | `POST /api/agents/:id/resume` | Queue resume command. |
 | `POST /api/agents/:id/restart_collectors` | Queue collector restart. |
@@ -145,15 +172,16 @@ dashboard/src/models.ts
 dashboard/src/styles.css
 ```
 
-The dashboard is a React + TypeScript + Vite app. It polls `/api/agents` and
-`/api/metrics`, maps backend rows into dashboard view models, and provides
-operator controls for enrollment, runtime settings, commands, maintenance, and
+The dashboard is a React + TypeScript + Vite app. It authenticates with the
+server API, polls approved agents, metrics, pending enrollments, groups, users,
+and alerts, maps backend rows into dashboard view models, and provides operator
+controls for runtime settings, commands, maintenance, alert handling, and
 deletion.
 
 ## Data Flow
 
 ```text
-Agent config -> enrollment REQ -> Server enrollment REP
+Agent config -> enrollment REQ -> Server enrollment REP with key fingerprint
 Agent DEALER -> Server ROUTER
 Agent METRICS/HEARTBEAT/CONFIG_REQUEST -> Server
 Server CONFIG_UPDATE/COMMAND -> Agent

@@ -14,8 +14,8 @@ ready. Build tool setup is covered in [Build Environment](build-environment.md).
   - `5556/tcp` enrollment;
   - `8080/tcp` REST API.
 - SQLite support from the built binary. No external SQLite service is required.
-- The generated server CURVE public key copied to each agent config when CURVE
-  is enabled.
+- The generated server CURVE public key is returned to agents in approved
+  enrollment responses and then pinned by the agent.
 
 ### Agent
 
@@ -23,8 +23,9 @@ ready. Build tool setup is covered in [Build Environment](build-environment.md).
 - Outbound network access to the server on `5555/tcp` and `5556/tcp`.
 - A writable config/log directory.
 - `THEWATCHER_SERVER=<server-host-or-ip>` in `TheWatcherAgent.conf`.
-- `SERVER_PUBLIC_KEY=<server-public-key>` when the server data socket uses
-  CURVE encryption.
+- Optional `SERVER_PUBLIC_KEY=<server-public-key>` and
+  `SERVER_PUBLIC_KEY_FINGERPRINT=<fingerprint>` only when pre-pinning a known
+  server identity before first enrollment.
 - User-space permission to read the local OS counters used by the collectors.
 
 ### Dashboard
@@ -71,6 +72,16 @@ npm.cmd run build
 The C++ server currently exposes the REST API. It does not serve the dashboard
 production bundle itself, so run the Vite dev server during development or host
 `dashboard\dist` with a separate static web server.
+
+Default dashboard login after first database initialization:
+
+```text
+username: thewatcher
+password: look_at_me
+```
+
+Change this account immediately after initial setup once user-editing controls
+are available for your deployment process.
 
 ## Linux And BSD Dashboard Publishing
 
@@ -210,9 +221,9 @@ Recommended files:
 
 ```text
 C:\ProgramData\TheWatcher\server.json
-C:\ProgramData\TheWatcher\server.log
+C:\ProgramData\TheWatcher\TheWatcherServer.log
 C:\ProgramData\TheWatcher\TheWatcherAgent.conf
-C:\ProgramData\TheWatcher\agent.log
+C:\ProgramData\TheWatcher\TheWatcherAgent.log
 ```
 
 The server creates `server.json` on first run if it does not exist. The agent
@@ -228,14 +239,14 @@ Create the server config and print its public key:
 .\bazel-bin\server\TheWatcherServer.exe --config C:\ProgramData\TheWatcher\server.json
 ```
 
-Stop it with `Ctrl+C`, copy the logged public key into the agent config, then
-start the server again when ready.
+Stop it with `Ctrl+C` if you only wanted to create the config. Normal agents
+learn the public key from the approved enrollment response, so copying the key
+into each agent config is not required.
 
 Create or edit `C:\ProgramData\TheWatcher\TheWatcherAgent.conf`:
 
 ```text
 THEWATCHER_SERVER=127.0.0.1
-SERVER_PUBLIC_KEY=<server-public-key>
 ```
 
 Start the agent:
@@ -257,7 +268,7 @@ Install the server service:
 Install the agent service:
 
 ```powershell
-.\bazel-bin\agent\TheWatcherAgent.exe --install-service --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf --server-key <server-public-key>
+.\bazel-bin\agent\TheWatcherAgent.exe --install-service --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
 ```
 
 Start and stop services:
@@ -278,6 +289,41 @@ Uninstall services:
 
 Use `--service-name <name>` on install, service mode, and uninstall when
 running multiple instances on one machine.
+
+## Windows EXE Installer
+
+The repository includes an Inno Setup script:
+
+```text
+packaging\windows\TheWatcher.iss
+```
+
+Prerequisites:
+
+- Build `//server:TheWatcherServer` and `//agent:TheWatcherAgent`.
+- Build the dashboard with `npm.cmd run build` if the installer should include
+  static dashboard files.
+- Install Inno Setup 6 on the packaging machine.
+
+Build the installer:
+
+```powershell
+iscc.exe packaging\windows\TheWatcher.iss
+```
+
+The installer writes application files under:
+
+```text
+C:\Program Files\TheWatcher
+```
+
+It creates `C:\ProgramData\TheWatcher`, installs `TheWatcherServer` and
+`TheWatcherAgent` as Windows services using their existing service install
+flags, and removes both services on uninstall. Edit
+`C:\ProgramData\TheWatcher\TheWatcherAgent.conf` after installation so
+`THEWATCHER_SERVER` points at the correct server before starting the agent
+service. The agent writes `SERVER_PUBLIC_KEY` and
+`SERVER_PUBLIC_KEY_FINGERPRINT` after the first approved enrollment.
 
 ## Linux And BSD
 

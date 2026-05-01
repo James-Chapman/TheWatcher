@@ -1,0 +1,258 @@
+{
+  "plan_id": "T1",
+  "title": "TheWatcher — Cross-Platform System Monitoring Platform",
+  "description": "C++20 agent/server platform using ZeroMQ + libsodium for secure transport, MessagePack for wire serialisation, SQLite/PostgreSQL for storage, and a Node.js dashboard. Agents collect CPU, memory, disk, temperature, process, and network metrics and ship them to the server every 30 s. The server exposes a REST API consumed by a Node.js process that pushes updates to browsers over Socket.io.",
+  "status": "in_progress",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "Agent compiles and runs on Linux, Windows, and FreeBSD with Bazel",
+    "Server compiles and runs on the same three platforms",
+    "Agent completes dynamic enrollment and connects to server with CURVE encryption",
+    "Server rejects unapproved agents via ZAP",
+    "Agent sends SystemMetrics every 30 s; server stores to SQLite",
+    "All predefined commands (SET_INTERVAL, SET_PROCESS_LIMIT, RESTART_COLLECTORS, PAUSE, RESUME, GET_STATUS, DISCONNECT) are handled",
+    "REST API returns agents list, latest metrics, and metrics history",
+    "Node.js dashboard shows live data per agent in browser"
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T1.1",
+      "title": "Bazel build system",
+      "description": "MODULE.bazel, WORKSPACE.bazel, .bazelrc, root BUILD.bazel, and all third_party BUILD stubs for libzmq, libsodium, cppzmq, msgpack-cxx, cpp-httplib, sqlite3.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "bazel build //agent:agent succeeds on Linux",
+        "bazel build //server:server succeeds on Linux",
+        "All external deps declared with urls and build_file pointers"
+      ],
+      "tests": { "unit": [], "integration": [] },
+      "implementation_notes": "libzmq: cmake via rules_foreign_cc. libsodium: configure_make (Unix) — Windows requires MSYS2, documented in .bazelrc.example. cppzmq, msgpack-cxx, cpp-httplib: header-only cc_library. sqlite3: single-file amalgamation cc_library.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T1.2",
+      "title": "Common library",
+      "description": "Shared headers: metrics.hpp (structs + MSGPACK_DEFINE_ARRAY + nlohmann to_json/from_json), protocol.hpp (Frame type, encode/decode helpers), commands.hpp (CommandType enum + payload structs), crypto.hpp (CURVE keypair gen via libsodium).",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": ["T1.1"],
+      "acceptance_criteria": [
+        "SystemMetrics round-trips through msgpack without data loss",
+        "Frame encode/decode is symmetric",
+        "nlohmann serialisation produces valid JSON for all metric types"
+      ],
+      "tests": {
+        "unit": ["msgpack round-trip test for SystemMetrics", "Frame encode/decode round-trip"],
+        "integration": []
+      },
+      "implementation_notes": "Files: common/metrics.hpp, common/protocol.hpp, common/commands.hpp, common/crypto.hpp. Use MSGPACK_DEFINE_ARRAY (positional, order fixed). nlohmann ADL: NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE for each struct. crypto.hpp: zmq_curve_keypair wraps libsodium Curve25519.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T1.3",
+      "title": "Agent",
+      "description": "C++20 executable that collects system metrics and ships them to the server.",
+      "status": "complete",
+      "is_leaf": false,
+      "dependencies": ["T1.2"],
+      "acceptance_criteria": [
+        "Agent enrolls, receives approval, then connects with CURVE",
+        "Metrics sent every interval_seconds (default 30)",
+        "All seven commands handled correctly",
+        "Config persisted to agent.json between restarts"
+      ],
+      "tests": { "unit": [], "integration": [] },
+      "implementation_notes": "",
+      "subtasks": [
+        {
+          "id": "T1.3.1",
+          "title": "Collector interface + all six collectors",
+          "description": "Abstract Collector base (collector.hpp). Concrete: cpu, memory, disk, temperature (Linux/BSD stub, Windows skipped), process (top-N configurable), network. Each uses platform ifdefs: Linux=/proc, Windows=Win32 API, BSD=sysctl.",
+          "status": "complete",
+          "is_leaf": true,
+          "dependencies": [],
+          "acceptance_criteria": [
+            "Each collector compiles on all three platforms",
+            "CpuCollector uses two-sample delta for utilisation",
+            "ProcessCollector returns top-N by CPU, N configurable at runtime"
+          ],
+          "tests": { "unit": [], "integration": [] },
+          "implementation_notes": "Files: agent/collectors/collector.hpp + {cpu,memory,disk,temperature,process,network}_collector.{hpp,cpp}. Linux CPU: /proc/stat two-sample. Windows CPU: GetSystemTimes delta. BSD CPU: kern.cp_time sysctl. Disk I/O: /proc/diskstats (Linux), GetDiskFreeSpaceEx + no I/O rate (Windows), statfs (BSD).",
+          "subtasks": [],
+          "open_questions": []
+        },
+        {
+          "id": "T1.3.2",
+          "title": "Enrollment client",
+          "description": "agent/enrollment.hpp+cpp. REQ socket to port 5556 (plain, no CURVE). Sends EnrollRequest msgpack frame. Polls until EnrollResponse.approved == true. On approval, disconnects and signals agent to connect to main port.",
+          "status": "complete",
+          "is_leaf": true,
+          "dependencies": ["T1.3.1"],
+          "acceptance_criteria": [
+            "Enrollment request reaches server and is stored as pending",
+            "Repeated polling with configurable backoff",
+            "Returns on approval or throws on rejection"
+          ],
+          "tests": { "unit": [], "integration": [] },
+          "implementation_notes": "Files: agent/enrollment.hpp, agent/enrollment.cpp. Uses zmq::socket_t(ctx, ZMQ_REQ). Sends Frame{ENROLL_REQUEST, agent_id, ts, pack(EnrollRequest{agent_id, hostname, platform, curve_public_key_z85})}. Polls every 10 s.",
+          "subtasks": [],
+          "open_questions": []
+        },
+        {
+          "id": "T1.3.3",
+          "title": "Agent core + config + main",
+          "description": "agent/config.hpp+cpp (load/save agent.json, generate keypair on first run). agent/agent.hpp+cpp (DEALER socket, jthreads for collection, command listening, heartbeat). agent/main.cpp (CLI flags, config path).",
+          "status": "complete",
+          "is_leaf": true,
+          "dependencies": ["T1.3.2"],
+          "acceptance_criteria": [
+            "Config auto-generated with new UUID and fresh keypair on first run",
+            "Agent reconnects on server restart",
+            "All commands mutate live state without restart"
+          ],
+          "tests": { "unit": [], "integration": [] },
+          "implementation_notes": "Files: agent/config.hpp, agent/config.cpp, agent/agent.hpp, agent/agent.cpp, agent/main.cpp. Use std::jthread + std::stop_token for all background loops. ZMQ identity set to agent_id via zmq::sockopt::routing_id. Heartbeat every 10 s.",
+          "subtasks": [],
+          "open_questions": []
+        }
+      ],
+      "open_questions": []
+    },
+    {
+      "id": "T1.4",
+      "title": "Server",
+      "description": "C++20 executable: ZMQ ROUTER (port 5555, CURVE), ZAP handler for per-agent auth, enrollment REP (port 5556, plain), SQLite store, REST API (cpp-httplib, port 8080).",
+      "status": "complete",
+      "is_leaf": false,
+      "dependencies": ["T1.2"],
+      "acceptance_criteria": [
+        "Unapproved agents rejected at ZAP level",
+        "Metrics stored and queryable via REST",
+        "Commands dispatched to correct agent by ZMQ identity",
+        "PostgreSQL stub compiles and throws 'not implemented'"
+      ],
+      "tests": { "unit": [], "integration": [] },
+      "implementation_notes": "",
+      "subtasks": [
+        {
+          "id": "T1.4.1",
+          "title": "Database abstraction + SQLite + PostgreSQL stub",
+          "description": "server/store.hpp (pure virtual Store interface). server/store_sqlite.hpp+cpp (SQLite3 C API, two tables: agents + metrics). server/store_postgres.hpp+cpp (stub, same interface, throws not_implemented).",
+          "status": "complete",
+          "is_leaf": true,
+          "dependencies": [],
+          "acceptance_criteria": [
+            "Schema created on first run: agents (id, hostname, platform, curve_public_key, status, config_*) + metrics (agent_id, collected_at, metrics_json)",
+            "get_latest_metrics() returns most recent row per agent",
+            "get_metrics_range() supports since/until/limit filters"
+          ],
+          "tests": { "unit": [], "integration": [] },
+          "implementation_notes": "Files: server/store.hpp, server/store_sqlite.{hpp,cpp}, server/store_postgres.{hpp,cpp}. SQLite opened with WAL mode. Metrics stored as JSON TEXT (decoded from msgpack in server). Index on (agent_id, collected_at). Retention enforced by pruning rows older than config.retention_days on startup.",
+          "subtasks": [],
+          "open_questions": []
+        },
+        {
+          "id": "T1.4.2",
+          "title": "ZAP handler",
+          "description": "server/zap_handler.hpp+cpp. Binds inproc://zeromq.zap.01. Runs in std::jthread. Checks connecting agent's 32-byte CURVE public key (z85-encoded) against approved_keys set. Allows dynamic key add/remove without restart.",
+          "status": "complete",
+          "is_leaf": true,
+          "dependencies": [],
+          "acceptance_criteria": [
+            "200 response for keys in approved set, 400 otherwise",
+            "Thread-safe key add/remove via mutex"
+          ],
+          "tests": { "unit": [], "integration": [] },
+          "implementation_notes": "Files: server/zap_handler.hpp, server/zap_handler.cpp. ZAP request frame[6] = 32-byte raw public key. zmq_z85_encode to convert to string for lookup. std::shared_mutex for readers/writers. Methods: add_key(z85), remove_key(z85), has_key(z85).",
+          "subtasks": [],
+          "open_questions": []
+        },
+        {
+          "id": "T1.4.3",
+          "title": "REST API",
+          "description": "server/api.hpp+cpp. cpp-httplib server on port 8080. All responses JSON via nlohmann. Endpoints: GET /api/v1/agents, GET /api/v1/agents/:id, POST /approve/:id, POST /reject/:id, GET /api/v1/agents/:id/metrics, GET /api/v1/agents/:id/latest, POST /api/v1/agents/:id/command, PUT /api/v1/agents/:id/config, GET /api/v1/summary.",
+          "status": "complete",
+          "is_leaf": true,
+          "dependencies": ["T1.4.1"],
+          "acceptance_criteria": [
+            "All endpoints return correct HTTP status codes",
+            "Command endpoint enqueues command for ZMQ dispatch thread",
+            "Config PUT updates DB and sends CONFIG_UPDATE frame to agent"
+          ],
+          "tests": { "unit": [], "integration": [] },
+          "implementation_notes": "Files: server/api.hpp, server/api.cpp. Shared Store* and command queue (std::queue + std::mutex + std::condition_variable) with Server. Command queue used by ZMQ dispatch thread. cpp-httplib runs in its own thread pool.",
+          "subtasks": [],
+          "open_questions": []
+        },
+        {
+          "id": "T1.4.4",
+          "title": "Server core + main",
+          "description": "server/server.hpp+cpp: starts all components (ZAP, ROUTER, enrollment REP, REST API), runs ZMQ poll loop. server/config.hpp+cpp: load server.json. server/main.cpp: CLI.",
+          "status": "complete",
+          "is_leaf": true,
+          "dependencies": ["T1.4.2", "T1.4.3"],
+          "acceptance_criteria": [
+            "Clean shutdown on SIGINT/SIGTERM",
+            "All threads joined on stop()"
+          ],
+          "tests": { "unit": [], "integration": [] },
+          "implementation_notes": "Files: server/server.hpp, server/server.cpp, server/config.hpp, server/config.cpp, server/main.cpp. ZMQ poll loop uses zmq_poll on [router, enrollment_rep] with 100ms timeout to check stop token. Command queue drained after each poll tick.",
+          "subtasks": [],
+          "open_questions": []
+        }
+      ],
+      "open_questions": []
+    },
+    {
+      "id": "T1.5",
+      "title": "Node.js dashboard",
+      "description": "Express server + Socket.io backend. Polls C++ REST API every 5 s, pushes updates to browsers. Browser: plain HTML + Chart.js + Socket.io client.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": ["T1.4"],
+      "acceptance_criteria": [
+        "npm start launches dashboard on port 3000",
+        "Agent list shown with status indicators",
+        "CPU/memory gauges update in real time",
+        "Process table shows top-N",
+        "Historical CPU/memory chart (last hour)"
+      ],
+      "tests": { "unit": [], "integration": [] },
+      "implementation_notes": "Files: dashboard/package.json, dashboard/server.js, dashboard/public/{index.html,style.css,app.js}. Uses axios for HTTP polling. Socket.io emits 'metrics' event with full summary payload. Chart.js for line charts.",
+      "subtasks": [],
+      "open_questions": []
+    }
+  ],
+  "dag": {
+    "nodes": [
+      { "id": "T1.1", "label": "Bazel build system",     "status": "complete", "is_leaf": true  },
+      { "id": "T1.2", "label": "Common library",          "status": "complete", "is_leaf": true  },
+      { "id": "T1.3", "label": "Agent",                   "status": "complete", "is_leaf": false },
+      { "id": "T1.3.1","label": "Collectors",             "status": "complete", "is_leaf": true  },
+      { "id": "T1.3.2","label": "Enrollment client",      "status": "complete", "is_leaf": true  },
+      { "id": "T1.3.3","label": "Agent core + main",      "status": "complete", "is_leaf": true  },
+      { "id": "T1.4", "label": "Server",                  "status": "complete", "is_leaf": false },
+      { "id": "T1.4.1","label": "DB layer",               "status": "complete", "is_leaf": true  },
+      { "id": "T1.4.2","label": "ZAP handler",            "status": "complete", "is_leaf": true  },
+      { "id": "T1.4.3","label": "REST API",               "status": "complete", "is_leaf": true  },
+      { "id": "T1.4.4","label": "Server core + main",     "status": "complete", "is_leaf": true  },
+      { "id": "T1.5", "label": "Node.js dashboard",       "status": "complete", "is_leaf": true  }
+    ],
+    "edges": [
+      { "from": "T1.1",   "to": "T1.2",   "label": "deps available" },
+      { "from": "T1.2",   "to": "T1.3",   "label": "common structs/proto" },
+      { "from": "T1.2",   "to": "T1.4",   "label": "common structs/proto" },
+      { "from": "T1.3.1", "to": "T1.3.2", "label": "collectors ready" },
+      { "from": "T1.3.2", "to": "T1.3.3", "label": "enrollment client" },
+      { "from": "T1.4.1", "to": "T1.4.3", "label": "store interface" },
+      { "from": "T1.4.2", "to": "T1.4.4", "label": "ZAP handler" },
+      { "from": "T1.4.3", "to": "T1.4.4", "label": "REST API" },
+      { "from": "T1.4",   "to": "T1.5",   "label": "REST API available" }
+    ]
+  }
+}

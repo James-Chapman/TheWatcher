@@ -1,0 +1,126 @@
+{
+  "plan_id": "T7",
+  "title": "Agent server config and offline detection",
+  "description": "Add TheWatcherAgent.conf with THEWATCHER_SERVER support, make agents request current config after submitting data, and mark agents offline when the server has not seen them within a configurable threshold.",
+  "status": "completed",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "The default agent config file is named TheWatcherAgent.conf.",
+    "The agent config supports THEWATCHER_SERVER=<ip address or hostname> and derives enrollment/data endpoints from it.",
+    "The agent remains the side that establishes server connections.",
+    "After each metrics submission, the agent asks the server for current config.",
+    "The server replies to config requests with the agent's current interval and process limit settings.",
+    "The server marks approved agents offline when last_seen is older than offline_after_seconds.",
+    "Docs, changelog, and version are updated."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T7.1",
+      "title": "Add agent conf parsing",
+      "description": "Update agent/config.cpp and agent/config.hpp so AgentConfig::default_path returns TheWatcherAgent.conf and load/save support KEY=VALUE format including THEWATCHER_SERVER.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Missing config creates TheWatcherAgent.conf.",
+        "THEWATCHER_SERVER=host derives tcp://host:5555 and tcp://host:5556.",
+        "Existing JSON configs remain readable for compatibility."
+      ],
+      "tests": {
+        "unit": [
+          "GIVEN a conf file with THEWATCHER_SERVER WHEN loaded THEN server and enrollment addresses are derived."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "Keep AgentConfig fields intact. Add helpers in agent/config.cpp for key-value parsing and endpoint derivation while preserving JSON loading if the first non-space character is '{'.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T7.2",
+      "title": "Add config request protocol",
+      "description": "Add CONFIG_REQUEST frames sent by the agent after each METRICS frame, and make the server respond with ConfigUpdate using stored per-agent settings.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [
+        "T7.1"
+      ],
+      "acceptance_criteria": [
+        "Agent sends CONFIG_REQUEST after each metrics frame.",
+        "Server handles CONFIG_REQUEST without polling or dialing agents.",
+        "ConfigUpdate reflects stored collection interval and process limit."
+      ],
+      "tests": {
+        "unit": [
+          "GIVEN a server store record with settings WHEN serialized through API/store THEN settings persist."
+        ],
+        "integration": [
+          "Existing server-agent integration continues passing with config requests in the loop."
+        ]
+      },
+      "implementation_notes": "Extend common/protocol.hpp FrameType. Add collection_interval and process_limit to AgentRecord/SQLite/API. Update API set_interval and set_process_limit to persist settings before queuing commands.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T7.3",
+      "title": "Add offline threshold",
+      "description": "Add ServerConfig::offline_after_seconds with default and server loop maintenance that flips connected=false when an approved agent has not been seen within the threshold.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [
+        "T7.2"
+      ],
+      "acceptance_criteria": [
+        "Server config serializes offline_after_seconds.",
+        "Approved connected agents become connected=false after the threshold.",
+        "Rejected/pending agents are not force-marked online."
+      ],
+      "tests": {
+        "unit": [
+          "GIVEN an old approved connected agent WHEN offline marking runs THEN connected becomes false."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "Prefer a small Server::mark_offline_agents helper so server_lifecycle_test can exercise it without sleeping on a full server loop.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T7.4",
+      "title": "Docs and release bookkeeping",
+      "description": "Update docs, changelog, and MODULE.bazel for the new config file and offline/config query behavior.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [
+        "T7.3"
+      ],
+      "acceptance_criteria": [
+        "Version increments from 0.2.13.",
+        "CHANGELOG records agent config, config request, and offline threshold behavior.",
+        "Docs explain that agents submit data and initiate all connections."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": []
+      },
+      "implementation_notes": "Update docs/dashboard.md and add/update agent config documentation if present.",
+      "subtasks": [],
+      "open_questions": []
+    }
+  ],
+  "dag": {
+    "nodes": [
+      { "id": "T7.1", "label": "Add agent conf parsing", "status": "completed", "is_leaf": true },
+      { "id": "T7.2", "label": "Add config request protocol", "status": "completed", "is_leaf": true },
+      { "id": "T7.3", "label": "Add offline threshold", "status": "completed", "is_leaf": true },
+      { "id": "T7.4", "label": "Docs and release bookkeeping", "status": "completed", "is_leaf": true }
+    ],
+    "edges": [
+      { "from": "T7.1", "to": "T7.2", "label": "Config request uses loaded agent endpoints." },
+      { "from": "T7.2", "to": "T7.3", "label": "Offline state depends on agent inbound frames." },
+      { "from": "T7.3", "to": "T7.4", "label": "Docs describe final behavior." }
+    ]
+  }
+}

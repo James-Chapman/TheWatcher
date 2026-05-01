@@ -1,0 +1,126 @@
+{
+  "plan_id": "T6",
+  "title": "Agent management row actions and layout",
+  "description": "Fix the agent management table header/layout, make maintenance mode explicit and reversible from each row, and hide enrollment decision buttons after approval or rejection.",
+  "status": "completed",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "The agent management table header no longer overlays or collides with row content.",
+    "Approved agents show a row action to enter maintenance when not paused and resume when in maintenance.",
+    "The server exposes maintenance state through /api/agents and updates it from pause/resume acknowledgements.",
+    "Approve/reject buttons are only shown while enrollment is pending.",
+    "Rejected agents show delete as the only useful action.",
+    "Docs, changelog, and version are updated."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T6.1",
+      "title": "Model maintenance state",
+      "description": "Add maintenance to AgentRecord, SQLite persistence, API JSON, dashboard models, and status grouping.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Existing databases migrate a maintenance column.",
+        "Pause ACK sets maintenance=true and resume ACK sets maintenance=false.",
+        "Dashboard status can classify maintenance agents."
+      ],
+      "tests": {
+        "unit": [
+          "GIVEN backend agent records WHEN dashboard rows are built THEN maintenance state is preserved and represented."
+        ],
+        "integration": [
+          "Existing server-agent integration continues passing after schema expansion."
+        ]
+      },
+      "implementation_notes": "Server::handle_router_frame already tracks dispatched command ids; extend the ACK handling for PAUSE and RESUME.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T6.2",
+      "title": "Update row actions",
+      "description": "Add UI action helper tests and update dashboard/src/main.tsx so enrollment actions only render for pending agents, maintenance toggles between pause/resume, and rejected rows only offer delete.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [
+        "T6.1"
+      ],
+      "acceptance_criteria": [
+        "Pending rows show approve and reject.",
+        "Approved/rejected rows do not show approve/reject.",
+        "Approved rows show maintenance or resume based on maintenance state.",
+        "Rejected rows do not show settings or operational commands."
+      ],
+      "tests": {
+        "unit": [
+          "GIVEN pending, approved, maintenance, and rejected agents WHEN UI action helpers are evaluated THEN the expected actions are available."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "Use a small dashboard/src/agentActions.ts helper module to keep behavior testable without DOM tooling.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T6.3",
+      "title": "Fix management table layout",
+      "description": "Adjust CSS for the management table so headers are not sticky over row content, columns have stable widths, and row content wraps cleanly.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [
+        "T6.2"
+      ],
+      "acceptance_criteria": [
+        "Management table uses a stable minimum width for horizontal scrolling.",
+        "Management table header is not sticky over the first data row.",
+        "Button groups and settings controls wrap without colliding with neighboring cells."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "Dashboard TypeScript build succeeds."
+        ]
+      },
+      "implementation_notes": "Scope CSS overrides to .management-table to avoid changing the overview table behavior.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T6.4",
+      "title": "Update release notes and docs",
+      "description": "Bump MODULE.bazel, update CHANGELOG.md, and describe connected/maintenance/enrollment behavior in docs/dashboard.md.",
+      "status": "completed",
+      "is_leaf": true,
+      "dependencies": [
+        "T6.3"
+      ],
+      "acceptance_criteria": [
+        "Version increments from 0.2.12.",
+        "Changelog records layout, maintenance, and enrollment action changes.",
+        "Dashboard docs describe pending-only enrollment controls and maintenance state."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": []
+      },
+      "implementation_notes": "Keep the docs concise and operator-focused.",
+      "subtasks": [],
+      "open_questions": []
+    }
+  ],
+  "dag": {
+    "nodes": [
+      { "id": "T6.1", "label": "Model maintenance state", "status": "completed", "is_leaf": true },
+      { "id": "T6.2", "label": "Update row actions", "status": "completed", "is_leaf": true },
+      { "id": "T6.3", "label": "Fix management table layout", "status": "completed", "is_leaf": true },
+      { "id": "T6.4", "label": "Update release notes and docs", "status": "completed", "is_leaf": true }
+    ],
+    "edges": [
+      { "from": "T6.1", "to": "T6.2", "label": "UI actions need persisted maintenance state." },
+      { "from": "T6.2", "to": "T6.3", "label": "Layout follows final row content." },
+      { "from": "T6.3", "to": "T6.4", "label": "Docs describe final behavior." }
+    ]
+  }
+}

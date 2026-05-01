@@ -2,7 +2,9 @@
 
 #include "common/SingleLog.hpp"
 #include "common/commands.hpp"
+#include "common/crypto.hpp"
 #include "common/metrics.hpp"
+#include "status_engine.hpp"
 
 #include <chrono>
 #include <nlohmann/json.hpp>
@@ -22,6 +24,64 @@ namespace
         return std::chrono::duration_cast<std::chrono::milliseconds>(
                    std::chrono::system_clock::now().time_since_epoch())
             .count();
+    }
+
+    const char* frame_type_name(uint8_t type)
+    {
+        switch (static_cast<FrameType>(type))
+        {
+        case FrameType::HEARTBEAT:
+            return "HEARTBEAT";
+        case FrameType::METRICS:
+            return "METRICS";
+        case FrameType::COMMAND:
+            return "COMMAND";
+        case FrameType::COMMAND_ACK:
+            return "COMMAND_ACK";
+        case FrameType::CONFIG_UPDATE:
+            return "CONFIG_UPDATE";
+        case FrameType::ENROLL_REQUEST:
+            return "ENROLL_REQUEST";
+        case FrameType::ENROLL_RESPONSE:
+            return "ENROLL_RESPONSE";
+        case FrameType::CONFIG_REQUEST:
+            return "CONFIG_REQUEST";
+        }
+        return "UNKNOWN";
+    }
+
+    void log_received_metrics_summary(const std::string& agent_id, const SystemMetrics& metrics, int64_t timestamp_ms,
+                                      std::size_t payload_size)
+    {
+        LOGF_DEBUG(
+            "Received metrics agent_id=%s host=%s platform=%s timestamp_ms=%lld payload_size=%zu uptime_seconds=%.0f "
+            "cpu_usage=%.2f memory_usage=%.2f disks=%zu networks=%zu temperatures=%zu processes=%zu",
+            agent_id.c_str(), metrics.hostname.c_str(), metrics.platform.c_str(), static_cast<long long>(timestamp_ms),
+            payload_size, metrics.uptime_seconds, metrics.cpu.usage_percent, metrics.memory.usage_percent,
+            metrics.disks.size(), metrics.networks.size(), metrics.temperatures.size(), metrics.top_processes.size());
+        if (!metrics.disks.empty())
+        {
+            const auto& disk = metrics.disks.front();
+            LOGF_TRACE("Received first disk agent_id=%s mount=%s fs=%s usage=%.2f total_bytes=%llu used_bytes=%llu",
+                       agent_id.c_str(), disk.mount_point.c_str(), disk.filesystem.c_str(), disk.usage_percent,
+                       static_cast<unsigned long long>(disk.total_bytes),
+                       static_cast<unsigned long long>(disk.used_bytes));
+        }
+        if (!metrics.networks.empty())
+        {
+            const auto& network = metrics.networks.front();
+            LOGF_TRACE("Received first network agent_id=%s interface=%s up=%d recv_per_sec=%llu sent_per_sec=%llu",
+                       agent_id.c_str(), network.interface_name.c_str(), network.is_up ? 1 : 0,
+                       static_cast<unsigned long long>(network.bytes_recv_per_sec),
+                       static_cast<unsigned long long>(network.bytes_sent_per_sec));
+        }
+        if (!metrics.top_processes.empty())
+        {
+            const auto& process = metrics.top_processes.front();
+            LOGF_TRACE("Received top process agent_id=%s pid=%u name=%s cpu=%.2f rss_bytes=%llu", agent_id.c_str(),
+                       process.pid, process.name.c_str(), process.cpu_percent,
+                       static_cast<unsigned long long>(process.memory_rss_bytes));
+        }
     }
 
 } // namespace
@@ -168,8 +228,9 @@ void Server::handle_router_frame(zmq::socket_t& router)
     }
 
     const std::string& agent_id = frame.agent_id;
-    LOGF_TRACE("Received frame agent_id=%s type=%u payload_size=%zu", agent_id.c_str(),
-               static_cast<unsigned>(frame.type), frame.payload.size());
+    LOGF_TRACE("Received frame identity_size=%zu agent_id=%s type=%s raw_type=%u payload_size=%zu frame_timestamp=%lld",
+               identity_msg.size(), agent_id.c_str(), frame_type_name(frame.type), static_cast<unsigned>(frame.type),
+               frame.payload.size(), static_cast<long long>(frame.timestamp_ms));
 
     // Update last_seen timestamp for every inbound frame.
     auto rec = store_->get_agent(agent_id);
@@ -192,12 +253,15 @@ void Server::handle_router_frame(zmq::socket_t& router)
         try
         {
             auto metrics = unpack<SystemMetrics>(frame.payload);
+            log_received_metrics_summary(agent_id, metrics, frame.timestamp_ms, frame.payload.size());
             json j = metrics; // NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE handles this
             MetricsRow row;
             row.agent_id = agent_id;
             row.timestamp_ms = frame.timestamp_ms;
             row.metrics_json = j.dump();
             store_->insert_metrics(row);
+            StatusEngine status_engine(*store_);
+            status_engine.evaluate_metrics(agent_id, metrics, frame.timestamp_ms);
             LOGF_DEBUG("Stored metrics agent_id=%s timestamp_ms=%lld payload_size=%zu", agent_id.c_str(),
                        static_cast<long long>(frame.timestamp_ms), row.metrics_json.size());
         }
@@ -209,7 +273,8 @@ void Server::handle_router_frame(zmq::socket_t& router)
     else if (ftype == FrameType::HEARTBEAT)
     {
         // last_seen already updated; no further action needed.
-        LOGF_TRACE("Heartbeat processed agent_id=%s", agent_id.c_str());
+        LOGF_DEBUG("Heartbeat processed agent_id=%s timestamp_ms=%lld payload_size=%zu", agent_id.c_str(),
+                   static_cast<long long>(frame.timestamp_ms), frame.payload.size());
     }
     else if (ftype == FrameType::CONFIG_REQUEST)
     {
@@ -252,11 +317,29 @@ void Server::handle_router_frame(zmq::socket_t& router)
                         if (command->second == CommandType::DISCONNECT)
                             command_agent->connected = false;
                         else if (command->second == CommandType::PAUSE)
+                        {
                             command_agent->maintenance = true;
+                            command_agent->maintenance_reason = "command";
+                            command_agent->maintenance_until = 0;
+                        }
                         else if (command->second == CommandType::RESUME)
+                        {
                             command_agent->maintenance = false;
+                            command_agent->maintenance_reason = "";
+                            command_agent->maintenance_until = 0;
+                        }
                         command_agent->last_seen = now_ms();
                         store_->upsert_agent(*command_agent);
+                        if (command->second == CommandType::PAUSE)
+                        {
+                            StatusEngine status_engine(*store_);
+                            status_engine.enter_maintenance(agent_id, "command", 0, command_agent->last_seen);
+                        }
+                        else if (command->second == CommandType::RESUME)
+                        {
+                            StatusEngine status_engine(*store_);
+                            status_engine.exit_maintenance(agent_id);
+                        }
                     }
                 }
                 dispatched_commands_.erase(command);
@@ -365,6 +448,12 @@ void Server::handle_enrollment(zmq::socket_t& enroll)
     EnrollResponse resp;
     resp.approved = approved;
     resp.message = approved ? "approved" : "pending approval";
+    if (approved && !config_.server_public_key.empty())
+    {
+        resp.server_public_key_z85 = config_.server_public_key;
+        resp.server_public_key_fingerprint =
+            thewatcher::crypto::server_public_key_fingerprint(config_.server_public_key);
+    }
 
     Frame resp_frame;
     resp_frame.type = static_cast<uint8_t>(FrameType::ENROLL_RESPONSE);

@@ -103,6 +103,8 @@ SCENARIO("AgentConfig survives a save and reload cycle")
         AgentConfig original = AgentConfig::load_or_create(path);
         original.server_address = "tcp://192.168.1.100:5555";
         original.enrollment_address = "tcp://192.168.1.100:5556";
+        original.server_public_key = "abcdefghijklmnopqrstuvwxyz0123456789ABCD";
+        original.server_public_key_fingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         original.collection_interval = 15;
         original.process_limit = 50;
         original.save(path);
@@ -116,6 +118,8 @@ SCENARIO("AgentConfig survives a save and reload cycle")
                 REQUIRE(reloaded.agent_id == original.agent_id);
                 REQUIRE(reloaded.server_address == original.server_address);
                 REQUIRE(reloaded.enrollment_address == original.enrollment_address);
+                REQUIRE(reloaded.server_public_key == original.server_public_key);
+                REQUIRE(reloaded.server_public_key_fingerprint == original.server_public_key_fingerprint);
                 REQUIRE(reloaded.agent_public_key == original.agent_public_key);
                 REQUIRE(reloaded.agent_secret_key == original.agent_secret_key);
                 REQUIRE(reloaded.collection_interval == 15);

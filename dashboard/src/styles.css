@@ -11,9 +11,11 @@
   --dim: oklch(0.35 0.012 240);
   --red: oklch(0.60 0.22 25);
   --orange: oklch(0.68 0.18 55);
+  --amber: oklch(0.68 0.18 55);
   --yellow: oklch(0.82 0.18 95);
   --green: oklch(0.72 0.18 145);
   --blue: oklch(0.62 0.16 240);
+  --grey: oklch(0.48 0.012 240);
 }
 
 *,
@@ -204,8 +206,10 @@ button {
 .green { color: var(--green); }
 .yellow { color: var(--yellow); }
 .orange { color: var(--orange); }
+.amber { color: var(--amber); }
 .red { color: var(--red); }
 .blue { color: var(--blue); }
+.grey { color: var(--grey); }
 
 .table-wrap {
   padding: 0 24px 40px;
@@ -225,6 +229,124 @@ button {
   color: var(--red);
 }
 
+.alert-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+  overflow-x: auto;
+  padding: 10px 24px;
+  border-bottom: 1px solid oklch(0.60 0.22 25 / 0.22);
+  background: oklch(0.60 0.22 25 / 0.08);
+}
+
+.alert-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: color-mix(in oklch, currentColor 12%, var(--bg2));
+}
+
+.alert-card .agent-id {
+  max-width: none;
+}
+
+.alert-card-detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.alert-card-detail strong {
+  color: currentColor;
+  font-weight: 600;
+}
+
+.alert-card-message {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0 8px;
+}
+
+.overview-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.overview-toolbar select {
+  min-width: 160px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg2);
+  color: var(--text);
+  font: inherit;
+  letter-spacing: 0;
+  padding: 0 8px;
+  text-transform: none;
+}
+
+.login-wrap {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-panel {
+  display: grid;
+  gap: 12px;
+  width: min(360px, 100%);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg2);
+}
+
+.login-logo {
+  margin-bottom: 8px;
+}
+
+.login-panel label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.login-panel input {
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg3);
+  color: var(--text);
+  font: inherit;
+  padding: 0 10px;
+}
+
 .table-container {
   overflow-x: auto;
 }
@@ -236,9 +358,6 @@ table {
 }
 
 thead th {
-  position: sticky;
-  top: 48px;
-  z-index: 10;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
@@ -292,6 +411,11 @@ td {
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.section-header span {
+  margin-left: 8px;
+  color: var(--muted);
 }
 
 .server-name {
@@ -371,8 +495,10 @@ td {
 .dot.green { box-shadow: 0 0 8px oklch(0.72 0.18 145 / 0.4); }
 .dot.yellow { box-shadow: 0 0 8px oklch(0.82 0.18 95 / 0.4); }
 .dot.orange { box-shadow: 0 0 8px oklch(0.68 0.18 55 / 0.45); }
+.dot.amber { box-shadow: 0 0 8px oklch(0.68 0.18 55 / 0.45); }
 .dot.red { box-shadow: 0 0 8px oklch(0.60 0.22 25 / 0.5); }
 .dot.blue { box-shadow: 0 0 8px oklch(0.62 0.16 240 / 0.4); }
+.dot.grey { box-shadow: none; opacity: 0.55; }
 
 .small-dot {
   width: 8px;
@@ -507,6 +633,36 @@ td {
   background: var(--bg2);
 }
 
+.management-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.6fr) minmax(480px, 1.4fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.inline-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-form.user-form {
+  grid-template-columns: minmax(110px, 1fr) minmax(110px, 1fr) 110px minmax(120px, 1fr) auto;
+}
+
+.inline-form input,
+.inline-form select {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg2);
+  color: var(--text);
+  font: inherit;
+  padding: 0 8px;
+}
+
 .management-table thead th {
   position: static;
   top: auto;
@@ -519,40 +675,40 @@ td {
 }
 
 .management-table {
-  min-width: 1180px;
+  min-width: 1540px;
   table-layout: fixed;
 }
 
 .management-table th:nth-child(1) {
-  width: 20%;
+  width: 18%;
 }
 
 .management-table th:nth-child(2) {
-  width: 9%;
+  width: 8%;
 }
 
 .management-table th:nth-child(3) {
-  width: 10%;
+  width: 8%;
 }
 
 .management-table th:nth-child(4) {
-  width: 9%;
+  width: 8%;
 }
 
 .management-table th:nth-child(5) {
-  width: 13%;
+  width: 10%;
 }
 
 .management-table th:nth-child(6) {
-  width: 19%;
+  width: 31%;
 }
 
 .management-table th:nth-child(7) {
-  width: 14%;
+  width: 12%;
 }
 
 .management-table th:nth-child(8) {
-  width: 6%;
+  width: 5%;
 }
 
 .management-table th,
@@ -615,7 +771,8 @@ td {
   font-size: 10px;
 }
 
-.settings-grid input {
+.settings-grid input,
+.settings-grid select {
   width: 100%;
   height: 28px;
   border: 1px solid var(--border);
@@ -624,6 +781,38 @@ td {
   color: var(--text);
   font: inherit;
   padding: 0 8px;
+}
+
+.group-settings {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.threshold-settings {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.threshold-settings fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.threshold-settings legend {
+  padding: 0 3px;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: capitalize;
+}
+
+.threshold-settings label {
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  margin-top: 4px;
 }
 
 .state-note {
@@ -680,5 +869,11 @@ td {
   .management-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .management-grid,
+  .inline-form,
+  .inline-form.user-form {
+    grid-template-columns: 1fr;
   }
 }

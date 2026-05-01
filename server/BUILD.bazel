@@ -2,23 +2,62 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 
 package(default_visibility = ["//visibility:private"])
 
-# Library containing all server logic except main(). Tests depend on this.
+cc_library(
+    name = "server_config",
+    srcs = ["config.cpp"],
+    hdrs = ["config.hpp"],
+    linkopts = select({
+        "@platforms//os:windows": ["shell32.lib"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//common",
+        "@libsodium//:libsodium",
+        "@nlohmann_json//:json",
+    ],
+    visibility = [
+        "//integration_tests:__pkg__",
+        "//server_tests:__pkg__",
+    ],
+)
+
+cc_library(
+    name = "server_store",
+    srcs = [
+        "status_engine.cpp",
+        "store_sqlite.cpp",
+    ],
+    hdrs = [
+        "status_engine.hpp",
+        "store.hpp",
+        "store_sqlite.hpp",
+    ],
+    deps = [
+        "//common:common_core",
+        "@cpp_httplib//:httplib",
+        "@libsodium//:libsodium",
+        "@nlohmann_json//:json",
+        "@sqlite3//:sqlite3",
+    ],
+    visibility = [
+        "//integration_tests:__pkg__",
+        "//server_tests:__pkg__",
+    ],
+)
+
+# Library containing server logic except main() and standalone config loading.
+# Tests depend on this.
 cc_library(
     name = "server_lib",
     srcs = [
         "api.cpp",
-        "config.cpp",
         "server.cpp",
-        "store_sqlite.cpp",
         "zap_handler.cpp",
     ],
     hdrs = [
         "api.hpp",
-        "config.hpp",
         "server.hpp",
         "startup_signal.hpp",
-        "store.hpp",
-        "store_sqlite.hpp",
         "zap_handler.hpp",
     ],
     linkopts = select({
@@ -26,6 +65,8 @@ cc_library(
         "//conditions:default": [],
     }),
     deps = [
+        ":server_config",
+        ":server_store",
         "//common",
         "@cppzmq//:cppzmq",
         "@cpp_httplib//:httplib",
@@ -46,6 +87,9 @@ cc_binary(
         "@platforms//os:windows": ["ws2_32.lib", "iphlpapi.lib"],
         "//conditions:default":   ["-lpthread"],
     }),
-    deps = [":server_lib"],
+    deps = [
+        ":server_config",
+        ":server_lib",
+    ],
     visibility = ["//visibility:public"],
 )

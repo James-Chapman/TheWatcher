@@ -1,0 +1,120 @@
+{
+  "plan_id": "T2",
+  "title": "Windows build environment bootstrap",
+  "description": "Create a PowerShell setup script and documentation for installing the Windows and optional WSL/Linux build dependencies used by the Bazel/Bzlmod project. Also fix the Windows libsodium genrule so it does not accidentally invoke the WSL bash.exe stub.",
+  "status": "complete",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "A PowerShell script exists for installing or checking Bazelisk, Git Bash, Visual C++ Build Tools, and optional WSL Linux dependencies.",
+    "The script writes local Bazel environment configuration that prefers Git Bash over the WSL bash.exe stub on Windows.",
+    "Documentation explains requirements, setup, and build/test commands.",
+    "The Bazel build no longer fails on the libsodium version_header genrule because Windows uses cmd.exe for that copy step.",
+    "Project version and changelog are updated."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T2.1",
+      "title": "Fix Windows libsodium genrule shell",
+      "description": "Update third_party/libsodium.BUILD so the version_header genrule uses cmd_bat on Windows and cmd_bash elsewhere.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Windows actions do not need bash.exe for the version_header genrule."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "Run bazel test //... --verbose_failures on Windows."
+        ]
+      },
+      "implementation_notes": "Use genrule cmd_bat and cmd_bash attributes in C:/dev/TheWatcher/third_party/libsodium.BUILD.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T2.2",
+      "title": "Add setup-build-env PowerShell script",
+      "description": "Create scripts/setup-build-env.ps1 to install/check winget-managed tools, configure .bazelrc.user, optionally install WSL Ubuntu and Linux packages, and verify the environment.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T2.1"
+      ],
+      "acceptance_criteria": [
+        "Script supports dry-run style verification through -WhatIf.",
+        "Script can skip WSL for Windows-only build setup.",
+        "Script writes .bazelrc.user with BAZEL_SH and PATH action_env entries."
+      ],
+      "tests": {
+        "unit": [
+          "Parse the PowerShell script with the PowerShell AST parser."
+        ],
+        "integration": [
+          "Run the script with -WhatIf -SkipWsl -NoVerify to validate the non-installing path."
+        ]
+      },
+      "implementation_notes": "Place the script at C:/dev/TheWatcher/scripts/setup-build-env.ps1. Use winget package ids Git.Git, Bazel.Bazelisk, and Microsoft.VisualStudio.2022.BuildTools.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T2.3",
+      "title": "Document build environment",
+      "description": "Add build environment documentation and update existing Bazel notes, 00-plan.md, README, MODULE version, and CHANGELOG.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T2.2"
+      ],
+      "acceptance_criteria": [
+        "Documentation covers requirements, setup command, Windows build command, and optional WSL/Linux build command.",
+        "Changelog records the new version and setup changes."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "Run bazel test //... --verbose_failures after documentation and version updates."
+        ]
+      },
+      "implementation_notes": "Add C:/dev/TheWatcher/docs/build-environment.md and update C:/dev/TheWatcher/docs/bazel-build.md, C:/dev/TheWatcher/README.md, C:/dev/TheWatcher/CHANGELOG.md, C:/dev/TheWatcher/00-plan.md, and C:/dev/TheWatcher/MODULE.bazel.",
+      "subtasks": [],
+      "open_questions": []
+    }
+  ],
+  "dag": {
+    "nodes": [
+      {
+        "id": "T2.1",
+        "label": "Fix Windows libsodium genrule shell",
+        "status": "complete",
+        "is_leaf": true
+      },
+      {
+        "id": "T2.2",
+        "label": "Add setup-build-env PowerShell script",
+        "status": "complete",
+        "is_leaf": true
+      },
+      {
+        "id": "T2.3",
+        "label": "Document build environment",
+        "status": "complete",
+        "is_leaf": true
+      }
+    ],
+    "edges": [
+      {
+        "from": "T2.1",
+        "to": "T2.2",
+        "label": "script should document and configure the shell behavior fixed in Bazel"
+      },
+      {
+        "from": "T2.2",
+        "to": "T2.3",
+        "label": "docs describe script behavior"
+      }
+    ]
+  }
+}

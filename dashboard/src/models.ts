@@ -1,14 +1,6 @@
-export type HealthColor = 'green' | 'yellow' | 'orange' | 'red' | 'blue';
+export type HealthColor = 'green' | 'yellow' | 'amber' | 'red' | 'grey' | 'blue';
 
-export type ComponentKey =
-  | 'cpu'
-  | 'memory'
-  | 'disk'
-  | 'network'
-  | 'temperature'
-  | 'processes'
-  | 'approval'
-  | 'heartbeat';
+export type ComponentKey = 'cpu' | 'memory' | 'disk' | 'network' | 'temperature' | 'processes' | 'heartbeat';
 
 export interface AgentRecord {
   agent_id: string;
@@ -19,10 +11,60 @@ export interface AgentRecord {
   rejected: boolean;
   connected: boolean;
   maintenance: boolean;
+  maintenance_reason: string;
+  maintenance_until: number;
   collection_interval: number;
   process_limit: number;
   first_seen: number;
   last_seen: number;
+  group_ids?: number[];
+  thresholds?: AgentThresholds;
+}
+
+export interface IndicatorThresholds {
+  warning_pct_of_avg: number;
+  degraded_pct_of_avg: number;
+  critical_pct_of_avg: number;
+}
+
+export interface AgentThresholds {
+  cpu: IndicatorThresholds;
+  memory: IndicatorThresholds;
+  disk: IndicatorThresholds;
+  network: IndicatorThresholds;
+}
+
+export interface GroupRecord {
+  group_id: number;
+  name: string;
+  built_in: boolean;
+}
+
+export interface UserRecord {
+  user_id: number;
+  username: string;
+  role: 'admin' | 'operator' | 'viewer';
+  built_in: boolean;
+  disabled: boolean;
+  group_ids: number[];
+}
+
+export interface SessionInfo {
+  username: string;
+  role: 'admin' | 'operator' | 'viewer';
+}
+
+export interface AlertRecord {
+  alert_id: number;
+  agent_id: string;
+  indicator: string;
+  old_status: HealthColor;
+  new_status: HealthColor;
+  message: string;
+  created_at: number;
+  acknowledged_by: string;
+  acknowledged_at: number;
+  deleted_at: number;
 }
 
 export interface CpuMetrics {
@@ -109,11 +151,17 @@ export interface DashboardAgent {
   rejected: boolean;
   connected: boolean;
   maintenance: boolean;
+  maintenanceReason: string;
+  maintenanceUntil: number;
   collectionInterval: number;
   processLimit: number;
+  thresholds: AgentThresholds;
   lastSeen: number;
   uptime: string;
   group: string;
+  groupIds: number[];
+  status: HealthColor;
+  alertColor: HealthColor;
   components: ComponentHealth[];
   metrics?: SystemMetrics;
 }

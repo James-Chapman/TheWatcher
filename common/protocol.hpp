@@ -47,8 +47,10 @@ struct EnrollResponse
 {
     bool approved = false;
     std::string message;
+    std::string server_public_key_z85;
+    std::string server_public_key_fingerprint;
 
-    MSGPACK_DEFINE_ARRAY(approved, message)
+    MSGPACK_DEFINE_ARRAY(approved, message, server_public_key_z85, server_public_key_fingerprint)
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────────

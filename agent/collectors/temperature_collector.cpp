@@ -1,5 +1,7 @@
 #include "temperature_collector.hpp"
 
+#include "common/SingleLog.hpp"
+
 #ifdef __linux__
 #include <filesystem>
 #include <fstream>
@@ -16,6 +18,7 @@ namespace thewatcher::agent
 
 void TemperatureCollector::update(SystemMetrics& metrics)
 {
+    LOG_FUNCTION_TRACE
     namespace fs = std::filesystem;
     metrics.temperatures.clear();
 
@@ -74,6 +77,7 @@ void TemperatureCollector::update(SystemMetrics& metrics)
             metrics.temperatures.push_back(std::move(tm));
         }
     }
+    LOGF_TRACE("Temperature collector updated sensors=%zu", metrics.temperatures.size());
 }
 
 #elif defined(_WIN32)
@@ -82,13 +86,16 @@ void TemperatureCollector::update(SystemMetrics& metrics)
 // Skipped in this implementation.
 void TemperatureCollector::update(SystemMetrics& metrics)
 {
+    LOG_FUNCTION_TRACE
     metrics.temperatures.clear();
+    LOG_DEBUG("Temperature collector is not implemented on Windows without a hardware sensor driver");
 }
 
 #elif defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
 
 void TemperatureCollector::update(SystemMetrics& metrics)
 {
+    LOG_FUNCTION_TRACE
     metrics.temperatures.clear();
 
 #ifdef __FreeBSD__
@@ -113,6 +120,7 @@ void TemperatureCollector::update(SystemMetrics& metrics)
         }
     }
 #endif
+    LOGF_TRACE("Temperature collector updated sensors=%zu", metrics.temperatures.size());
 }
 
 #endif

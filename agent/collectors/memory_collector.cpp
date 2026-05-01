@@ -1,5 +1,7 @@
 #include "memory_collector.hpp"
 
+#include "common/SingleLog.hpp"
+
 #include <cstdint>
 
 #ifdef __linux__
@@ -23,9 +25,13 @@ namespace thewatcher::agent
 
 void MemoryCollector::update(SystemMetrics& metrics)
 {
+    LOG_FUNCTION_TRACE
     std::ifstream f("/proc/meminfo");
     if (!f)
+    {
+        LOG_DEBUG("Memory collector could not open /proc/meminfo");
         return;
+    }
 
     auto& m = metrics.memory;
     std::string key;
@@ -67,16 +73,23 @@ void MemoryCollector::update(SystemMetrics& metrics)
     m.swap_total_bytes = swap_total;
     m.swap_free_bytes = swap_free;
     m.swap_used_bytes = swap_total - swap_free;
+    LOGF_TRACE("Memory collector updated total=%llu used=%llu available=%llu usage=%.2f",
+               static_cast<unsigned long long>(m.total_bytes), static_cast<unsigned long long>(m.used_bytes),
+               static_cast<unsigned long long>(m.available_bytes), m.usage_percent);
 }
 
 #elif defined(_WIN32)
 
 void MemoryCollector::update(SystemMetrics& metrics)
 {
+    LOG_FUNCTION_TRACE
     MEMORYSTATUSEX stat{};
     stat.dwLength = sizeof(stat);
     if (!::GlobalMemoryStatusEx(&stat))
+    {
+        LOG_DEBUG("Memory collector GlobalMemoryStatusEx failed");
         return;
+    }
 
     auto& m = metrics.memory;
     m.total_bytes = stat.ullTotalPhys;
@@ -87,12 +100,16 @@ void MemoryCollector::update(SystemMetrics& metrics)
     m.swap_total_bytes = stat.ullTotalPageFile - stat.ullTotalPhys;
     m.swap_free_bytes = stat.ullAvailPageFile;
     m.swap_used_bytes = m.swap_total_bytes - m.swap_free_bytes;
+    LOGF_TRACE("Memory collector updated total=%llu used=%llu available=%llu usage=%.2f",
+               static_cast<unsigned long long>(m.total_bytes), static_cast<unsigned long long>(m.used_bytes),
+               static_cast<unsigned long long>(m.available_bytes), m.usage_percent);
 }
 
 #elif defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
 
 void MemoryCollector::update(SystemMetrics& metrics)
 {
+    LOG_FUNCTION_TRACE
     auto& m = metrics.memory;
 
     uint64_t hw_physmem = 0;
@@ -129,6 +146,9 @@ void MemoryCollector::update(SystemMetrics& metrics)
     m.swap_total_bytes = swap_total;
     m.swap_used_bytes = swap_used;
     m.swap_free_bytes = swap_total - swap_used;
+    LOGF_TRACE("Memory collector updated total=%llu used=%llu available=%llu usage=%.2f",
+               static_cast<unsigned long long>(m.total_bytes), static_cast<unsigned long long>(m.used_bytes),
+               static_cast<unsigned long long>(m.available_bytes), m.usage_percent);
 }
 
 #endif

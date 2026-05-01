@@ -3,6 +3,137 @@
 All notable changes to TheWatcher are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.28] - 2026-05-01
+
+### Changed
+- Changed Monitoring alert notifications to render each alert as a separate
+  severity-themed item using the known hostname with the agent id as secondary
+  text.
+
+### Fixed
+- Fixed the Monitoring table heading so it no longer floats over row values
+  when alert notifications are visible.
+
+## [0.2.27] - 2026-05-01
+
+### Added
+- Added per-agent CPU, memory, disk, and network warning/degraded/critical
+  percentage thresholds with API and Agent Management controls.
+- Added hostname-plus-agent-id alert display so Alerts matches the Monitoring,
+  Agent Management, and Pending Enrollment identity presentation.
+
+### Changed
+- Status evaluation now uses per-agent threshold overrides before falling back
+  to global threshold settings, while retaining the absolute 70/85/95 caps.
+
+## [0.2.26] - 2026-05-01
+
+### Added
+- Added the server CURVE public key and a pinned BLAKE2b-256 fingerprint to
+  approved enrollment responses.
+- Added agent-side server key pinning so agents persist the approved server key
+  fingerprint and reject later enrollment approvals from a different server key.
+
+### Changed
+- Agents can now learn the server public key during approval, removing the need
+  to pre-populate `SERVER_PUBLIC_KEY` for normal first enrollment.
+
+## [0.2.25] - 2026-05-01
+
+### Added
+- Reintroduced the dashboard heartbeat indicator as the final Monitoring dot.
+- Added agent metric collection summaries, outgoing frame send diagnostics, and
+  server-side inbound metric/heartbeat receive summaries.
+
+### Changed
+- Renamed the dashboard Overview page to Monitoring in the operator UI and
+  documentation.
+
+## [0.2.24] - 2026-05-01
+
+### Changed
+- Changed SingleLog file flushing so trace, debug, and info entries flush every
+  100 file log lines while notice, warning, error, and critical entries flush
+  immediately.
+
+## [0.2.23] - 2026-05-01
+
+### Added
+- Added grouped Overview rendering so approved agents are listed under their
+  assigned group names, with an Overview group filter and an Ungrouped section.
+- Added collector-level trace/debug logging for CPU, memory, disk, network,
+  process, and temperature collection updates.
+- Added BDD coverage for Overview grouping/filtering and live SingleLog file
+  flushing.
+
+### Changed
+- SingleLog now periodically flushes file output so agent log files show
+  INFO/DEBUG/TRACE records while the agent is still running.
+
+## [0.2.22] - 2026-05-01
+
+### Fixed
+- Fixed an API route lifetime bug where callbacks captured stack-local helper
+  lambdas from route setup, causing the server-agent integration test to crash
+  with SIGSEGV on authenticated routes after login.
+
+## [0.2.21] - 2026-05-01
+
+### Changed
+- Raised Bazel C++ compiler warnings to the highest configured warning level:
+  `-Wall -Wextra -Wpedantic` for Linux, macOS, and BSD builds and `/Wall` for
+  MSVC.
+
+## [0.2.20] - 2026-05-01
+
+### Fixed
+- Updated the server-agent integration test to authenticate through
+  `/api/login`, persist the returned session cookie, and query pending
+  enrollments through `/api/pending-enrollments`.
+- Removed the workspace root `tmp` directory created during local server
+  debugging because it collides with a `rules_foreign_cc` generated file named
+  `tmp` during Windows Bazel builds.
+
+### Documentation
+- Documented the Windows Bazel failure mode caused by a root-level `tmp`
+  directory.
+
+## [0.2.19] - 2026-05-01
+
+### Added
+- Added persistent operations schema for groups, users, sessions, agent-group
+  membership, status history, alerts, and server settings.
+- Added SQLite-backed login with the default admin account
+  `thewatcher` / `look_at_me`, libsodium password hashing, and HTTP-only
+  session cookies.
+- Added approved-agent and pending-enrollment API separation, admin approval
+  with group assignment, and RBAC gates for viewer/operator/admin actions.
+- Added status transition evaluation with five-minute-average thresholds,
+  worsening-only alert generation, alert acknowledgement, alert soft delete,
+  and maintenance alert clearing.
+- Added dashboard login, pending enrollments, alerts, users/groups, status,
+  alert dot, no-data grey, amber degraded, and maintenance blue workflows.
+- Added an Inno Setup Windows EXE installer script for installing server and
+  agent binaries under `C:\Program Files\TheWatcher`.
+- Added BDD coverage for operations persistence and status/alert transitions.
+
+### Changed
+- Split Bazel persistence/status tests away from the full server library so
+  store and status engine tests do not pull the ZeroMQ build path.
+
+## [0.2.18] - 2026-05-01
+
+### Fixed
+- Resolved relative server SQLite `db_path` values beside the active server
+  config file so enrolled agents persist across restarts launched from
+  different working directories.
+
+### Added
+- Added a dev-task-planner implementation plan for alert history, pending
+  enrollments, RBAC, authentication, dashboard workflow changes, and Windows
+  EXE installers.
+- Added BDD coverage for server config database path resolution.
+
 ## [0.2.17] - 2026-05-01
 
 ### Changed

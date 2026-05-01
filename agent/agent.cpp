@@ -19,6 +19,65 @@ namespace thewatcher::agent
 
 namespace proto = thewatcher::proto; // file-scope alias is C++11-compatible
 
+namespace
+{
+    const char* frame_type_name(uint8_t type)
+    {
+        switch (static_cast<proto::FrameType>(type))
+        {
+        case proto::FrameType::HEARTBEAT:
+            return "HEARTBEAT";
+        case proto::FrameType::METRICS:
+            return "METRICS";
+        case proto::FrameType::COMMAND:
+            return "COMMAND";
+        case proto::FrameType::COMMAND_ACK:
+            return "COMMAND_ACK";
+        case proto::FrameType::CONFIG_UPDATE:
+            return "CONFIG_UPDATE";
+        case proto::FrameType::ENROLL_REQUEST:
+            return "ENROLL_REQUEST";
+        case proto::FrameType::ENROLL_RESPONSE:
+            return "ENROLL_RESPONSE";
+        case proto::FrameType::CONFIG_REQUEST:
+            return "CONFIG_REQUEST";
+        }
+        return "UNKNOWN";
+    }
+
+    void log_metrics_summary(const char* prefix, const std::string& agent_id, const SystemMetrics& metrics)
+    {
+        LOGF_DEBUG("%s agent_id=%s host=%s platform=%s uptime_seconds=%.0f cpu_usage=%.2f memory_usage=%.2f disks=%zu "
+                   "networks=%zu temperatures=%zu processes=%zu",
+                   prefix, agent_id.c_str(), metrics.hostname.c_str(), metrics.platform.c_str(), metrics.uptime_seconds,
+                   metrics.cpu.usage_percent, metrics.memory.usage_percent, metrics.disks.size(),
+                   metrics.networks.size(), metrics.temperatures.size(), metrics.top_processes.size());
+        if (!metrics.disks.empty())
+        {
+            const auto& disk = metrics.disks.front();
+            LOGF_TRACE("First collected disk agent_id=%s mount=%s fs=%s usage=%.2f total_bytes=%llu used_bytes=%llu",
+                       agent_id.c_str(), disk.mount_point.c_str(), disk.filesystem.c_str(), disk.usage_percent,
+                       static_cast<unsigned long long>(disk.total_bytes),
+                       static_cast<unsigned long long>(disk.used_bytes));
+        }
+        if (!metrics.networks.empty())
+        {
+            const auto& network = metrics.networks.front();
+            LOGF_TRACE("First collected network agent_id=%s interface=%s up=%d recv_per_sec=%llu sent_per_sec=%llu",
+                       agent_id.c_str(), network.interface_name.c_str(), network.is_up ? 1 : 0,
+                       static_cast<unsigned long long>(network.bytes_recv_per_sec),
+                       static_cast<unsigned long long>(network.bytes_sent_per_sec));
+        }
+        if (!metrics.top_processes.empty())
+        {
+            const auto& process = metrics.top_processes.front();
+            LOGF_TRACE("Top collected process agent_id=%s pid=%u name=%s cpu=%.2f rss_bytes=%llu", agent_id.c_str(),
+                       process.pid, process.name.c_str(), process.cpu_percent,
+                       static_cast<unsigned long long>(process.memory_rss_bytes));
+        }
+    }
+} // namespace
+
 // ── Construction ──────────────────────────────────────────────────────────────
 
 Agent::Agent(AgentConfig config)
@@ -57,6 +116,11 @@ void Agent::start()
         std::atomic<bool> stop_enroll{false};
         LOGF_INFO("Starting enrollment with %s", config_.enrollment_address.c_str());
         enroll(config_, ctx_, stop_enroll);
+        if (!config_.config_path.empty())
+        {
+            LOGF_DEBUG("Persisting enrolled server key pin to %s", config_.config_path.c_str());
+            config_.save(config_.config_path);
+        }
         LOGF_INFO("Enrollment approved - connecting to %s", config_.server_address.c_str());
     }
 
@@ -114,6 +178,18 @@ void Agent::io_loop(std::stop_token st)
             {
                 auto payload = std::move(outbox_.front());
                 outbox_.pop();
+                try
+                {
+                    const auto frame = proto::decode_frame(payload.data(), payload.size());
+                    LOGF_TRACE("Sending frame agent_id=%s type=%s encoded_size=%zu payload_size=%zu",
+                               frame.agent_id.c_str(), frame_type_name(frame.type), payload.size(),
+                               frame.payload.size());
+                }
+                catch (const std::exception& e)
+                {
+                    LOGF_WARNING("Sending undecodable queued frame encoded_size=%zu error=%s", payload.size(),
+                                 e.what());
+                }
                 dealer_.send(zmq::message_t{}, zmq::send_flags::sndmore);
                 dealer_.send(zmq::message_t(payload.data(), payload.size()), zmq::send_flags::none);
             }
@@ -149,6 +225,7 @@ void Agent::collection_loop(std::stop_token st)
             try
             {
                 auto metrics = collect_metrics();
+                log_metrics_summary("Collected metrics", config_.agent_id, metrics);
 
                 proto::Frame f;
                 f.type = static_cast<uint8_t>(proto::FrameType::METRICS);
@@ -157,15 +234,21 @@ void Agent::collection_loop(std::stop_token st)
                                      std::chrono::system_clock::now().time_since_epoch())
                                      .count();
                 f.payload = proto::pack(metrics);
-                enqueue(proto::encode_frame(f));
-                LOGF_TRACE("Queued metrics frame timestamp=%lld", static_cast<long long>(f.timestamp_ms));
+                auto encoded_metrics = proto::encode_frame(f);
+                LOGF_DEBUG("Queueing metrics frame agent_id=%s timestamp=%lld payload_size=%zu encoded_size=%zu",
+                           f.agent_id.c_str(), static_cast<long long>(f.timestamp_ms), f.payload.size(),
+                           encoded_metrics.size());
+                enqueue(std::move(encoded_metrics));
 
                 proto::Frame cfg_request;
                 cfg_request.type = static_cast<uint8_t>(proto::FrameType::CONFIG_REQUEST);
                 cfg_request.agent_id = config_.agent_id;
                 cfg_request.timestamp_ms = f.timestamp_ms;
-                enqueue(proto::encode_frame(cfg_request));
-                LOGF_TRACE("Queued config request timestamp=%lld", static_cast<long long>(cfg_request.timestamp_ms));
+                auto encoded_config_request = proto::encode_frame(cfg_request);
+                LOGF_TRACE("Queued config request agent_id=%s timestamp=%lld encoded_size=%zu",
+                           cfg_request.agent_id.c_str(), static_cast<long long>(cfg_request.timestamp_ms),
+                           encoded_config_request.size());
+                enqueue(std::move(encoded_config_request));
             }
             catch (const std::exception& e)
             {
@@ -193,7 +276,10 @@ void Agent::heartbeat_loop(std::stop_token st)
             f.timestamp_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
                                  .count();
-            enqueue(proto::encode_frame(f));
+            auto encoded_heartbeat = proto::encode_frame(f);
+            LOGF_TRACE("Queued heartbeat frame agent_id=%s timestamp=%lld encoded_size=%zu", f.agent_id.c_str(),
+                       static_cast<long long>(f.timestamp_ms), encoded_heartbeat.size());
+            enqueue(std::move(encoded_heartbeat));
         }
 
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
@@ -207,6 +293,9 @@ void Agent::heartbeat_loop(std::stop_token st)
 void Agent::enqueue(std::vector<uint8_t> frame)
 {
     std::lock_guard<std::mutex> lock(outbox_mutex_);
+    const auto pending_before = outbox_.size();
+    LOGF_TRACE("Outbox enqueue encoded_size=%zu pending_before=%zu pending_after=%zu", frame.size(), pending_before,
+               pending_before + 1);
     outbox_.push(std::move(frame));
 }
 
@@ -219,6 +308,9 @@ SystemMetrics Agent::collect_metrics()
     {
         LOGF_TRACE("Updating collector: %s", std::string(c->name()).c_str());
         c->update(m);
+        LOGF_TRACE("Collector %s snapshot cpu=%.2f memory=%.2f disks=%zu networks=%zu temperatures=%zu processes=%zu",
+                   std::string(c->name()).c_str(), m.cpu.usage_percent, m.memory.usage_percent, m.disks.size(),
+                   m.networks.size(), m.temperatures.size(), m.top_processes.size());
     }
     return m;
 }

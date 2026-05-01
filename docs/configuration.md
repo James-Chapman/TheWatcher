@@ -43,15 +43,84 @@ Options:
 | `enrollment_address` | `tcp://*:5556` | ZeroMQ REP endpoint for plaintext enrollment requests. |
 | `api_host` | `0.0.0.0` | HTTP REST API bind host. |
 | `api_port` | `8080` | HTTP REST API port consumed by the dashboard. |
-| `db_path` | `thewatcher.db` | SQLite database path when `db_type` is `sqlite`. Relative paths resolve from the server working directory. |
+| `db_path` | `thewatcher.db` | SQLite database path when `db_type` is `sqlite`. Relative paths resolve beside the active server config file so server restarts from different working directories keep using the same database. |
 | `db_type` | `sqlite` | Storage backend. `sqlite` is implemented. `postgres` is reserved in config but not implemented by the current build. |
 | `postgres_dsn` | empty | Reserved for future PostgreSQL support. |
 | `offline_after_seconds` | `60` | Approved connected agents are marked disconnected when `last_seen` is older than this number of seconds. Set `0` or a negative value to disable automatic offline marking. |
-| `server_public_key` | generated | Server CURVE public key. Give this to agents as `SERVER_PUBLIC_KEY` or `--server-key`. |
+| `server_public_key` | generated | Server CURVE public key. Approved enrollment responses include this key and its fingerprint so agents can learn and pin it. |
 | `server_secret_key` | generated | Server CURVE secret key. Keep this private. |
 
 If `server_public_key` is empty, the server does not enable CURVE on the data
 socket. The default generated config enables CURVE.
+
+## Server Database Settings
+
+The server also stores runtime settings in SQLite table `server_settings`.
+These values are changed through API or direct administrative DB updates until
+dedicated dashboard controls exist. Global threshold settings are fallbacks for
+agents that still have default per-agent thresholds.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `threshold.<indicator>.warning_pct_of_avg` | `125.0` | Warning threshold as a percentage of the indicator's five-minute average. |
+| `threshold.<indicator>.degraded_pct_of_avg` | `150.0` | Degraded threshold as a percentage of the indicator's five-minute average. |
+| `threshold.<indicator>.critical_pct_of_avg` | `200.0` | Critical threshold as a percentage of the indicator's five-minute average. |
+| `notifications.webhook_url` | empty | Optional HTTP webhook URL. The server posts alert JSON when an alert is generated. `http://` URLs are supported by the current build. |
+
+Supported indicator names are `cpu`, `memory`, `disk`, `network`,
+`temperature`, and `processes`.
+
+CPU, memory, disk, and network also have per-agent thresholds stored on each
+agent row and editable from Agent Management. Per-agent values use the same
+percentage-of-five-minute-average meaning:
+
+| Per-agent field | Default | Description |
+| --- | --- | --- |
+| `<indicator>.warning_pct_of_avg` | `125.0` | Green to yellow threshold for that agent and indicator. |
+| `<indicator>.degraded_pct_of_avg` | `150.0` | Yellow to amber threshold for that agent and indicator. |
+| `<indicator>.critical_pct_of_avg` | `200.0` | Amber to red threshold for that agent and indicator. |
+
+Per-agent thresholds must be ordered `warning < degraded < critical`. The
+status engine still applies the absolute caps after percentage comparison:
+values at or above `70` are at least yellow, values at or above `85` are at
+least amber, and values at or above `95` are red.
+
+Status colors:
+
+| Color | Meaning |
+| --- | --- |
+| Green | Healthy |
+| Yellow | Warning |
+| Amber | Degraded |
+| Red | Critical or failure |
+| Grey | No data |
+| Blue | Maintenance |
+
+## Authentication And RBAC
+
+The first SQLite database initialization creates:
+
+```text
+username: thewatcher
+password: look_at_me
+role: admin
+group: Admins
+```
+
+Passwords are stored as libsodium password hashes, not plaintext. Sessions are
+stored in SQLite and returned to the browser as HTTP-only `tw_session` cookies.
+
+Roles:
+
+| Role | Permissions |
+| --- | --- |
+| `viewer` | View approved agents, metrics, groups, and alerts. |
+| `operator` | Viewer permissions plus maintenance, settings, commands, alert acknowledgement, alert deletion, and agent deletion. |
+| `admin` | Operator permissions plus pending enrollment approval/rejection and user/group management. |
+
+Users can belong to multiple groups. Agents are assigned to groups on approval
+and admins can replace an approved agent's group membership from the Agent
+Management page.
 
 ## Agent Config
 
@@ -73,7 +142,6 @@ Minimal example:
 
 ```text
 THEWATCHER_SERVER=monitor.example.internal
-SERVER_PUBLIC_KEY=<server-public-key>
 ```
 
 Full example:
@@ -83,6 +151,7 @@ THEWATCHER_SERVER=monitor.example.internal
 SERVER_ADDRESS=tcp://monitor.example.internal:5555
 ENROLLMENT_ADDRESS=tcp://monitor.example.internal:5556
 SERVER_PUBLIC_KEY=<40-character-z85-server-public-key>
+SERVER_PUBLIC_KEY_FINGERPRINT=<64-character-hex-fingerprint>
 AGENT_ID=<generated-agent-id>
 AGENT_PUBLIC_KEY=<40-character-z85-agent-public-key>
 AGENT_SECRET_KEY=<40-character-z85-agent-secret-key>
@@ -97,7 +166,8 @@ Options:
 | `THEWATCHER_SERVER` | `127.0.0.1` derived defaults | Hostname or IP of the server. The agent derives `tcp://<host>:5555` for data and `tcp://<host>:5556` for enrollment. |
 | `SERVER_ADDRESS` | `tcp://127.0.0.1:5555` | Explicit data endpoint. Overrides the endpoint derived from `THEWATCHER_SERVER`. |
 | `ENROLLMENT_ADDRESS` | `tcp://127.0.0.1:5556` | Explicit enrollment endpoint. Overrides the endpoint derived from `THEWATCHER_SERVER`. |
-| `SERVER_PUBLIC_KEY` | empty | Server CURVE public key. Required when the server data socket has CURVE enabled. |
+| `SERVER_PUBLIC_KEY` | empty | Server CURVE public key. Normal first enrollment learns this from the approved enrollment response. Set it manually only when pre-pinning a known server key or using `--server-key`. |
+| `SERVER_PUBLIC_KEY_FINGERPRINT` | empty | BLAKE2b-256 hex fingerprint of `SERVER_PUBLIC_KEY`. The agent writes this after approval and rejects future approved enrollment responses whose fingerprint does not match. |
 | `AGENT_ID` | generated UUID | Stable agent identity used for enrollment, routing, and dashboard rows. |
 | `AGENT_PUBLIC_KEY` | generated | Agent CURVE public key sent during enrollment and approved by the server. |
 | `AGENT_SECRET_KEY` | generated | Agent CURVE secret key. Keep this private. |
@@ -122,6 +192,22 @@ Agent command-line options override loaded config values for that process:
 ```
 
 `--genkey` prints a new CURVE keypair and exits.
+
+## Enrollment Key Pinning
+
+Approved enrollment responses include:
+
+```text
+server_public_key_z85
+server_public_key_fingerprint
+```
+
+The fingerprint is a BLAKE2b-256 hex digest of the Z85 server public key. On
+first approval, the agent stores both values in `TheWatcherAgent.conf` before
+opening the encrypted data socket. On later approvals, an existing
+`SERVER_PUBLIC_KEY_FINGERPRINT` is treated as a pinned identity; if the server
+returns a different fingerprint, enrollment fails instead of silently trusting a
+new key.
 
 ## Server CLI Options
 

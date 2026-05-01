@@ -1,0 +1,154 @@
+{
+  "plan_id": "T4",
+  "title": "Agent enrollment management",
+  "description": "Add persistent rejected enrollment state, server API actions, and a dashboard agent management view for approving, rejecting, configuring, and deleting agents.",
+  "status": "complete",
+  "iteration": 1,
+  "acceptance_criteria": [
+    "Pending agents can be approved from the dashboard and the existing approval path sends enrollment acceptance on the next agent enrollment attempt.",
+    "Pending agents can be rejected from the dashboard and later enrollment attempts receive a rejected enrollment response.",
+    "Approved agents can be configured through existing command endpoints from an agent management page.",
+    "Agents can be deleted from the management page.",
+    "Bazel binary targets are named TheWatcherServer and TheWatcherAgent.",
+    "BDD-style tests cover the rejected enrollment persistence and dashboard API calls."
+  ],
+  "open_questions": [],
+  "tasks": [
+    {
+      "id": "T4.1",
+      "title": "Persist rejected enrollment state",
+      "description": "Extend AgentRecord and SqliteStore in server/store.hpp, server/store_sqlite.hpp, and server/store_sqlite.cpp with a rejected flag and reject_agent operation.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [],
+      "acceptance_criteria": [
+        "Rejected agents are persisted separately from approved agents.",
+        "Approving an agent clears rejected state."
+      ],
+      "tests": {
+        "unit": [
+          "GIVEN a stored pending agent WHEN reject_agent is called THEN the agent remains unapproved and is marked rejected."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "server_tests/store_test.cpp exercises SqliteStore with a temporary database.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T4.2",
+      "title": "Expose reject action and enrollment response",
+      "description": "Add POST /api/agents/:id/reject in server/api.cpp and have server/server.cpp return a rejected enrollment response for rejected agents.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T4.1"
+      ],
+      "acceptance_criteria": [
+        "Rejecting an agent clears any ZAP approval key and marks the record rejected.",
+        "Rejected agents do not remain permanently pending on later enrollment attempts."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "SqliteStore rejection state is covered; enrollment path is verified by targeted build and runtime behavior."
+        ]
+      },
+      "implementation_notes": "Existing enrollment handling in Server::enrollment_loop sends EnrollResponse errors through send_error.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T4.3",
+      "title": "Build dashboard agent management view",
+      "description": "Add API helpers in dashboard/src/api.ts and a management view in dashboard/src/main.tsx for enrollment actions, settings commands, operational commands, and deletion.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T4.2"
+      ],
+      "acceptance_criteria": [
+        "Dashboard has an Agents view reachable from top navigation.",
+        "Each row exposes approve, reject, poll interval, process limit, pause, resume, restart, status, and delete actions."
+      ],
+      "tests": {
+        "unit": [
+          "GIVEN an API helper WHEN called THEN it sends the expected HTTP method, path, and body."
+        ],
+        "integration": []
+      },
+      "implementation_notes": "dashboard/src/api.test.ts covers fetch calls; dashboard/src/status.test.ts covers rejected grouping.",
+      "subtasks": [],
+      "open_questions": []
+    },
+    {
+      "id": "T4.4",
+      "title": "Rename executable targets and update docs",
+      "description": "Rename Bazel cc_binary targets in server/BUILD.bazel and agent/BUILD.bazel, update service/dashboard docs, bump MODULE.bazel version, and add CHANGELOG.md notes.",
+      "status": "complete",
+      "is_leaf": true,
+      "dependencies": [
+        "T4.3"
+      ],
+      "acceptance_criteria": [
+        "Build commands use //server:TheWatcherServer and //agent:TheWatcherAgent.",
+        "Docs describe the new agent management view and API actions.",
+        "Version and changelog record the change."
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [
+          "Build renamed server and agent targets."
+        ]
+      },
+      "implementation_notes": "docs/service-installation.md contains executable paths used by operators.",
+      "subtasks": [],
+      "open_questions": []
+    }
+  ],
+  "dag": {
+    "nodes": [
+      {
+        "id": "T4.1",
+        "label": "Persist rejected enrollment state",
+        "status": "complete",
+        "is_leaf": true
+      },
+      {
+        "id": "T4.2",
+        "label": "Expose reject action and enrollment response",
+        "status": "complete",
+        "is_leaf": true
+      },
+      {
+        "id": "T4.3",
+        "label": "Build dashboard agent management view",
+        "status": "complete",
+        "is_leaf": true
+      },
+      {
+        "id": "T4.4",
+        "label": "Rename executable targets and update docs",
+        "status": "complete",
+        "is_leaf": true
+      }
+    ],
+    "edges": [
+      {
+        "from": "T4.1",
+        "to": "T4.2",
+        "label": "API and enrollment behavior depend on stored rejection state."
+      },
+      {
+        "from": "T4.2",
+        "to": "T4.3",
+        "label": "Dashboard actions call server API endpoints."
+      },
+      {
+        "from": "T4.3",
+        "to": "T4.4",
+        "label": "Docs describe final operator workflow."
+      }
+    ]
+  }
+}

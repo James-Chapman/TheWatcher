@@ -1,7 +1,9 @@
 #pragma once
 
 #include <array>
+#include <iomanip>
 #include <sodium.h>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <zmq.h>
@@ -63,6 +65,20 @@ inline std::string z85_encode(const std::array<unsigned char, 32>& raw)
         throw std::runtime_error("z85 encode failed");
     z85.resize(40);
     return z85;
+}
+
+inline std::string server_public_key_fingerprint(const std::string& public_key_z85)
+{
+    init();
+    std::array<unsigned char, crypto_generichash_BYTES> digest{};
+    crypto_generichash(digest.data(), digest.size(), reinterpret_cast<const unsigned char*>(public_key_z85.data()),
+                       public_key_z85.size(), nullptr, 0);
+
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (const auto byte : digest)
+        out << std::setw(2) << static_cast<unsigned>(byte);
+    return out.str();
 }
 
 } // namespace thewatcher::crypto

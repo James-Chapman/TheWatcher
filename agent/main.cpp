@@ -123,7 +123,7 @@ int main(int argc, char* argv[])
     }
 
     fs::path cfg_path = config_path.empty() ? AgentConfig::default_path() : fs::path(config_path);
-    auto log_path = log_path_for_config(cfg_path, "agent.log");
+    auto log_path = log_path_for_config(cfg_path, "TheWatcherAgent.log");
     auto& logger = thewatcher::logging::SingleLog::GetInstance();
     logger.SetConsoleLogLevel(thewatcher::logging::LogLevel::L_INFO);
     logger.SetFileLogLevel(thewatcher::logging::LogLevel::L_TRACE);

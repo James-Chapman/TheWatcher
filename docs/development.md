@@ -29,6 +29,7 @@ third_party/        Bazel BUILD wrappers for archive-backed dependencies.
 .\scripts\bazel.cmd build //server:TheWatcherServer //agent:TheWatcherAgent --verbose_failures
 .\scripts\bazel.cmd test //agent_tests:config_test --verbose_failures
 .\scripts\bazel.cmd test //server_tests:store_test --verbose_failures
+.\scripts\bazel.cmd test //server_tests:status_engine_test --verbose_failures
 .\scripts\bazel.cmd test //server_tests:server_lifecycle_test --verbose_failures
 .\scripts\bazel.cmd test //server_tests:zap_handler_test --verbose_failures
 .\scripts\bazel.cmd test //integration_tests:server_agent_integration_test --verbose_failures --test_output=errors
@@ -55,6 +56,13 @@ npm.cmd test
 - Add tests before behavior changes.
 - Update docs for every behavior or workflow change.
 - Bump `MODULE.bazel` version and update `CHANGELOG.md` for each change set.
+- Keep persistence/status tests on `//server:server_store` when they do not
+  need ZeroMQ. Use `//server:server_lib` only for tests that exercise the full
+  server runtime.
+- Keep `httplib` route callbacks self-contained. Shared authorization,
+  session, and command helpers should live on `ApiServer` and callbacks should
+  capture `this` or values, not references to stack-local helper lambdas from
+  route setup.
 
 ## Adding A New Collector End To End
 
@@ -102,6 +110,8 @@ usage, services, packages, or custom application health.
    Update `dashboard/src/models.ts` for the API shape, `dashboard/src/status.ts`
    for health classification, and `dashboard/src/main.tsx` if the UI needs new
    controls or columns.
+   If the new collector becomes an alerting indicator, also update
+   `server/status_engine.cpp` and `server_tests/status_engine_test.cpp`.
 
 7. Add tests.
 

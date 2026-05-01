@@ -1,5 +1,7 @@
 #include "disk_collector.hpp"
 
+#include "common/SingleLog.hpp"
+
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -147,6 +149,7 @@ namespace
 
 void DiskCollector::update(SystemMetrics& metrics)
 {
+    LOG_FUNCTION_TRACE
     auto disks = read_mounts();
 
 #ifdef __linux__
@@ -169,6 +172,7 @@ void DiskCollector::update(SystemMetrics& metrics)
     prev_io_ = std::move(current_io);
 #endif
 
+    LOGF_TRACE("Disk collector updated mounts=%zu", disks.size());
     metrics.disks = std::move(disks);
 }
 

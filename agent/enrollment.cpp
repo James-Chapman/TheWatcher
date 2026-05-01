@@ -1,6 +1,7 @@
 #include "enrollment.hpp"
 
 #include "common/SingleLog.hpp"
+#include "common/crypto.hpp"
 #include "common/protocol.hpp"
 #include "config.hpp"
 
@@ -118,7 +119,8 @@ double get_uptime_seconds()
 #endif
 }
 
-void enroll(AgentConfig& config, zmq::context_t& ctx, const std::atomic<bool>& stop_flag, int poll_interval_seconds, int recv_timeout_ms)
+void enroll(AgentConfig& config, zmq::context_t& ctx, const std::atomic<bool>& stop_flag, int poll_interval_seconds,
+            int recv_timeout_ms)
 {
     LOG_FUNCTION_TRACE
     LOGF_INFO("Enrollment started agent_id=%s endpoint=%s poll_interval=%d", config.agent_id.c_str(),
@@ -178,6 +180,39 @@ void enroll(AgentConfig& config, zmq::context_t& ctx, const std::atomic<bool>& s
 
         if (er_resp.approved)
         {
+            if (er_resp.server_public_key_z85.empty() && er_resp.server_public_key_fingerprint.empty())
+            {
+                LOG_WARNING(
+                    "Approved enrollment response did not include server key; data socket encryption remains disabled");
+                LOG_INFO("Enrollment approved");
+                return;
+            }
+            if (er_resp.server_public_key_z85.empty() || er_resp.server_public_key_fingerprint.empty())
+            {
+                LOG_WARNING("Approved enrollment response did not include server key and fingerprint");
+                throw std::runtime_error("Approved enrollment response missing server key pin");
+            }
+
+            const auto calculated_fingerprint =
+                thewatcher::crypto::server_public_key_fingerprint(er_resp.server_public_key_z85);
+            if (calculated_fingerprint != er_resp.server_public_key_fingerprint)
+            {
+                LOGF_WARNING("Enrollment server key fingerprint mismatch calculated=%s received=%s",
+                             calculated_fingerprint.c_str(), er_resp.server_public_key_fingerprint.c_str());
+                throw std::runtime_error("Enrollment server key fingerprint does not match public key");
+            }
+
+            if (!config.server_public_key_fingerprint.empty() &&
+                config.server_public_key_fingerprint != er_resp.server_public_key_fingerprint)
+            {
+                LOGF_WARNING("Pinned server fingerprint mismatch pinned=%s received=%s",
+                             config.server_public_key_fingerprint.c_str(),
+                             er_resp.server_public_key_fingerprint.c_str());
+                throw std::runtime_error("Pinned server fingerprint mismatch");
+            }
+
+            config.server_public_key = er_resp.server_public_key_z85;
+            config.server_public_key_fingerprint = er_resp.server_public_key_fingerprint;
             LOG_INFO("Enrollment approved");
             return;
         }
