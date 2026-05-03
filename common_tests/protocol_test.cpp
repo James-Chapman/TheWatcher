@@ -10,7 +10,7 @@ using namespace thewatcher::proto;
 
 // ── Frame round-trip ──────────────────────────────────────────────────────────
 
-SCENARIO("Frame round-trip encoding via msgpack")
+SCENARIO("Frame round-trip encoding via CBOR")
 {
     GIVEN("a populated Frame with all fields set")
     {
@@ -148,6 +148,66 @@ SCENARIO("EnrollResponse carries approval status correctly")
 
 // ── CommandMessage ────────────────────────────────────────────────────────────
 
+SCENARIO("AckMessage round-trips success and failure outcomes")
+{
+    GIVEN("a successful AckMessage")
+    {
+        AckMessage ack;
+        ack.command_id = "cmd-success-001";
+        ack.success = true;
+        ack.message = "applied";
+
+        WHEN("packed and unpacked")
+        {
+            auto unpacked = unpack<AckMessage>(pack(ack));
+
+            THEN("all fields are preserved")
+            {
+                REQUIRE(unpacked.command_id == ack.command_id);
+                REQUIRE(unpacked.success == true);
+                REQUIRE(unpacked.message == ack.message);
+            }
+        }
+    }
+
+    GIVEN("a failing AckMessage")
+    {
+        AckMessage ack;
+        ack.command_id = "cmd-fail-002";
+        ack.success = false;
+        ack.message = "unknown command";
+
+        WHEN("packed and unpacked")
+        {
+            auto unpacked = unpack<AckMessage>(pack(ack));
+
+            THEN("the failure outcome and explanatory message survive")
+            {
+                REQUIRE(unpacked.success == false);
+                REQUIRE(unpacked.message == "unknown command");
+            }
+        }
+    }
+}
+
+SCENARIO("SetProcessLimitArgs round-trips through CBOR")
+{
+    GIVEN("a SetProcessLimitArgs with a non-default limit")
+    {
+        SetProcessLimitArgs args{50};
+
+        WHEN("packed and unpacked")
+        {
+            auto unpacked = unpack<SetProcessLimitArgs>(pack(args));
+
+            THEN("the limit is preserved exactly")
+            {
+                REQUIRE(unpacked.limit == 50);
+            }
+        }
+    }
+}
+
 SCENARIO("CommandMessage with SET_INTERVAL args survives serialization")
 {
     GIVEN("a SET_INTERVAL command with a 60-second interval")
@@ -172,6 +232,66 @@ SCENARIO("CommandMessage with SET_INTERVAL args survives serialization")
             {
                 auto decoded_args = unpack<SetIntervalArgs>(unpacked.args);
                 REQUIRE(decoded_args.interval_seconds == 60);
+            }
+        }
+    }
+}
+
+SCENARIO("ConfigUpdate carries collector configuration")
+{
+    GIVEN("a config update with disk, network, and process collector settings")
+    {
+        CollectorConfig collector_config;
+        collector_config.cpu.warning_percent = 80.0;
+        collector_config.cpu.degraded_percent = 90.0;
+        collector_config.cpu.critical_percent = 95.0;
+        collector_config.cpu_readings = 2;
+
+        DiskMonitorConfig disk;
+        disk.mount_point = "/";
+        disk.device = "/dev/sda1";
+        disk.enabled = true;
+        disk.thresholds.warning_percent = 81.0;
+        collector_config.disks.push_back(disk);
+
+        NetworkInterfaceConfig network;
+        network.interface_name = "eth0";
+        network.enabled = true;
+        network.thresholds.warning_mbps = 100.0;
+        network.thresholds.degraded_mbps = 200.0;
+        network.thresholds.critical_mbps = 300.0;
+        collector_config.networks.push_back(network);
+
+        ProcessWatchConfig process;
+        process.name = "TheWatcherAgent.exe";
+        process.expected_count = 1;
+        collector_config.processes.push_back(process);
+
+        ConfigUpdate update;
+        update.interval_seconds = 15;
+        update.process_limit = 20;
+        update.collector_config = collector_config;
+
+        WHEN("the config update is packed and unpacked")
+        {
+            auto unpacked = unpack<ConfigUpdate>(pack(update));
+
+            THEN("interval and process limit are preserved")
+            {
+                REQUIRE(unpacked.interval_seconds == 15);
+                REQUIRE(unpacked.process_limit == 20);
+            }
+
+            AND_THEN("collector thresholds and watches are preserved")
+            {
+                REQUIRE(unpacked.collector_config.cpu.warning_percent == Catch::Approx(80.0));
+                REQUIRE(unpacked.collector_config.cpu_readings == 2);
+                REQUIRE(unpacked.collector_config.disks.size() == 1);
+                REQUIRE(unpacked.collector_config.disks[0].mount_point == "/");
+                REQUIRE(unpacked.collector_config.networks.size() == 1);
+                REQUIRE(unpacked.collector_config.networks[0].interface_name == "eth0");
+                REQUIRE(unpacked.collector_config.processes.size() == 1);
+                REQUIRE(unpacked.collector_config.processes[0].name == "TheWatcherAgent.exe");
             }
         }
     }

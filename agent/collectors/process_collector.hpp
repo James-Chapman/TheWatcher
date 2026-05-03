@@ -1,11 +1,14 @@
 #pragma once
 
 #include "collector.hpp"
+#include "common/collector_config.hpp"
 
 #include <chrono>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace thewatcher::agent
 {
@@ -26,9 +29,14 @@ public:
     {
         limit_ = limit;
     }
+    void set_watches(std::vector<ProcessWatchConfig> watches)
+    {
+        watches_ = std::move(watches);
+    }
 
 private:
     int limit_;
+    std::vector<ProcessWatchConfig> watches_;
 
     struct CpuSample
     {

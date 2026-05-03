@@ -17,10 +17,10 @@
 #include <sys/types.h>
 #include <unistd.h>
 #elif defined(_WIN32)
+#include <windows.h>
 #include <psapi.h>
 #include <sddl.h>
 #include <tlhelp32.h>
-#include <windows.h>
 #elif defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
 #include <pwd.h>
 #include <sys/sysctl.h>
@@ -304,12 +304,31 @@ void ProcessCollector::update(SystemMetrics& metrics)
         prev_cpu_[p.pid] = {p.cpu_ticks, now};
     }
 
-    // Sort by CPU% desc, keep top N
+    const auto all_procs = procs;
+
+    // Sort by CPU% desc, keep top N, then add watched process matches that
+    // would otherwise be omitted from the top process list.
     std::sort(procs.begin(), procs.end(), [](const ProcRecord& a, const ProcRecord& b) {
         return a.cpu_percent > b.cpu_percent;
     });
     if (static_cast<int>(procs.size()) > limit_)
         procs.resize(static_cast<std::size_t>(limit_));
+
+    for (const auto& watch : watches_)
+    {
+        if (!watch.enabled || watch.name.empty())
+            continue;
+        for (const auto& proc : all_procs)
+        {
+            if (proc.name != watch.name)
+                continue;
+            const auto already_reported = std::any_of(procs.begin(), procs.end(), [&](const ProcRecord& existing) {
+                return existing.pid == proc.pid;
+            });
+            if (!already_reported)
+                procs.push_back(proc);
+        }
+    }
 
     metrics.top_processes.clear();
     for (const auto& p : procs)
@@ -329,13 +348,13 @@ void ProcessCollector::update(SystemMetrics& metrics)
     // Prune stale PIDs
     for (auto it = prev_cpu_.begin(); it != prev_cpu_.end();)
     {
-        bool alive = std::any_of(procs.begin(), procs.end(), [&](const ProcRecord& p) {
+        bool alive = std::any_of(all_procs.begin(), all_procs.end(), [&](const ProcRecord& p) {
             return p.pid == it->first;
         });
         it = alive ? std::next(it) : prev_cpu_.erase(it);
     }
-    LOGF_TRACE("Process collector updated discovered=%zu reported=%zu limit=%d", discovered_count,
-               metrics.top_processes.size(), limit_);
+    LOGF_TRACE("Process collector updated discovered=%zu reported=%zu limit=%d watches=%zu", discovered_count,
+               metrics.top_processes.size(), limit_, watches_.size());
 }
 
 } // namespace thewatcher::agent

@@ -55,9 +55,18 @@ The current runtime settings are:
 
 - `collection_interval`: seconds between periodic metrics submissions.
 - `process_limit`: number of top processes captured by `ProcessCollector`.
+- `collector_config`: per-agent collector thresholds, enabled fixed disks,
+  enabled network interfaces, process watches, and consecutive-reading counts.
 
 The server persists these settings and returns them to the agent in
 `CONFIG_UPDATE` after the agent sends `CONFIG_REQUEST`.
+
+`collector_config` is defined in `common/collector_config.hpp`. CPU, memory,
+and disk thresholds are absolute percentages. Network thresholds are combined
+receive plus transmit megabits per second per interface. Process watches use
+exact executable names and expected instance counts; `ProcessCollector` always
+includes matching watched processes in `metrics.top_processes`, even when they
+are outside the normal top-N sample.
 
 ## Adding A Collector
 

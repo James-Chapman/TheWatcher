@@ -12,14 +12,58 @@ export const DEFAULT_THRESHOLDS = {
     disk: { warning_pct_of_avg: 125, degraded_pct_of_avg: 150, critical_pct_of_avg: 200 },
     network: { warning_pct_of_avg: 125, degraded_pct_of_avg: 150, critical_pct_of_avg: 200 },
 };
-export function classifyPercent(value) {
+export const DEFAULT_PERCENT_THRESHOLDS = {
+    warning_percent: 80,
+    degraded_percent: 90,
+    critical_percent: 95,
+};
+export const DEFAULT_NETWORK_THRESHOLDS = {
+    warning_mbps: 100,
+    degraded_mbps: 200,
+    critical_mbps: 300,
+};
+export const DEFAULT_COLLECTOR_CONFIG = {
+    cpu: DEFAULT_PERCENT_THRESHOLDS,
+    memory: DEFAULT_PERCENT_THRESHOLDS,
+    cpu_readings: 1,
+    memory_readings: 1,
+    disk_readings: 1,
+    network_readings: 1,
+    process_readings: 3,
+    disks: [],
+    networks: [],
+    processes: [],
+};
+export function collectorConfigWithDefaults(config) {
+    return {
+        ...DEFAULT_COLLECTOR_CONFIG,
+        ...(config ?? {}),
+        cpu: { ...DEFAULT_PERCENT_THRESHOLDS, ...(config?.cpu ?? {}) },
+        memory: { ...DEFAULT_PERCENT_THRESHOLDS, ...(config?.memory ?? {}) },
+        disks: config?.disks ?? [],
+        networks: config?.networks ?? [],
+        processes: config?.processes ?? [],
+    };
+}
+export function classifyPercent(value, thresholds = DEFAULT_PERCENT_THRESHOLDS) {
     if (!Number.isFinite(value))
         return 'grey';
-    if (value >= 90)
+    if (value >= thresholds.critical_percent)
         return 'red';
-    if (value >= 75)
+    if (value >= thresholds.degraded_percent)
         return 'amber';
-    if (value >= 60)
+    if (value >= thresholds.warning_percent)
+        return 'yellow';
+    return 'green';
+}
+export function classifyNetworkMbps(value, thresholds = DEFAULT_NETWORK_THRESHOLDS) {
+    if (!Number.isFinite(value))
+        return 'grey';
+    if (value >= thresholds.critical_mbps)
+        return 'red';
+    if (value >= thresholds.degraded_mbps)
+        return 'amber';
+    if (value >= thresholds.warning_mbps)
         return 'yellow';
     return 'green';
 }
@@ -59,6 +103,12 @@ export function formatDuration(seconds) {
 function maxPercent(values) {
     const finite = values.filter(Number.isFinite);
     return finite.length === 0 ? Number.NaN : Math.max(...finite);
+}
+function diskLabel(mountPoint, device) {
+    return device ? `${mountPoint} (${device})` : mountPoint;
+}
+function networkMbps(network) {
+    return ((network.bytes_recv_per_sec + network.bytes_sent_per_sec) * 8) / 1_000_000;
 }
 function maintenanceComponents() {
     return ['cpu', 'memory', 'disk', 'network', 'temperature', 'processes', 'heartbeat'].map((key) => ({
@@ -109,17 +159,46 @@ function metricComponents(agent, metrics) {
         return maintenanceComponents();
     if (!metrics)
         return noDataComponents(agent);
-    const diskUsage = maxPercent(metrics.disks.map((disk) => disk.usage_percent));
+    const config = collectorConfigWithDefaults(agent.collector_config);
+    const diskConfigByMount = new Map(config.disks.map((disk) => [disk.mount_point, disk]));
+    const monitoredDisks = config.disks.length === 0
+        ? metrics.disks
+        : metrics.disks.filter((disk) => diskConfigByMount.get(disk.mount_point)?.enabled);
+    const diskStatuses = monitoredDisks.map((disk) => classifyPercent(disk.usage_percent, diskConfigByMount.get(disk.mount_point)?.thresholds ?? DEFAULT_PERCENT_THRESHOLDS));
+    const diskUsage = maxPercent(monitoredDisks.map((disk) => disk.usage_percent));
+    const hottestDisk = monitoredDisks.reduce((current, disk) => (disk.usage_percent > (current?.usage_percent ?? Number.NEGATIVE_INFINITY) ? disk : current), undefined);
     const maxTemp = maxPercent(metrics.temperatures.map((sensor) => sensor.temperature_celsius));
-    const networkErrors = metrics.networks.reduce((sum, net) => sum + net.errors_in + net.errors_out + net.drops_in + net.drops_out, 0);
-    const networkDown = metrics.networks.some((net) => !net.is_up);
-    const networkTraffic = metrics.networks.reduce((sum, net) => sum + net.bytes_recv_per_sec + net.bytes_sent_per_sec, 0);
+    const networkConfigByName = new Map(config.networks.map((network) => [network.interface_name, network]));
+    const monitoredNetworks = config.networks.length === 0
+        ? metrics.networks.filter((network) => network.interface_name !== 'lo')
+        : metrics.networks.filter((network) => networkConfigByName.get(network.interface_name)?.enabled);
+    const networkErrors = monitoredNetworks.reduce((sum, net) => sum + net.errors_in + net.errors_out + net.drops_in + net.drops_out, 0);
+    const networkStatuses = monitoredNetworks.map((net) => {
+        if (!net.is_up)
+            return 'red';
+        if (net.errors_in + net.errors_out + net.drops_in + net.drops_out > 0)
+            return 'red';
+        return classifyNetworkMbps(networkMbps(net), networkConfigByName.get(net.interface_name)?.thresholds ?? DEFAULT_NETWORK_THRESHOLDS);
+    });
+    const networkTraffic = monitoredNetworks.reduce((sum, net) => sum + networkMbps(net), 0);
     const topCpu = maxPercent(metrics.top_processes.map((process) => process.cpu_percent));
+    const enabledWatches = config.processes.filter((process) => process.enabled && process.name.trim().length > 0);
+    const missingProcesses = enabledWatches.filter((watch) => {
+        const count = metrics.top_processes.filter((process) => process.name === watch.name).length;
+        return count < watch.expected_count;
+    });
+    const processColor = enabledWatches.length === 0
+        ? metrics.top_processes.length === 0
+            ? 'grey'
+            : 'green'
+        : missingProcesses.length > 0
+            ? 'red'
+            : 'green';
     return [
         {
             key: 'cpu',
             label: 'CPU',
-            color: classifyPercent(metrics.cpu.usage_percent),
+            color: classifyPercent(metrics.cpu.usage_percent, config.cpu),
             value: `${metrics.cpu.usage_percent.toFixed(0)}%`,
             detail: `${metrics.cpu.num_logical_cores} logical cores`,
             percent: metrics.cpu.usage_percent,
@@ -127,7 +206,7 @@ function metricComponents(agent, metrics) {
         {
             key: 'memory',
             label: 'Memory',
-            color: classifyPercent(metrics.memory.usage_percent),
+            color: classifyPercent(metrics.memory.usage_percent, config.memory),
             value: `${metrics.memory.usage_percent.toFixed(0)}%`,
             detail: `${formatBytes(metrics.memory.used_bytes)} / ${formatBytes(metrics.memory.total_bytes)}`,
             percent: metrics.memory.usage_percent,
@@ -135,17 +214,17 @@ function metricComponents(agent, metrics) {
         {
             key: 'disk',
             label: 'Disk',
-            color: classifyPercent(diskUsage),
-            value: metrics.disks.length === 0 ? 'none' : `${diskUsage.toFixed(0)}%`,
-            detail: `${metrics.disks.length} mount${metrics.disks.length === 1 ? '' : 's'}`,
+            color: monitoredDisks.length === 0 ? 'grey' : worstColor(diskStatuses),
+            value: monitoredDisks.length === 0 ? 'none' : `${diskUsage.toFixed(0)}%`,
+            detail: hottestDisk ? diskLabel(hottestDisk.mount_point, hottestDisk.device) : 'No monitored fixed disks',
             percent: Number.isFinite(diskUsage) ? diskUsage : undefined,
         },
         {
             key: 'network',
             label: 'Network',
-            color: networkErrors > 0 ? 'red' : networkDown ? 'yellow' : 'green',
-            value: formatBytes(networkTraffic) + '/s',
-            detail: networkErrors > 0 ? `${networkErrors} errors/drops` : `${metrics.networks.length} interface(s)`,
+            color: monitoredNetworks.length === 0 ? 'grey' : worstColor(networkStatuses),
+            value: monitoredNetworks.length === 0 ? 'none' : `${networkTraffic.toFixed(0)} Mb/s`,
+            detail: networkErrors > 0 ? `${networkErrors} errors/drops` : `${monitoredNetworks.length} interface(s)`,
         },
         {
             key: 'temperature',
@@ -158,9 +237,17 @@ function metricComponents(agent, metrics) {
         {
             key: 'processes',
             label: 'Proc',
-            color: metrics.top_processes.length === 0 ? 'grey' : classifyPercent(topCpu),
-            value: metrics.top_processes.length === 0 ? 'none' : `${topCpu.toFixed(0)}% top`,
-            detail: `${metrics.top_processes.length} tracked process(es)`,
+            color: processColor,
+            value: enabledWatches.length === 0
+                ? metrics.top_processes.length === 0
+                    ? 'none'
+                    : `${topCpu.toFixed(0)}% top`
+                : `${enabledWatches.length - missingProcesses.length}/${enabledWatches.length}`,
+            detail: missingProcesses.length > 0
+                ? `Missing ${missingProcesses.map((process) => process.name).join(', ')}`
+                : enabledWatches.length > 0
+                    ? `${enabledWatches.length} watched process(es)`
+                    : `${metrics.top_processes.length} tracked process(es)`,
             percent: metrics.top_processes.length === 0 ? undefined : topCpu,
         },
         heartbeatComponent(agent),
@@ -187,6 +274,7 @@ export function toDashboardAgents(agents, snapshots, alerts = []) {
             collectionInterval: agent.collection_interval,
             processLimit: agent.process_limit,
             thresholds: agent.thresholds ?? DEFAULT_THRESHOLDS,
+            collectorConfig: collectorConfigWithDefaults(agent.collector_config),
             lastSeen: agent.last_seen,
             uptime: metrics ? formatDuration(metrics.uptime_seconds) : 'unknown',
             group: agent.maintenance ? 'Maintenance Agents' : 'Approved Agents',

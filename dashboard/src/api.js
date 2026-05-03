@@ -85,6 +85,9 @@ export async function setAgentInterval(agentId, intervalSeconds) {
 export async function setAgentProcessLimit(agentId, limit) {
     await jsonPost(`/api/agents/${encodeURIComponent(agentId)}/set_process_limit`, { limit });
 }
+export async function setAgentCollectorConfig(agentId, update) {
+    await jsonPost(`/api/agents/${encodeURIComponent(agentId)}/collector_config`, update);
+}
 export async function setAgentThresholds(agentId, thresholds) {
     await jsonPost(`/api/agents/${encodeURIComponent(agentId)}/thresholds`, { thresholds });
 }

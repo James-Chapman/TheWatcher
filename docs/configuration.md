@@ -5,13 +5,13 @@ line overrides, and every supported option.
 
 ## Server Config
 
-The server config is JSON.
+The server config is `KEY=VALUE` text (one option per line, `#` for comments).
 
 Default paths:
 
 ```text
-Windows: C:\ProgramData\TheWatcher\server.json
-Linux/BSD: /etc/thewatcher/server.json
+Windows: C:\ProgramData\TheWatcher\TheWatcherServer.conf
+Linux/BSD: /etc/thewatcher/TheWatcherServer.conf
 ```
 
 The server uses `--config <path>` when provided. Otherwise it uses the platform
@@ -20,35 +20,33 @@ CURVE keypair.
 
 Example:
 
-```json
-{
-  "bind_address": "tcp://*:5555",
-  "enrollment_address": "tcp://*:5556",
-  "api_host": "0.0.0.0",
-  "api_port": 8080,
-  "db_path": "thewatcher.db",
-  "db_type": "sqlite",
-  "postgres_dsn": "",
-  "offline_after_seconds": 60,
-  "server_public_key": "<40-character-z85-public-key>",
-  "server_secret_key": "<40-character-z85-secret-key>"
-}
+```text
+BIND_ADDRESS=tcp://*:5555
+ENROLLMENT_ADDRESS=tcp://*:5556
+API_HOST=0.0.0.0
+API_PORT=8080
+DB_PATH=thewatcher.db
+DB_TYPE=sqlite
+POSTGRES_DSN=
+OFFLINE_AFTER_SECONDS=60
+SERVER_PUBLIC_KEY=<40-character-z85-public-key>
+SERVER_SECRET_KEY=<40-character-z85-secret-key>
 ```
 
 Options:
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `bind_address` | `tcp://*:5555` | ZeroMQ ROUTER endpoint for approved agents. Agents connect to this endpoint and submit metrics, heartbeats, command ACKs, and config requests. |
-| `enrollment_address` | `tcp://*:5556` | ZeroMQ REP endpoint for plaintext enrollment requests. |
-| `api_host` | `0.0.0.0` | HTTP REST API bind host. |
-| `api_port` | `8080` | HTTP REST API port consumed by the dashboard. |
-| `db_path` | `thewatcher.db` | SQLite database path when `db_type` is `sqlite`. Relative paths resolve beside the active server config file so server restarts from different working directories keep using the same database. |
-| `db_type` | `sqlite` | Storage backend. `sqlite` is implemented. `postgres` is reserved in config but not implemented by the current build. |
-| `postgres_dsn` | empty | Reserved for future PostgreSQL support. |
-| `offline_after_seconds` | `60` | Approved connected agents are marked disconnected when `last_seen` is older than this number of seconds. Set `0` or a negative value to disable automatic offline marking. |
-| `server_public_key` | generated | Server CURVE public key. Approved enrollment responses include this key and its fingerprint so agents can learn and pin it. |
-| `server_secret_key` | generated | Server CURVE secret key. Keep this private. |
+| `BIND_ADDRESS` | `tcp://*:5555` | ZeroMQ ROUTER endpoint for approved agents. Agents connect to this endpoint and submit metrics, heartbeats, command ACKs, and config requests. |
+| `ENROLLMENT_ADDRESS` | `tcp://*:5556` | ZeroMQ REP endpoint for plaintext enrollment requests. |
+| `API_HOST` | `0.0.0.0` | HTTP REST API bind host. |
+| `API_PORT` | `8080` | HTTP REST API port consumed by the dashboard. |
+| `DB_PATH` | `thewatcher.db` | SQLite database path when `DB_TYPE` is `sqlite`. Relative paths resolve beside the active server config file so server restarts from different working directories keep using the same database. |
+| `DB_TYPE` | `sqlite` | Storage backend. `sqlite` is implemented. `postgres` is reserved in config but not implemented by the current build. |
+| `POSTGRES_DSN` | empty | Reserved for future PostgreSQL support. |
+| `OFFLINE_AFTER_SECONDS` | `60` | Approved connected agents are marked disconnected when `last_seen` is older than this number of seconds. Set `0` or a negative value to disable automatic offline marking. |
+| `SERVER_PUBLIC_KEY` | generated | Server CURVE public key. Approved enrollment responses include this key and its fingerprint so agents can learn and pin it. |
+| `SERVER_SECRET_KEY` | generated | Server CURVE secret key. Keep this private. |
 
 If `server_public_key` is empty, the server does not enable CURVE on the data
 socket. The default generated config enables CURVE.
@@ -57,33 +55,76 @@ socket. The default generated config enables CURVE.
 
 The server also stores runtime settings in SQLite table `server_settings`.
 These values are changed through API or direct administrative DB updates until
-dedicated dashboard controls exist. Global threshold settings are fallbacks for
-agents that still have default per-agent thresholds.
+dedicated dashboard controls exist.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `threshold.<indicator>.warning_pct_of_avg` | `125.0` | Warning threshold as a percentage of the indicator's five-minute average. |
-| `threshold.<indicator>.degraded_pct_of_avg` | `150.0` | Degraded threshold as a percentage of the indicator's five-minute average. |
-| `threshold.<indicator>.critical_pct_of_avg` | `200.0` | Critical threshold as a percentage of the indicator's five-minute average. |
 | `notifications.webhook_url` | empty | Optional HTTP webhook URL. The server posts alert JSON when an alert is generated. `http://` URLs are supported by the current build. |
 
-Supported indicator names are `cpu`, `memory`, `disk`, `network`,
-`temperature`, and `processes`.
+## Per-Agent Collector Configuration
 
-CPU, memory, disk, and network also have per-agent thresholds stored on each
-agent row and editable from Agent Management. Per-agent values use the same
-percentage-of-five-minute-average meaning:
+Approved agents have a persisted `collector_config` JSON document. The Agents
+page exposes it through the Configure button beside the agent name. The
+dashboard sends the whole config to:
 
-| Per-agent field | Default | Description |
+```text
+POST /api/agents/:id/collector_config
+```
+
+Payload shape:
+
+```json
+{
+  "collection_interval": 30,
+  "process_limit": 25,
+  "collector_config": {
+    "cpu": { "warning_percent": 80, "degraded_percent": 90, "critical_percent": 95 },
+    "memory": { "warning_percent": 80, "degraded_percent": 90, "critical_percent": 95 },
+    "cpu_readings": 1,
+    "memory_readings": 1,
+    "disk_readings": 1,
+    "network_readings": 1,
+    "process_readings": 3,
+    "disks": [
+      {
+        "mount_point": "/data",
+        "device": "/dev/sdb1",
+        "enabled": true,
+        "thresholds": { "warning_percent": 80, "degraded_percent": 90, "critical_percent": 95 }
+      }
+    ],
+    "networks": [
+      {
+        "interface_name": "eth0",
+        "enabled": true,
+        "thresholds": { "warning_mbps": 100, "degraded_mbps": 200, "critical_mbps": 300 }
+      }
+    ],
+    "processes": [
+      { "name": "TheWatcherAgent.exe", "expected_count": 1, "enabled": true }
+    ]
+  }
+}
+```
+
+Collector fields:
+
+| Field | Default | Description |
 | --- | --- | --- |
-| `<indicator>.warning_pct_of_avg` | `125.0` | Green to yellow threshold for that agent and indicator. |
-| `<indicator>.degraded_pct_of_avg` | `150.0` | Yellow to amber threshold for that agent and indicator. |
-| `<indicator>.critical_pct_of_avg` | `200.0` | Amber to red threshold for that agent and indicator. |
+| `cpu` | 80/90/95 percent | Absolute CPU usage thresholds. |
+| `memory` | 80/90/95 percent | Absolute memory used thresholds. |
+| `cpu_readings` | `1` | Consecutive worsening CPU readings required before the worse state is committed. |
+| `memory_readings` | `1` | Consecutive worsening memory readings required before the worse state is committed. |
+| `disk_readings` | `1` | Consecutive worsening disk readings required before the worse state is committed. |
+| `network_readings` | `1` | Consecutive worsening network readings required before the worse state is committed. |
+| `process_readings` | `3` | Consecutive missing process readings required to reach red. The first failed reading is yellow, the second is amber, and the third is red when the default is used. |
+| `disks` | empty | Per fixed-disk configuration. An empty list means monitor all reported fixed disks with default thresholds. Entries are matched by `mount_point` and displayed as `mount point (device)`. |
+| `networks` | empty | Per-interface configuration. An empty list means monitor all reported non-loopback interfaces. Thresholds are combined receive plus transmit megabits per second. |
+| `processes` | empty | Exact executable names and expected instance counts. Fewer running instances than `expected_count` escalates process health and the alert message names the missing process. |
 
-Per-agent thresholds must be ordered `warning < degraded < critical`. The
-status engine still applies the absolute caps after percentage comparison:
-values at or above `70` are at least yellow, values at or above `85` are at
-least amber, and values at or above `95` are red.
+Thresholds must be ordered `warning < degraded < critical`. Percent thresholds
+must be no higher than 100 for the critical level. Consecutive-reading counters
+reset when the collector recovers or when a different worse state is observed.
 
 Status colors:
 
@@ -124,8 +165,9 @@ Management page.
 
 ## Agent Config
 
-The agent config is `KEY=VALUE` text. Existing JSON agent configs remain
-readable for compatibility, but new files are written as `TheWatcherAgent.conf`.
+The agent config is `KEY=VALUE` text (one option per line, `#` for comments).
+JSON agent configs are no longer supported as of 0.3.0; delete any old
+`agent.json` and let the agent create `TheWatcherAgent.conf` on first run.
 
 Default paths:
 
@@ -226,8 +268,11 @@ new key.
 ## Runtime Settings Flow
 
 The dashboard writes per-agent runtime settings through the server API. The
-server persists `collection_interval` and `process_limit` in the agents table.
-After every metrics submission, the agent sends a `CONFIG_REQUEST`; the server
-responds with `CONFIG_UPDATE` containing the current persisted settings.
+server persists `collection_interval`, `process_limit`, and `collector_config`
+in the agents table. After every metrics submission, the agent sends a
+`CONFIG_REQUEST`; the server responds with `CONFIG_UPDATE` containing the
+current persisted settings. Agents apply process watches from that config so
+watched executables are reported even when they are outside the top process
+sample.
 
 Agents establish all ZeroMQ connections. The server never dials agents.

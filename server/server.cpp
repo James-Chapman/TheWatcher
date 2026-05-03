@@ -7,14 +7,12 @@
 #include "status_engine.hpp"
 
 #include <chrono>
-#include <nlohmann/json.hpp>
 #include <stdexcept>
 
 namespace thewatcher::server
 {
 
 using namespace thewatcher::proto;
-using json = nlohmann::json;
 
 namespace
 {
@@ -254,16 +252,15 @@ void Server::handle_router_frame(zmq::socket_t& router)
         {
             auto metrics = unpack<SystemMetrics>(frame.payload);
             log_received_metrics_summary(agent_id, metrics, frame.timestamp_ms, frame.payload.size());
-            json j = metrics; // NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE handles this
             MetricsRow row;
             row.agent_id = agent_id;
             row.timestamp_ms = frame.timestamp_ms;
-            row.metrics_json = j.dump();
+            row.metrics_cbor = frame.payload; // already CBOR-encoded SystemMetrics; store verbatim.
             store_->insert_metrics(row);
             StatusEngine status_engine(*store_);
             status_engine.evaluate_metrics(agent_id, metrics, frame.timestamp_ms);
             LOGF_DEBUG("Stored metrics agent_id=%s timestamp_ms=%lld payload_size=%zu", agent_id.c_str(),
-                       static_cast<long long>(frame.timestamp_ms), row.metrics_json.size());
+                       static_cast<long long>(frame.timestamp_ms), row.metrics_cbor.size());
         }
         catch (const std::exception& e)
         {
@@ -281,9 +278,11 @@ void Server::handle_router_frame(zmq::socket_t& router)
         auto agent = store_->get_agent(agent_id);
         if (agent)
         {
-            ConfigUpdate cfg{agent->collection_interval, agent->process_limit};
-            LOGF_DEBUG("Sending config update agent_id=%s interval_seconds=%d process_limit=%d", agent_id.c_str(),
-                       cfg.interval_seconds, cfg.process_limit);
+            ConfigUpdate cfg{agent->collection_interval, agent->process_limit, agent->collector_config};
+            LOGF_DEBUG("Sending config update agent_id=%s interval_seconds=%d process_limit=%d disk_configs=%zu "
+                       "network_configs=%zu process_watches=%zu",
+                       agent_id.c_str(), cfg.interval_seconds, cfg.process_limit, cfg.collector_config.disks.size(),
+                       cfg.collector_config.networks.size(), cfg.collector_config.processes.size());
             Frame response;
             response.type = static_cast<uint8_t>(FrameType::CONFIG_UPDATE);
             response.agent_id = agent_id;

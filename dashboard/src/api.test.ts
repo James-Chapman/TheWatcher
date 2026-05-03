@@ -10,6 +10,7 @@ import {
   restartAgentCollectors,
   resumeAgent,
   setAgentGroups,
+  setAgentCollectorConfig,
   setAgentInterval,
   setAgentProcessLimit,
   setAgentThresholds,
@@ -57,6 +58,22 @@ describe('GIVEN agent management API actions', () => {
 
     await setAgentInterval('agent-2', 30);
     await setAgentProcessLimit('agent-2', 12);
+    await setAgentCollectorConfig('agent-2', {
+      collection_interval: 30,
+      process_limit: 12,
+      collector_config: {
+        cpu: { warning_percent: 80, degraded_percent: 90, critical_percent: 95 },
+        memory: { warning_percent: 80, degraded_percent: 90, critical_percent: 95 },
+        cpu_readings: 2,
+        memory_readings: 2,
+        disk_readings: 3,
+        network_readings: 4,
+        process_readings: 3,
+        disks: [{ mount_point: '/', device: '/dev/sda1', enabled: true, thresholds: { warning_percent: 80, degraded_percent: 90, critical_percent: 95 } }],
+        networks: [{ interface_name: 'eth0', enabled: true, thresholds: { warning_mbps: 100, degraded_mbps: 200, critical_mbps: 300 } }],
+        processes: [{ name: 'TheWatcherAgent.exe', expected_count: 1, enabled: true }],
+      },
+    });
     await setAgentThresholds('agent-2', {
       cpu: { warning_pct_of_avg: 125, degraded_pct_of_avg: 150, critical_pct_of_avg: 200 },
       memory: { warning_pct_of_avg: 126, degraded_pct_of_avg: 151, critical_pct_of_avg: 201 },
@@ -80,7 +97,28 @@ describe('GIVEN agent management API actions', () => {
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
     });
-    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/agents/agent-2/thresholds', {
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/agents/agent-2/collector_config', {
+      body: JSON.stringify({
+        collection_interval: 30,
+        process_limit: 12,
+        collector_config: {
+          cpu: { warning_percent: 80, degraded_percent: 90, critical_percent: 95 },
+          memory: { warning_percent: 80, degraded_percent: 90, critical_percent: 95 },
+          cpu_readings: 2,
+          memory_readings: 2,
+          disk_readings: 3,
+          network_readings: 4,
+          process_readings: 3,
+          disks: [{ mount_point: '/', device: '/dev/sda1', enabled: true, thresholds: { warning_percent: 80, degraded_percent: 90, critical_percent: 95 } }],
+          networks: [{ interface_name: 'eth0', enabled: true, thresholds: { warning_mbps: 100, degraded_mbps: 200, critical_mbps: 300 } }],
+          processes: [{ name: 'TheWatcherAgent.exe', expected_count: 1, enabled: true }],
+        },
+      }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(4, '/api/agents/agent-2/thresholds', {
       body: JSON.stringify({
         thresholds: {
           cpu: { warning_pct_of_avg: 125, degraded_pct_of_avg: 150, critical_pct_of_avg: 200 },
@@ -93,13 +131,13 @@ describe('GIVEN agent management API actions', () => {
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
     });
-    expect(fetchMock).toHaveBeenNthCalledWith(4, '/api/agents/agent-2/pause', { credentials: 'include', method: 'POST' });
-    expect(fetchMock).toHaveBeenNthCalledWith(5, '/api/agents/agent-2/resume', { credentials: 'include', method: 'POST' });
-    expect(fetchMock).toHaveBeenNthCalledWith(6, '/api/agents/agent-2/restart_collectors', {
+    expect(fetchMock).toHaveBeenNthCalledWith(5, '/api/agents/agent-2/pause', { credentials: 'include', method: 'POST' });
+    expect(fetchMock).toHaveBeenNthCalledWith(6, '/api/agents/agent-2/resume', { credentials: 'include', method: 'POST' });
+    expect(fetchMock).toHaveBeenNthCalledWith(7, '/api/agents/agent-2/restart_collectors', {
       credentials: 'include',
       method: 'POST',
     });
-    expect(fetchMock).toHaveBeenNthCalledWith(7, '/api/agents/agent-2/get_status', {
+    expect(fetchMock).toHaveBeenNthCalledWith(8, '/api/agents/agent-2/get_status', {
       credentials: 'include',
       method: 'POST',
     });

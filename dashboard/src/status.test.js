@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_THRESHOLDS, agentStatus, classifyPercent, groupOverviewAgents, summaryCounts, toDashboardAgents, toDisplayAlerts, } from './status';
+import { DEFAULT_COLLECTOR_CONFIG, DEFAULT_NETWORK_THRESHOLDS, DEFAULT_PERCENT_THRESHOLDS, DEFAULT_THRESHOLDS, agentStatus, classifyPercent, groupOverviewAgents, summaryCounts, toDashboardAgents, toDisplayAlerts, } from './status';
 function agent(overrides = {}) {
     return {
         agent_id: 'agent-1',
@@ -22,17 +22,17 @@ function agent(overrides = {}) {
 describe('GIVEN dashboard health thresholds', () => {
     it('WHEN percentages are classified THEN severity increases at warning, degraded, and critical levels', () => {
         expect(classifyPercent(12)).toBe('green');
-        expect(classifyPercent(60)).toBe('yellow');
-        expect(classifyPercent(75)).toBe('amber');
-        expect(classifyPercent(90)).toBe('red');
+        expect(classifyPercent(80)).toBe('yellow');
+        expect(classifyPercent(90)).toBe('amber');
+        expect(classifyPercent(95)).toBe('red');
     });
 });
 describe('GIVEN agents with component health', () => {
     it('WHEN summary counts are calculated THEN each agent contributes to its host state', () => {
         const agents = [
-            { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }] },
-            { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }] },
-            { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }] },
+            { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }] },
+            { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }] },
+            { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }] },
         ];
         expect(agentStatus(agents[2])).toBe('red');
         expect(summaryCounts(agents)).toMatchObject({ green: 1, yellow: 1, red: 1 });
@@ -61,6 +61,38 @@ describe('GIVEN backend agents and metrics', () => {
         expect(rows[0].maintenance).toBe(true);
         expect(rows[0].components.every((component) => component.color === 'blue')).toBe(true);
         expect(rows[0].components.at(-1)).toMatchObject({ key: 'heartbeat', color: 'blue' });
+    });
+    it('WHEN collector config is supplied THEN dashboard health uses absolute per-agent thresholds and watches', () => {
+        const metrics = {
+            agent_id: 'agent-1',
+            timestamp_ms: 1000,
+            metrics: {
+                cpu: { usage_percent: 55, num_logical_cores: 8, load_avg_1m: 0 },
+                memory: { total_bytes: 1000, used_bytes: 200, usage_percent: 20 },
+                disks: [{ device: '/dev/sdb1', mount_point: '/data', filesystem: 'ext4', total_bytes: 1000, used_bytes: 500, usage_percent: 50 }],
+                temperatures: [],
+                top_processes: [{ pid: 1, name: 'TheWatcherAgent.exe', status: 'running', cpu_percent: 1, memory_rss_bytes: 1, num_threads: 1 }],
+                networks: [{ interface_name: 'eth0', bytes_sent_per_sec: 10_000_000, bytes_recv_per_sec: 10_000_000, errors_in: 0, errors_out: 0, drops_in: 0, drops_out: 0, is_up: true }],
+                os_name: 'Linux',
+                os_version: '6',
+                hostname: 'host-1',
+                platform: 'linux',
+                uptime_seconds: 60,
+            },
+        };
+        const rows = toDashboardAgents([
+            agent({
+                collector_config: {
+                    ...DEFAULT_COLLECTOR_CONFIG,
+                    cpu: { ...DEFAULT_PERCENT_THRESHOLDS, warning_percent: 50, degraded_percent: 70, critical_percent: 90 },
+                    networks: [{ interface_name: 'eth0', enabled: true, thresholds: DEFAULT_NETWORK_THRESHOLDS }],
+                    processes: [{ name: 'TheWatcherAgent.exe', expected_count: 2, enabled: true }],
+                },
+            }),
+        ], [metrics]);
+        expect(rows[0].components.find((component) => component.key === 'cpu')).toMatchObject({ color: 'yellow' });
+        expect(rows[0].components.find((component) => component.key === 'network')).toMatchObject({ color: 'yellow' });
+        expect(rows[0].components.find((component) => component.key === 'processes')).toMatchObject({ color: 'red' });
     });
 });
 describe('GIVEN overview agents assigned to groups', () => {

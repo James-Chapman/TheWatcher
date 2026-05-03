@@ -133,3 +133,59 @@ setup script and check the `winget` output.
 
 Rerun the setup script. If Visual Studio Build Tools was just installed, reboot
 or open a new terminal before building again.
+
+## Meson Build (alternative to Bazel)
+
+As of 0.3.0 the project supports Meson + Ninja side-by-side with Bazel. Either
+build system produces the same `TheWatcherAgent` and `TheWatcherServer`
+binaries.
+
+### Prerequisites
+
+- Meson 1.4+ and Ninja. On Windows: `pip install meson ninja` or pull both
+  from a recent Visual Studio install (VS bundles Ninja under
+  `Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja`).
+- A C++20 toolchain. Same compilers Bazel uses are fine: MSVC 2022 on
+  Windows; gcc/clang on Linux/BSD.
+- CMake available on PATH. Meson uses CMake only to drive the local libzmq
+  source build.
+
+Do not install project C/C++ dependencies with vcpkg for Meson. Meson builds
+the required libraries as static local subprojects:
+
+- `libsodium` from the project wrap and `subprojects/packagefiles/libsodium`.
+- `libzmq` from the project wrap and `subprojects/packagefiles/libzmq`, with
+  CURVE enabled and linked to the local static libsodium build.
+- `cppzmq`, `libcbor`, `sqlite3`, `nlohmann_json`, `cpp-httplib`, and `catch2`
+  from WrapDB.
+
+### Build
+
+```bash
+meson setup builddir-release --buildtype=release --default-library=static
+meson compile -C builddir-release
+meson test -C builddir-release --print-errorlogs
+```
+
+On Windows, run those commands from a Visual Studio developer prompt so `cl`,
+`link`, CMake, and Ninja are all on PATH. The repository also provides a helper:
+
+```powershell
+.\meson-build.cmd
+```
+
+The helper always uses the release configuration and writes generated output to
+`builddir-release`.
+
+The first Meson setup downloads dependency source archives into
+`subprojects/packagecache` and extracts build-local source directories under
+`subprojects/`. Those extracted directories are generated files and are ignored
+by Git and Bazel package discovery; the committed source of truth is the wrap
+files plus the packagefile overlays.
+
+### Why two build systems?
+
+Bazel remains the primary, repeatable build that matches CI. Meson is useful for
+IDE integration (CLion, VS Code, Visual Studio, etc.) and faster local
+iteration while preserving the same local static ZeroMQ/libsodium dependency
+model.

@@ -26,6 +26,7 @@ public:
     void set_agent_maintenance(const std::string& agent_id, bool maintenance, const std::string& reason,
                                int64_t until_ms) override;
     void set_agent_thresholds(const AgentRecord& rec) override;
+    void set_agent_collector_config(const std::string& agent_id, const CollectorConfig& config) override;
 
     std::vector<GroupRecord> list_groups() override;
     int64_t create_group(const std::string& name) override;
@@ -49,6 +50,11 @@ public:
     std::optional<StatusHistoryRow> latest_status_for_indicator(const std::string& agent_id,
                                                                 const std::string& indicator) override;
     std::vector<StatusHistoryRow> list_status_history(const std::string& agent_id, int limit) override;
+    std::optional<PendingStatusRecord> get_pending_status(const std::string& agent_id,
+                                                          const std::string& indicator) override;
+    void set_pending_status(const std::string& agent_id, const std::string& indicator, const std::string& target_status,
+                            int count) override;
+    void clear_pending_status(const std::string& agent_id, const std::string& indicator) override;
     int64_t insert_alert(const AlertRecord& alert) override;
     std::vector<AlertRecord> list_alerts(bool include_deleted) override;
     std::vector<AlertRecord> list_unacknowledged_alerts() override;

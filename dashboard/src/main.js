@@ -3,21 +3,10 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { Check, LogOut, Pause, Play, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { canManageAgent, maintenanceAction, maintenanceActionLabel } from './agentActions';
-import { acknowledgeAlert, approveAgent, createGroup, createUser, deleteAgent, deleteAlert, fetchSession, loadDashboardData, login, logout, rejectAgent, requestAgentStatus, restartAgentCollectors, resumeAgent, setAgentGroups, setAgentInterval, setAgentProcessLimit, setAgentThresholds, setMaintenance, } from './api';
-import { groupOverviewAgents, summaryCounts, toDashboardAgents, toDisplayAlerts } from './status';
+import { acknowledgeAlert, approveAgent, createGroup, createUser, deleteAgent, deleteAlert, fetchSession, loadDashboardData, login, logout, rejectAgent, requestAgentStatus, restartAgentCollectors, resumeAgent, setAgentCollectorConfig, setAgentGroups, setMaintenance, } from './api';
+import { DEFAULT_NETWORK_THRESHOLDS, DEFAULT_PERCENT_THRESHOLDS, collectorConfigWithDefaults, groupOverviewAgents, summaryCounts, toDashboardAgents, toDisplayAlerts, } from './status';
 import './styles.css';
 const COMPONENT_LABELS = ['CPU', 'Memory', 'Disk', 'Network', 'Temp', 'Proc', 'Heartbeat'];
-const THRESHOLD_INDICATORS = ['cpu', 'memory', 'disk', 'network'];
-const THRESHOLD_LEVELS = [
-    'warning_pct_of_avg',
-    'degraded_pct_of_avg',
-    'critical_pct_of_avg',
-];
-const THRESHOLD_LABELS = {
-    warning_pct_of_avg: 'Warn',
-    degraded_pct_of_avg: 'Degrade',
-    critical_pct_of_avg: 'Critical',
-};
 function colorLabel(color) {
     return {
         green: 'Healthy',
@@ -41,10 +30,8 @@ function Dashboard() {
     const [error, setError] = React.useState(null);
     const [loading, setLoading] = React.useState(true);
     const [busyAction, setBusyAction] = React.useState(null);
-    const [intervalDrafts, setIntervalDrafts] = React.useState({});
-    const [processDrafts, setProcessDrafts] = React.useState({});
     const [groupDrafts, setGroupDrafts] = React.useState({});
-    const [thresholdDrafts, setThresholdDrafts] = React.useState({});
+    const [configAgentId, setConfigAgentId] = React.useState(null);
     const [overviewGroupFilter, setOverviewGroupFilter] = React.useState('all');
     const refresh = React.useCallback(async () => {
         if (!session)
@@ -98,7 +85,8 @@ function Dashboard() {
     const displayAlerts = toDisplayAlerts(alerts, agents);
     const admin = session.role === 'admin';
     const operator = session.role === 'admin' || session.role === 'operator';
-    return (_jsxs(_Fragment, { children: [_jsxs("header", { className: "topbar", children: [_jsxs("div", { className: "logo", children: [_jsx("span", { className: "logo-dot" }), "THEWATCHER"] }), _jsxs("nav", { className: "nav-tabs", "aria-label": "Dashboard views", children: [_jsx(Tab, { view: view, target: "monitoring", setView: setView, label: "Monitoring" }), _jsx(Tab, { view: view, target: "agents", setView: setView, label: "Agents" }), admin ? _jsx(Tab, { view: view, target: "pending", setView: setView, label: "Pending" }) : null, _jsx(Tab, { view: view, target: "alerts", setView: setView, label: "Alerts" }), admin ? _jsx(Tab, { view: view, target: "users", setView: setView, label: "Users" }) : null] }), _jsxs("div", { className: "topbar-meta", children: [_jsx("span", { children: _jsx("strong", { children: loadedAt ? loadedAt.toUTCString().replace('GMT', 'UTC') : 'Not synced' }) }), _jsxs("span", { children: [session.username, " ", _jsx("strong", { children: session.role })] }), _jsx("button", { className: "icon-button", onClick: () => void refresh(), "aria-label": "Refresh dashboard", children: _jsx(RefreshCw, { size: 14 }) }), _jsx("button", { className: "icon-button", onClick: () => void logout().then(() => setSession(null)), "aria-label": "Log out", children: _jsx(LogOut, { size: 14 }) })] })] }), _jsxs("section", { className: "summary", children: [_jsx(SummaryCard, { label: "Healthy", value: counts.green, color: "green" }), _jsx(SummaryCard, { label: "Warning", value: counts.yellow, color: "yellow" }), _jsx(SummaryCard, { label: "Degraded", value: counts.amber, color: "amber" }), _jsx(SummaryCard, { label: "Critical", value: counts.red, color: "red" }), _jsx(SummaryCard, { label: "Maintenance", value: counts.blue, color: "blue" }), _jsx(SummaryCard, { label: "Offline", value: counts.offline, color: "grey" })] }), alerts.length > 0 && view === 'monitoring' ? (_jsx("div", { className: "alert-strip", children: displayAlerts.slice(0, 4).map((alert) => (_jsxs("div", { className: `alert-card ${alert.new_status}`, children: [_jsx(AgentIdentity, { id: alert.agentId, name: alert.agentName }), _jsxs("div", { className: "alert-card-detail", children: [_jsx("span", { children: alert.indicator }), _jsx("strong", { children: colorLabel(alert.new_status) })] }), _jsx("div", { className: "alert-card-message", children: alert.message })] }, alert.alert_id))) })) : null, view === 'monitoring' ? (_jsx(MonitoringTable, { agents: agents, error: error, expanded: expanded, groupFilter: overviewGroupFilter, groups: groups, loading: loading, setExpanded: setExpanded, setGroupFilter: setOverviewGroupFilter })) : null, view === 'agents' ? (_jsx(AgentManagement, { agents: agents, busyAction: busyAction, error: error, groupDrafts: groupDrafts, groups: groups, intervalDrafts: intervalDrafts, loading: loading, admin: admin, operator: operator, processDrafts: processDrafts, runAction: runAction, setGroupDrafts: setGroupDrafts, setIntervalDrafts: setIntervalDrafts, setProcessDrafts: setProcessDrafts, setThresholdDrafts: setThresholdDrafts, thresholdDrafts: thresholdDrafts })) : null, view === 'pending' ? (_jsx(PendingEnrollments, { agents: pending, busyAction: busyAction, groups: groups, runAction: runAction })) : null, view === 'alerts' ? (_jsx(AlertsPage, { alerts: displayAlerts, busyAction: busyAction, operator: operator, runAction: runAction })) : null, view === 'users' ? _jsx(UsersPage, { busyAction: busyAction, groups: groups, runAction: runAction, users: users }) : null] }));
+    const configAgent = agents.find((agent) => agent.id === configAgentId) ?? null;
+    return (_jsxs(_Fragment, { children: [_jsxs("header", { className: "topbar", children: [_jsxs("div", { className: "logo", children: [_jsx("span", { className: "logo-dot" }), "THEWATCHER"] }), _jsxs("nav", { className: "nav-tabs", "aria-label": "Dashboard views", children: [_jsx(Tab, { view: view, target: "monitoring", setView: setView, label: "Monitoring" }), _jsx(Tab, { view: view, target: "agents", setView: setView, label: "Agents" }), admin ? _jsx(Tab, { view: view, target: "pending", setView: setView, label: "Pending" }) : null, _jsx(Tab, { view: view, target: "alerts", setView: setView, label: "Alerts" }), admin ? _jsx(Tab, { view: view, target: "users", setView: setView, label: "Users" }) : null] }), _jsxs("div", { className: "topbar-meta", children: [_jsx("span", { children: _jsx("strong", { children: loadedAt ? loadedAt.toUTCString().replace('GMT', 'UTC') : 'Not synced' }) }), _jsxs("span", { children: [session.username, " ", _jsx("strong", { children: session.role })] }), _jsx("button", { className: "icon-button", onClick: () => void refresh(), "aria-label": "Refresh dashboard", children: _jsx(RefreshCw, { size: 14 }) }), _jsx("button", { className: "icon-button", onClick: () => void logout().then(() => setSession(null)), "aria-label": "Log out", children: _jsx(LogOut, { size: 14 }) })] })] }), _jsxs("section", { className: "summary", children: [_jsx(SummaryCard, { label: "Healthy", value: counts.green, color: "green" }), _jsx(SummaryCard, { label: "Warning", value: counts.yellow, color: "yellow" }), _jsx(SummaryCard, { label: "Degraded", value: counts.amber, color: "amber" }), _jsx(SummaryCard, { label: "Critical", value: counts.red, color: "red" }), _jsx(SummaryCard, { label: "Maintenance", value: counts.blue, color: "blue" }), _jsx(SummaryCard, { label: "Offline", value: counts.offline, color: "grey" })] }), alerts.length > 0 && view === 'monitoring' ? (_jsx("div", { className: "alert-strip", children: displayAlerts.slice(0, 4).map((alert) => (_jsxs("div", { className: `alert-card ${alert.new_status}`, children: [_jsx(AgentIdentity, { id: alert.agentId, name: alert.agentName }), _jsxs("div", { className: "alert-card-detail", children: [_jsx("span", { children: alert.indicator }), _jsx("strong", { children: colorLabel(alert.new_status) })] }), _jsx("div", { className: "alert-card-message", children: alert.message })] }, alert.alert_id))) })) : null, view === 'monitoring' ? (_jsx(MonitoringTable, { agents: agents, error: error, expanded: expanded, groupFilter: overviewGroupFilter, groups: groups, loading: loading, setExpanded: setExpanded, setGroupFilter: setOverviewGroupFilter })) : null, view === 'agents' ? (_jsx(AgentManagement, { agents: agents, busyAction: busyAction, error: error, groupDrafts: groupDrafts, groups: groups, loading: loading, admin: admin, operator: operator, onConfigure: setConfigAgentId, runAction: runAction, setGroupDrafts: setGroupDrafts })) : null, configAgent ? (_jsx(AgentConfigModal, { agent: configAgent, busy: busyAction === `${configAgent.id}:collector_config`, onClose: () => setConfigAgentId(null), operator: operator && canManageAgent(configAgent), runAction: runAction })) : null, view === 'pending' ? (_jsx(PendingEnrollments, { agents: pending, busyAction: busyAction, groups: groups, runAction: runAction })) : null, view === 'alerts' ? (_jsx(AlertsPage, { alerts: displayAlerts, busyAction: busyAction, operator: operator, runAction: runAction })) : null, view === 'users' ? _jsx(UsersPage, { busyAction: busyAction, groups: groups, runAction: runAction, users: users }) : null] }));
 }
 function LoginScreen({ onLogin }) {
     const [username, setUsername] = React.useState('thewatcher');
@@ -126,40 +114,103 @@ function MonitoringTable({ agents, error, expanded, groupFilter, groups, loading
                                                     });
                                                 }, children: [_jsx("td", { children: _jsx(AgentIdentity, { id: agent.id, name: agent.name, prefix: _jsx("span", { className: "chevron", children: ">" }) }) }), _jsx("td", { className: "uptime", children: agent.uptime }), _jsx("td", { className: "dot-cell", children: _jsx(StatusDot, { color: agent.status, label: colorLabel(agent.status) }) }), _jsx("td", { className: "dot-cell", children: _jsx(StatusDot, { color: agent.alertColor, label: "Alerts" }) }), agent.components.map((component) => (_jsx("td", { className: "dot-cell", children: _jsxs("div", { className: "dot-wrap", children: [_jsx("span", { className: `dot ${component.color}` }), _jsxs("div", { className: "tooltip", children: [component.label, ": ", component.value, _jsx("br", {}), _jsx("span", { children: component.detail })] })] }) }, component.key)))] }), _jsx("tr", { className: `detail-row ${expanded.has(agent.id) ? '' : 'hidden'}`, children: _jsx("td", { colSpan: 4 + COMPONENT_LABELS.length, children: _jsx("div", { className: "detail-inner", children: agent.components.map((component) => (_jsxs("div", { className: "detail-card", children: [_jsxs("div", { className: "detail-card-header", children: [_jsx("span", { children: component.label }), _jsx("span", { className: `dot ${component.color} small-dot` })] }), _jsx("div", { className: `detail-card-value ${component.color}`, children: component.value }), _jsxs("div", { className: "detail-card-sub", children: [colorLabel(component.color), " / ", component.detail] })] }, component.key))) }) }) })] }, `${group.id}:${agent.id}`)))] }, group.id))) })] }) })] }));
 }
-function AgentManagement({ admin, agents, busyAction, error, groupDrafts, groups, intervalDrafts, loading, operator, processDrafts, runAction, setGroupDrafts, setIntervalDrafts, setProcessDrafts, setThresholdDrafts, thresholdDrafts, }) {
-    const numericDraft = (value, fallback) => {
-        const parsed = Number.parseInt(value ?? '', 10);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-    };
-    const thresholdKey = (indicator, level) => `${indicator}.${level}`;
-    const thresholdDraftValue = (agent, indicator, level) => thresholdDrafts[agent.id]?.[thresholdKey(indicator, level)] ?? String(agent.thresholds[indicator][level]);
-    const setThresholdDraft = (agent, indicator, level, value) => {
-        setThresholdDrafts((current) => ({
-            ...current,
-            [agent.id]: {
-                ...(current[agent.id] ?? {}),
-                [thresholdKey(indicator, level)]: value,
-            },
-        }));
-    };
-    const thresholdPayload = (agent) => {
-        const next = structuredClone(agent.thresholds);
-        THRESHOLD_INDICATORS.forEach((indicator) => {
-            THRESHOLD_LEVELS.forEach((level) => {
-                const parsed = Number.parseFloat(thresholdDraftValue(agent, indicator, level));
-                next[indicator][level] = Number.isFinite(parsed) && parsed > 0 ? parsed : agent.thresholds[indicator][level];
-            });
-        });
-        return next;
-    };
-    return (_jsxs("main", { className: "table-wrap management-wrap", children: [error ? _jsxs("div", { className: "banner error", children: ["API error: ", error] }) : null, loading ? _jsx("div", { className: "banner", children: "Loading dashboard data..." }) : null, _jsx("div", { className: "management-header", children: _jsx("h1", { children: "Agent Management" }) }), _jsx("div", { className: "table-container", children: _jsxs("table", { className: "management-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "Agent" }), _jsx("th", { children: "Platform" }), _jsx("th", { children: "State" }), _jsx("th", { children: "Last Seen" }), _jsx("th", { children: "Groups" }), _jsx("th", { children: "Settings" }), _jsx("th", { children: "Commands" }), _jsx("th", { children: "Delete" })] }) }), _jsx("tbody", { children: agents.map((agent) => {
-                                const intervalValue = intervalDrafts[agent.id] ?? String(agent.collectionInterval);
-                                const processValue = processDrafts[agent.id] ?? String(agent.processLimit);
+function AgentManagement({ admin, agents, busyAction, error, groupDrafts, groups, loading, onConfigure, operator, runAction, setGroupDrafts, }) {
+    return (_jsxs("main", { className: "table-wrap management-wrap", children: [error ? _jsxs("div", { className: "banner error", children: ["API error: ", error] }) : null, loading ? _jsx("div", { className: "banner", children: "Loading dashboard data..." }) : null, _jsx("div", { className: "management-header", children: _jsx("h1", { children: "Agent Management" }) }), _jsx("div", { className: "table-container", children: _jsxs("table", { className: "management-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "Agent" }), _jsx("th", { children: "Platform" }), _jsx("th", { children: "State" }), _jsx("th", { children: "Last Seen" }), _jsx("th", { children: "Groups" }), _jsx("th", { children: "Commands" }), _jsx("th", { children: "Delete" })] }) }), _jsx("tbody", { children: agents.map((agent) => {
                                 const groupValue = groupDrafts[agent.id] ?? String(agent.groupIds[0] ?? groups[0]?.group_id ?? 0);
                                 const manageable = operator && canManageAgent(agent);
                                 const maintenanceCommand = maintenanceAction(agent);
-                                return (_jsxs("tr", { children: [_jsx("td", { children: _jsx(AgentIdentity, { id: agent.id, name: agent.name }) }), _jsx("td", { children: agent.platform }), _jsx("td", { children: _jsx(StatusDot, { color: agent.status, label: colorLabel(agent.status) }) }), _jsx("td", { className: "uptime", children: agent.lastSeen > 0 ? `${Math.floor((Date.now() - agent.lastSeen) / 60000)}m` : 'never' }), _jsx("td", { children: _jsxs("div", { className: "settings-grid group-settings", children: [_jsxs("select", { disabled: !admin, value: groupValue, onChange: (event) => setGroupDrafts((current) => ({ ...current, [agent.id]: event.target.value })), children: [_jsx("option", { value: 0, children: "No group" }), groups.map((group) => (_jsx("option", { value: group.group_id, children: group.name }, group.group_id)))] }), _jsx(ActionButton, { busy: busyAction === `${agent.id}:groups`, disabled: !admin, icon: _jsx(SlidersHorizontal, { size: 14 }), label: "Set", onClick: () => runAction(`${agent.id}:groups`, () => setAgentGroups(agent.id, Number(groupValue) > 0 ? [Number(groupValue)] : [])) })] }) }), _jsx("td", { children: _jsxs("div", { className: "settings-grid", children: [_jsxs("label", { children: ["Interval", _jsx("input", { min: "1", type: "number", value: intervalValue, onChange: (event) => setIntervalDrafts((current) => ({ ...current, [agent.id]: event.target.value })) })] }), _jsx(ActionButton, { busy: busyAction === `${agent.id}:interval`, disabled: !manageable, icon: _jsx(SlidersHorizontal, { size: 14 }), label: "Set", onClick: () => runAction(`${agent.id}:interval`, () => setAgentInterval(agent.id, numericDraft(intervalValue, 30))) }), _jsxs("label", { children: ["Processes", _jsx("input", { min: "1", type: "number", value: processValue, onChange: (event) => setProcessDrafts((current) => ({ ...current, [agent.id]: event.target.value })) })] }), _jsx(ActionButton, { busy: busyAction === `${agent.id}:processes`, disabled: !manageable, icon: _jsx(SlidersHorizontal, { size: 14 }), label: "Set", onClick: () => runAction(`${agent.id}:processes`, () => setAgentProcessLimit(agent.id, numericDraft(processValue, 10))) }), _jsx("div", { className: "threshold-settings", children: THRESHOLD_INDICATORS.map((indicator) => (_jsxs("fieldset", { children: [_jsx("legend", { children: indicator }), THRESHOLD_LEVELS.map((level) => (_jsxs("label", { children: [THRESHOLD_LABELS[level], _jsx("input", { min: "1", step: "1", type: "number", value: thresholdDraftValue(agent, indicator, level), onChange: (event) => setThresholdDraft(agent, indicator, level, event.target.value) })] }, level)))] }, indicator))) }), _jsx(ActionButton, { busy: busyAction === `${agent.id}:thresholds`, disabled: !manageable, icon: _jsx(SlidersHorizontal, { size: 14 }), label: "Thresholds", onClick: () => runAction(`${agent.id}:thresholds`, () => setAgentThresholds(agent.id, thresholdPayload(agent))) })] }) }), _jsx("td", { children: _jsxs("div", { className: "button-row", children: [_jsx(ActionButton, { busy: busyAction === `${agent.id}:${maintenanceCommand}`, disabled: !manageable, icon: agent.maintenance ? _jsx(Play, { size: 14 }) : _jsx(Pause, { size: 14 }), label: maintenanceActionLabel(agent), onClick: () => runAction(`${agent.id}:${maintenanceCommand}`, () => agent.maintenance ? resumeAgent(agent.id) : setMaintenance(agent.id, 'operator request', 0)) }), _jsx(ActionButton, { busy: busyAction === `${agent.id}:restart`, disabled: !manageable, icon: _jsx(RotateCw, { size: 14 }), label: "Restart", onClick: () => runAction(`${agent.id}:restart`, () => restartAgentCollectors(agent.id)) }), _jsx(ActionButton, { busy: busyAction === `${agent.id}:status`, disabled: !manageable, icon: _jsx(Search, { size: 14 }), label: "Status", onClick: () => runAction(`${agent.id}:status`, () => requestAgentStatus(agent.id)) })] }) }), _jsx("td", { children: _jsx(ActionButton, { busy: busyAction === `${agent.id}:delete`, danger: true, disabled: !manageable, icon: _jsx(Trash2, { size: 14 }), label: "Delete", onClick: () => runAction(`${agent.id}:delete`, () => deleteAgent(agent.id)) }) })] }, agent.id));
+                                return (_jsxs("tr", { children: [_jsx("td", { children: _jsxs("div", { className: "agent-config-cell", children: [_jsx(AgentIdentity, { id: agent.id, name: agent.name }), _jsx(ActionButton, { busy: busyAction === `${agent.id}:configure`, disabled: !manageable, icon: _jsx(SlidersHorizontal, { size: 14 }), label: "Configure", onClick: () => onConfigure(agent.id) })] }) }), _jsx("td", { children: agent.platform }), _jsx("td", { children: _jsx(StatusDot, { color: agent.status, label: colorLabel(agent.status) }) }), _jsx("td", { className: "uptime", children: agent.lastSeen > 0 ? `${Math.floor((Date.now() - agent.lastSeen) / 60000)}m` : 'never' }), _jsx("td", { children: _jsxs("div", { className: "settings-grid group-settings", children: [_jsxs("select", { disabled: !admin, value: groupValue, onChange: (event) => setGroupDrafts((current) => ({ ...current, [agent.id]: event.target.value })), children: [_jsx("option", { value: 0, children: "No group" }), groups.map((group) => (_jsx("option", { value: group.group_id, children: group.name }, group.group_id)))] }), _jsx(ActionButton, { busy: busyAction === `${agent.id}:groups`, disabled: !admin, icon: _jsx(SlidersHorizontal, { size: 14 }), label: "Set", onClick: () => runAction(`${agent.id}:groups`, () => setAgentGroups(agent.id, Number(groupValue) > 0 ? [Number(groupValue)] : [])) })] }) }), _jsx("td", { children: _jsxs("div", { className: "button-row", children: [_jsx(ActionButton, { busy: busyAction === `${agent.id}:${maintenanceCommand}`, disabled: !manageable, icon: agent.maintenance ? _jsx(Play, { size: 14 }) : _jsx(Pause, { size: 14 }), label: maintenanceActionLabel(agent), onClick: () => runAction(`${agent.id}:${maintenanceCommand}`, () => agent.maintenance ? resumeAgent(agent.id) : setMaintenance(agent.id, 'operator request', 0)) }), _jsx(ActionButton, { busy: busyAction === `${agent.id}:restart`, disabled: !manageable, icon: _jsx(RotateCw, { size: 14 }), label: "Restart", onClick: () => runAction(`${agent.id}:restart`, () => restartAgentCollectors(agent.id)) }), _jsx(ActionButton, { busy: busyAction === `${agent.id}:status`, disabled: !manageable, icon: _jsx(Search, { size: 14 }), label: "Status", onClick: () => runAction(`${agent.id}:status`, () => requestAgentStatus(agent.id)) })] }) }), _jsx("td", { children: _jsx(ActionButton, { busy: busyAction === `${agent.id}:delete`, danger: true, disabled: !manageable, icon: _jsx(Trash2, { size: 14 }), label: "Delete", onClick: () => runAction(`${agent.id}:delete`, () => deleteAgent(agent.id)) }) })] }, agent.id));
                             }) })] }) })] }));
+}
+function buildCollectorDraft(agent) {
+    const config = collectorConfigWithDefaults(agent.collectorConfig);
+    const diskByMount = new Map(config.disks.map((disk) => [disk.mount_point, disk]));
+    const metricDisks = agent.metrics?.disks
+        .filter((disk) => !diskByMount.has(disk.mount_point))
+        .map((disk) => ({
+        mount_point: disk.mount_point,
+        device: disk.device,
+        enabled: true,
+        thresholds: { ...DEFAULT_PERCENT_THRESHOLDS },
+    })) ?? [];
+    const networkByName = new Map(config.networks.map((network) => [network.interface_name, network]));
+    const metricNetworks = agent.metrics?.networks
+        .filter((network) => network.interface_name !== 'lo' && !networkByName.has(network.interface_name))
+        .map((network) => ({
+        interface_name: network.interface_name,
+        enabled: true,
+        thresholds: { ...DEFAULT_NETWORK_THRESHOLDS },
+    })) ?? [];
+    return {
+        collection_interval: agent.collectionInterval,
+        process_limit: agent.processLimit,
+        collector_config: {
+            ...config,
+            cpu: { ...config.cpu },
+            memory: { ...config.memory },
+            disks: [...config.disks.map((disk) => ({ ...disk, thresholds: { ...disk.thresholds } })), ...metricDisks],
+            networks: [
+                ...config.networks.map((network) => ({ ...network, thresholds: { ...network.thresholds } })),
+                ...metricNetworks,
+            ],
+            processes: config.processes.map((process) => ({ ...process })),
+        },
+    };
+}
+function AgentConfigModal({ agent, busy, onClose, operator, runAction, }) {
+    const [draft, setDraft] = React.useState(() => buildCollectorDraft(agent));
+    React.useEffect(() => {
+        setDraft(buildCollectorDraft(agent));
+    }, [agent]);
+    const updateConfig = (update) => {
+        setDraft((current) => ({ ...current, collector_config: update(current.collector_config) }));
+    };
+    const updatePercent = (collector, field, value) => {
+        updateConfig((config) => ({
+            ...config,
+            [collector]: { ...config[collector], [field]: value },
+        }));
+    };
+    const updateReading = (field, value) => {
+        updateConfig((config) => ({ ...config, [field]: value }));
+    };
+    const updateDisk = (index, update) => {
+        updateConfig((config) => ({
+            ...config,
+            disks: config.disks.map((disk, currentIndex) => (currentIndex === index ? update(disk) : disk)),
+        }));
+    };
+    const updateNetwork = (index, update) => {
+        updateConfig((config) => ({
+            ...config,
+            networks: config.networks.map((network, currentIndex) => (currentIndex === index ? update(network) : network)),
+        }));
+    };
+    const updateProcess = (index, update) => {
+        updateConfig((config) => ({
+            ...config,
+            processes: config.processes.map((process, currentIndex) => (currentIndex === index ? update(process) : process)),
+        }));
+    };
+    return (_jsx("div", { className: "modal-backdrop", role: "presentation", children: _jsxs("form", { className: "config-modal", onSubmit: (event) => {
+                event.preventDefault();
+                void runAction(`${agent.id}:collector_config`, () => setAgentCollectorConfig(agent.id, draft));
+            }, children: [_jsxs("div", { className: "modal-header", children: [_jsx(AgentIdentity, { id: agent.id, name: agent.name }), _jsx("button", { className: "icon-button", type: "button", onClick: onClose, "aria-label": "Close configuration", children: _jsx(X, { size: 14 }) })] }), _jsxs("div", { className: "config-grid", children: [_jsxs("section", { children: [_jsx("h2", { children: "Collection" }), _jsxs("div", { className: "form-grid", children: [_jsx(NumberField, { label: "Interval seconds", min: 1, value: draft.collection_interval, onChange: (value) => setDraft((current) => ({ ...current, collection_interval: value })) }), _jsx(NumberField, { label: "Process sample limit", min: 1, value: draft.process_limit, onChange: (value) => setDraft((current) => ({ ...current, process_limit: value })) }), _jsx(NumberField, { label: "CPU readings", min: 1, value: draft.collector_config.cpu_readings, onChange: (value) => updateReading('cpu_readings', value) }), _jsx(NumberField, { label: "Memory readings", min: 1, value: draft.collector_config.memory_readings, onChange: (value) => updateReading('memory_readings', value) }), _jsx(NumberField, { label: "Disk readings", min: 1, value: draft.collector_config.disk_readings, onChange: (value) => updateReading('disk_readings', value) }), _jsx(NumberField, { label: "Network readings", min: 1, value: draft.collector_config.network_readings, onChange: (value) => updateReading('network_readings', value) }), _jsx(NumberField, { label: "Process readings", min: 1, value: draft.collector_config.process_readings, onChange: (value) => updateReading('process_readings', value) })] })] }), _jsxs("section", { children: [_jsx("h2", { children: "CPU & Memory" }), _jsx(ThresholdRow, { label: "CPU %", thresholds: draft.collector_config.cpu, onChange: (field, value) => updatePercent('cpu', field, value) }), _jsx(ThresholdRow, { label: "Memory %", thresholds: draft.collector_config.memory, onChange: (field, value) => updatePercent('memory', field, value) })] }), _jsxs("section", { className: "wide-section", children: [_jsx("h2", { children: "Fixed Disks" }), _jsxs("div", { className: "config-list", children: [draft.collector_config.disks.map((disk, index) => (_jsxs("div", { className: "config-row", children: [_jsxs("label", { className: "toggle-line", children: [_jsx("input", { type: "checkbox", checked: disk.enabled, onChange: (event) => updateDisk(index, (current) => ({ ...current, enabled: event.target.checked })) }), _jsx("span", { children: disk.device ? `${disk.mount_point} (${disk.device})` : disk.mount_point })] }), _jsx(ThresholdInputs, { thresholds: disk.thresholds, onChange: (field, value) => updateDisk(index, (current) => ({ ...current, thresholds: { ...current.thresholds, [field]: value } })) })] }, disk.mount_point))), draft.collector_config.disks.length === 0 ? _jsx("div", { className: "empty-config", children: "No fixed disks reported yet." }) : null] })] }), _jsxs("section", { className: "wide-section", children: [_jsx("h2", { children: "Network Interfaces" }), _jsxs("div", { className: "config-list", children: [draft.collector_config.networks.map((network, index) => (_jsxs("div", { className: "config-row", children: [_jsxs("label", { className: "toggle-line", children: [_jsx("input", { type: "checkbox", checked: network.enabled, onChange: (event) => updateNetwork(index, (current) => ({ ...current, enabled: event.target.checked })) }), _jsx("span", { children: network.interface_name })] }), _jsx(NetworkThresholdInputs, { thresholds: network.thresholds, onChange: (field, value) => updateNetwork(index, (current) => ({ ...current, thresholds: { ...current.thresholds, [field]: value } })) })] }, network.interface_name))), draft.collector_config.networks.length === 0 ? _jsx("div", { className: "empty-config", children: "No network interfaces reported yet." }) : null] })] }), _jsxs("section", { className: "wide-section", children: [_jsxs("div", { className: "section-title-row", children: [_jsx("h2", { children: "Process Watches" }), _jsx(ActionButton, { busy: false, icon: _jsx(Plus, { size: 14 }), label: "Process", onClick: () => updateConfig((config) => ({
+                                                ...config,
+                                                processes: [...config.processes, { name: '', expected_count: 1, enabled: true }],
+                                            })) })] }), _jsxs("div", { className: "config-list", children: [draft.collector_config.processes.map((process, index) => (_jsxs("div", { className: "process-row", children: [_jsxs("label", { className: "toggle-line", children: [_jsx("input", { type: "checkbox", checked: process.enabled, onChange: (event) => updateProcess(index, (current) => ({ ...current, enabled: event.target.checked })) }), _jsx("span", { children: "Enabled" })] }), _jsx("input", { value: process.name, placeholder: "exact executable name", onChange: (event) => updateProcess(index, (current) => ({ ...current, name: event.target.value })) }), _jsx(NumberField, { label: "Expected", min: 1, value: process.expected_count, onChange: (value) => updateProcess(index, (current) => ({ ...current, expected_count: value })) }), _jsx(ActionButton, { busy: false, danger: true, icon: _jsx(Trash2, { size: 14 }), label: "Remove", onClick: () => updateConfig((config) => ({ ...config, processes: config.processes.filter((_, currentIndex) => currentIndex !== index) })) })] }, `${process.name}:${index}`))), draft.collector_config.processes.length === 0 ? _jsx("div", { className: "empty-config", children: "No process watches configured." }) : null] })] })] }), _jsxs("div", { className: "modal-actions", children: [_jsx("button", { className: "text-button", type: "button", onClick: onClose, children: "Cancel" }), _jsx("button", { className: "text-button", type: "submit", disabled: !operator || busy, children: busy ? '...' : 'Save' })] })] }) }));
+}
+function NumberField({ label, min, onChange, value, }) {
+    return (_jsxs("label", { children: [label, _jsx("input", { min: min, step: "1", type: "number", value: value, onChange: (event) => onChange(Number(event.target.value)) })] }));
+}
+function ThresholdInputs({ onChange, thresholds, }) {
+    return (_jsxs("div", { className: "threshold-inputs", children: [_jsx(NumberField, { label: "Warn", min: 1, value: thresholds.warning_percent, onChange: (value) => onChange('warning_percent', value) }), _jsx(NumberField, { label: "Degrade", min: 1, value: thresholds.degraded_percent, onChange: (value) => onChange('degraded_percent', value) }), _jsx(NumberField, { label: "Critical", min: 1, value: thresholds.critical_percent, onChange: (value) => onChange('critical_percent', value) })] }));
+}
+function ThresholdRow({ label, onChange, thresholds, }) {
+    return (_jsxs("div", { className: "threshold-row", children: [_jsx("span", { children: label }), _jsx(ThresholdInputs, { thresholds: thresholds, onChange: onChange })] }));
+}
+function NetworkThresholdInputs({ onChange, thresholds, }) {
+    return (_jsxs("div", { className: "threshold-inputs", children: [_jsx(NumberField, { label: "Warn Mb/s", min: 1, value: thresholds.warning_mbps, onChange: (value) => onChange('warning_mbps', value) }), _jsx(NumberField, { label: "Degrade Mb/s", min: 1, value: thresholds.degraded_mbps, onChange: (value) => onChange('degraded_mbps', value) }), _jsx(NumberField, { label: "Critical Mb/s", min: 1, value: thresholds.critical_mbps, onChange: (value) => onChange('critical_mbps', value) })] }));
 }
 function PendingEnrollments({ agents, busyAction, groups, runAction }) {
     const defaultGroup = groups[0]?.group_id;
@@ -179,7 +230,7 @@ function UsersPage({ busyAction, groups, runAction, users, }) {
                             if (!groupName.trim())
                                 return;
                             void runAction('group:create', () => createGroup(groupName.trim())).then(() => setGroupName(''));
-                        }, children: [_jsx("input", { "aria-label": "Group name", placeholder: "Group name", value: groupName, onChange: (event) => setGroupName(event.target.value) }), _jsx(ActionButton, { busy: busyAction === 'group:create', icon: _jsx(Plus, { size: 14 }), label: "Group", onClick: () => undefined })] }), _jsxs("form", { className: "inline-form user-form", onSubmit: (event) => {
+                        }, children: [_jsx("input", { "aria-label": "Group name", placeholder: "Group name", value: groupName, onChange: (event) => setGroupName(event.target.value) }), _jsx(ActionButton, { busy: busyAction === 'group:create', icon: _jsx(Plus, { size: 14 }), label: "Group", onClick: () => undefined, type: "submit" })] }), _jsxs("form", { className: "inline-form user-form", onSubmit: (event) => {
                             event.preventDefault();
                             if (!username.trim() || !password)
                                 return;
@@ -187,7 +238,7 @@ function UsersPage({ busyAction, groups, runAction, users, }) {
                                 setUsername('');
                                 setPassword('');
                             });
-                        }, children: [_jsx("input", { "aria-label": "Username", placeholder: "Username", value: username, onChange: (event) => setUsername(event.target.value) }), _jsx("input", { "aria-label": "Password", placeholder: "Password", type: "password", value: password, onChange: (event) => setPassword(event.target.value) }), _jsxs("select", { "aria-label": "Role", value: role, onChange: (event) => setRole(event.target.value), children: [_jsx("option", { value: "viewer", children: "Viewer" }), _jsx("option", { value: "operator", children: "Operator" }), _jsx("option", { value: "admin", children: "Admin" })] }), _jsxs("select", { "aria-label": "Group", value: groupId, onChange: (event) => setGroupId(Number(event.target.value)), children: [_jsx("option", { value: 0, children: "No group" }), groups.map((group) => (_jsx("option", { value: group.group_id, children: group.name }, group.group_id)))] }), _jsx(ActionButton, { busy: busyAction === 'user:create', icon: _jsx(Plus, { size: 14 }), label: "User", onClick: () => undefined })] })] }), _jsx("div", { className: "table-container", children: _jsxs("table", { className: "management-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "User" }), _jsx("th", { children: "Role" }), _jsx("th", { children: "Groups" }), _jsx("th", { children: "State" })] }) }), _jsx("tbody", { children: users.map((user) => (_jsxs("tr", { children: [_jsx("td", { children: user.username }), _jsx("td", { children: user.role }), _jsx("td", { children: user.group_ids.map((id) => groups.find((group) => group.group_id === id)?.name ?? id).join(', ') }), _jsx("td", { children: user.disabled ? 'Disabled' : 'Active' })] }, user.user_id))) })] }) })] }));
+                        }, children: [_jsx("input", { "aria-label": "Username", placeholder: "Username", value: username, onChange: (event) => setUsername(event.target.value) }), _jsx("input", { "aria-label": "Password", placeholder: "Password", type: "password", value: password, onChange: (event) => setPassword(event.target.value) }), _jsxs("select", { "aria-label": "Role", value: role, onChange: (event) => setRole(event.target.value), children: [_jsx("option", { value: "viewer", children: "Viewer" }), _jsx("option", { value: "operator", children: "Operator" }), _jsx("option", { value: "admin", children: "Admin" })] }), _jsxs("select", { "aria-label": "Group", value: groupId, onChange: (event) => setGroupId(Number(event.target.value)), children: [_jsx("option", { value: 0, children: "No group" }), groups.map((group) => (_jsx("option", { value: group.group_id, children: group.name }, group.group_id)))] }), _jsx(ActionButton, { busy: busyAction === 'user:create', icon: _jsx(Plus, { size: 14 }), label: "User", onClick: () => undefined, type: "submit" })] })] }), _jsx("div", { className: "table-container", children: _jsxs("table", { className: "management-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "User" }), _jsx("th", { children: "Role" }), _jsx("th", { children: "Groups" }), _jsx("th", { children: "State" })] }) }), _jsx("tbody", { children: users.map((user) => (_jsxs("tr", { children: [_jsx("td", { children: user.username }), _jsx("td", { children: user.role }), _jsx("td", { children: user.group_ids.map((id) => groups.find((group) => group.group_id === id)?.name ?? id).join(', ') }), _jsx("td", { children: user.disabled ? 'Disabled' : 'Active' })] }, user.user_id))) })] }) })] }));
 }
 function AgentIdentity({ id, name, prefix }) {
     return (_jsxs("div", { children: [_jsxs("div", { className: "server-name", children: [prefix, _jsx("span", { children: name || id })] }), _jsx("div", { className: "agent-id", children: id })] }));
@@ -195,8 +246,8 @@ function AgentIdentity({ id, name, prefix }) {
 function StatusDot({ color, label }) {
     return _jsxs("span", { className: "state-note", children: [_jsx("span", { className: `dot ${color}` }), " ", label] });
 }
-function ActionButton({ busy, danger = false, disabled = false, icon, label, onClick }) {
-    return (_jsxs("button", { className: `text-button ${danger ? 'danger' : ''}`, disabled: disabled || busy, onClick: onClick, children: [icon, busy ? '...' : label] }));
+function ActionButton({ busy, danger = false, disabled = false, icon, label, onClick, type = 'button' }) {
+    return (_jsxs("button", { className: `text-button ${danger ? 'danger' : ''}`, disabled: disabled || busy, onClick: onClick, type: type, children: [icon, busy ? '...' : label] }));
 }
 function SummaryCard({ label, value, color }) {
     return (_jsxs("div", { className: "summary-card", children: [_jsx("div", { className: "summary-label", children: label }), _jsx("div", { className: `summary-value ${color}`, children: value })] }));

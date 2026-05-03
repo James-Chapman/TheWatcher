@@ -14,7 +14,7 @@ cc_test(
         "//common",
         "@catch2//:catch2_main",
         "@libsodium//:libsodium",
-        "@nlohmann_json//:json",
+        "@libcbor//:cbor",
     ],
 )
 

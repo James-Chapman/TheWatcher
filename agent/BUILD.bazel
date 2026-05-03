@@ -27,7 +27,7 @@ cc_library(
         "//common",
         "@cppzmq//:cppzmq",
         "@libsodium//:libsodium",
-        "@nlohmann_json//:json",
+        "@libcbor//:cbor",
     ],
     visibility = [
         "//agent_tests:__pkg__",

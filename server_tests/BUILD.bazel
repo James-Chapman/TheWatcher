@@ -9,7 +9,7 @@ cc_test(
         "//common",
         "//server:server_config",
         "@catch2//:catch2_main",
-        "@nlohmann_json//:json",
+        "@libcbor//:cbor",
     ],
     linkopts = select({
         "@platforms//os:windows": [],
@@ -37,7 +37,7 @@ cc_test(
     deps = [
         "//server:server_store",
         "@catch2//:catch2_main",
-        "@nlohmann_json//:json",
+        "@libcbor//:cbor",
         "@sqlite3//:sqlite3",
     ],
     linkopts = select({

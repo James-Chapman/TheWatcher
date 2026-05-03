@@ -1,8 +1,10 @@
 #include "../server/status_engine.hpp"
 #include "../server/store_sqlite.hpp"
 
+#include "common/metrics.hpp"
+#include "common/protocol.hpp"
+
 #include <catch2/catch_test_macros.hpp>
-#include <nlohmann/json.hpp>
 
 using namespace thewatcher;
 using namespace thewatcher::server;
@@ -44,9 +46,25 @@ SystemMetrics metrics_with_cpu(double cpu_percent)
     return metrics;
 }
 
+SystemMetrics metrics_with_processes(std::vector<std::string> process_names)
+{
+    auto metrics = metrics_with_cpu(10.0);
+    metrics.top_processes.clear();
+    uint32_t pid = 100;
+    for (const auto& name : process_names)
+    {
+        ProcessInfo process;
+        process.pid = pid++;
+        process.name = name;
+        process.cpu_percent = 1.0;
+        metrics.top_processes.push_back(process);
+    }
+    return metrics;
+}
+
 void insert_metrics(SqliteStore& store, const std::string& agent_id, int64_t timestamp_ms, const SystemMetrics& metrics)
 {
-    store.insert_metrics({agent_id, timestamp_ms, nlohmann::json(metrics).dump()});
+    store.insert_metrics({agent_id, timestamp_ms, thewatcher::proto::pack(metrics)});
 }
 
 void insert_approved_agent(SqliteStore& store, const std::string& agent_id)
@@ -62,7 +80,7 @@ void insert_approved_agent(SqliteStore& store, const std::string& agent_id)
 }
 } // namespace
 
-SCENARIO("Status engine records transitions and alerts only on worsening changes")
+SCENARIO("Status engine records transitions and alerts only on confirmed worsening changes")
 {
     GIVEN("an approved agent with baseline metrics")
     {
@@ -74,9 +92,9 @@ SCENARIO("Status engine records transitions and alerts only on worsening changes
         insert_metrics(store, "agent-status", 1000, baseline);
         engine.evaluate_metrics("agent-status", baseline, 1000);
 
-        WHEN("the CPU indicator worsens relative to the recent average")
+        WHEN("the CPU indicator crosses the absolute degraded threshold")
         {
-            auto high = metrics_with_cpu(30.0);
+            auto high = metrics_with_cpu(91.0);
             insert_metrics(store, "agent-status", 2000, high);
             engine.evaluate_metrics("agent-status", high, 2000);
 
@@ -113,63 +131,168 @@ SCENARIO("Status engine records transitions and alerts only on worsening changes
     }
 }
 
-SCENARIO("Status engine uses per-agent thresholds before global settings")
+SCENARIO("Status engine confirms numeric collector alerts after configured consecutive readings")
 {
-    GIVEN("two approved agents with different CPU threshold settings")
+    GIVEN("an approved agent requiring two CPU readings before changing state")
     {
         SqliteStore store(":memory:");
-        insert_approved_agent(store, "agent-custom-thresholds");
-        insert_approved_agent(store, "agent-absolute-cap");
+        insert_approved_agent(store, "agent-confirmed");
 
-        auto custom = store.get_agent("agent-custom-thresholds");
-        REQUIRE(custom.has_value());
-        custom->cpu_warning_pct_of_avg = 140.0;
-        custom->cpu_degraded_pct_of_avg = 180.0;
-        custom->cpu_critical_pct_of_avg = 220.0;
-        store.set_agent_thresholds(*custom);
-
-        auto capped = store.get_agent("agent-absolute-cap");
-        REQUIRE(capped.has_value());
-        capped->cpu_warning_pct_of_avg = 500.0;
-        capped->cpu_degraded_pct_of_avg = 600.0;
-        capped->cpu_critical_pct_of_avg = 700.0;
-        store.set_agent_thresholds(*capped);
+        auto agent = store.get_agent("agent-confirmed");
+        REQUIRE(agent.has_value());
+        agent->collector_config.cpu_readings = 2;
+        store.set_agent_collector_config(agent->agent_id, agent->collector_config);
 
         StatusEngine engine(store);
 
-        WHEN("CPU worsens enough for the custom warning threshold but not the custom degraded threshold")
+        WHEN("only one high CPU reading is received")
         {
             auto baseline = metrics_with_cpu(10.0);
-            insert_metrics(store, "agent-custom-thresholds", 1000, baseline);
-            engine.evaluate_metrics("agent-custom-thresholds", baseline, 1000);
+            insert_metrics(store, "agent-confirmed", 1000, baseline);
+            engine.evaluate_metrics("agent-confirmed", baseline, 1000);
 
-            auto elevated = metrics_with_cpu(30.0);
-            insert_metrics(store, "agent-custom-thresholds", 2000, elevated);
-            engine.evaluate_metrics("agent-custom-thresholds", elevated, 2000);
+            auto elevated = metrics_with_cpu(96.0);
+            insert_metrics(store, "agent-confirmed", 2000, elevated);
+            engine.evaluate_metrics("agent-confirmed", elevated, 2000);
 
-            THEN("the per-agent thresholds classify the indicator as warning")
+            THEN("the last committed status stays green and the pending count is stored")
             {
-                auto status = store.latest_status_for_indicator("agent-custom-thresholds", "cpu");
+                auto status = store.latest_status_for_indicator("agent-confirmed", "cpu");
                 REQUIRE(status.has_value());
-                REQUIRE(status->new_status == "yellow");
+                REQUIRE(status->new_status == "green");
+                auto pending = store.get_pending_status("agent-confirmed", "cpu");
+                REQUIRE(pending.has_value());
+                REQUIRE(pending->target_status == "red");
+                REQUIRE(pending->count == 1);
             }
         }
 
-        AND_WHEN("CPU crosses the absolute warning cap despite high custom thresholds")
+        AND_WHEN("two consecutive high CPU readings are received")
         {
             auto baseline = metrics_with_cpu(10.0);
-            insert_metrics(store, "agent-absolute-cap", 1000, baseline);
-            engine.evaluate_metrics("agent-absolute-cap", baseline, 1000);
+            insert_metrics(store, "agent-confirmed", 1000, baseline);
+            engine.evaluate_metrics("agent-confirmed", baseline, 1000);
 
-            auto capped_cpu = metrics_with_cpu(72.0);
-            insert_metrics(store, "agent-absolute-cap", 2000, capped_cpu);
-            engine.evaluate_metrics("agent-absolute-cap", capped_cpu, 2000);
+            auto high = metrics_with_cpu(96.0);
+            insert_metrics(store, "agent-confirmed", 2000, high);
+            engine.evaluate_metrics("agent-confirmed", high, 2000);
+            insert_metrics(store, "agent-confirmed", 3000, high);
+            engine.evaluate_metrics("agent-confirmed", high, 3000);
 
-            THEN("the absolute cap still marks the indicator as warning")
+            THEN("the red status is committed and an alert is generated")
             {
-                auto status = store.latest_status_for_indicator("agent-absolute-cap", "cpu");
+                auto status = store.latest_status_for_indicator("agent-confirmed", "cpu");
                 REQUIRE(status.has_value());
-                REQUIRE(status->new_status == "yellow");
+                REQUIRE(status->new_status == "red");
+                REQUIRE_FALSE(store.get_pending_status("agent-confirmed", "cpu").has_value());
+                REQUIRE(store.list_unacknowledged_alerts().size() == 1);
+            }
+        }
+    }
+}
+
+SCENARIO("Status engine uses disk and network collector configuration")
+{
+    GIVEN("an approved agent with configured disk and network checks")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-items");
+
+        auto agent = store.get_agent("agent-items");
+        REQUIRE(agent.has_value());
+        DiskMonitorConfig disk_config;
+        disk_config.mount_point = "/data";
+        disk_config.device = "/dev/sdb1";
+        agent->collector_config.disks.push_back(disk_config);
+        NetworkInterfaceConfig network_config;
+        network_config.interface_name = "eth0";
+        agent->collector_config.networks.push_back(network_config);
+        store.set_agent_collector_config(agent->agent_id, agent->collector_config);
+
+        auto metrics = metrics_with_cpu(10.0);
+        metrics.disks[0].mount_point = "/data";
+        metrics.disks[0].device = "/dev/sdb1";
+        metrics.disks[0].usage_percent = 96.0;
+        metrics.networks[0].interface_name = "eth0";
+        metrics.networks[0].bytes_recv_per_sec = 20'000'000;
+        metrics.networks[0].bytes_sent_per_sec = 20'000'000;
+
+        WHEN("metrics cross disk percent and interface Mbps thresholds")
+        {
+            StatusEngine engine(store);
+            insert_metrics(store, "agent-items", 1000, metrics);
+            engine.evaluate_metrics("agent-items", metrics, 1000);
+
+            THEN("per-item status history and alerts identify the disk and interface")
+            {
+                auto disk_status = store.latest_status_for_indicator("agent-items", "disk:/data");
+                REQUIRE(disk_status.has_value());
+                REQUIRE(disk_status->new_status == "red");
+                REQUIRE(disk_status->message.find("/data (/dev/sdb1)") != std::string::npos);
+
+                auto network_status = store.latest_status_for_indicator("agent-items", "network:eth0");
+                REQUIRE(network_status.has_value());
+                REQUIRE(network_status->new_status == "red");
+                REQUIRE(network_status->message.find("eth0") != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Status engine escalates missing watched processes by consecutive failed readings")
+{
+    GIVEN("an approved agent watching an exact process name")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-process");
+
+        auto agent = store.get_agent("agent-process");
+        REQUIRE(agent.has_value());
+        ProcessWatchConfig watch;
+        watch.name = "TheWatcherAgent.exe";
+        watch.expected_count = 1;
+        agent->collector_config.processes.push_back(watch);
+        store.set_agent_collector_config(agent->agent_id, agent->collector_config);
+
+        StatusEngine engine(store);
+
+        WHEN("the watched process is missing three times")
+        {
+            for (int i = 1; i <= 3; ++i)
+            {
+                auto metrics = metrics_with_processes({"other.exe"});
+                insert_metrics(store, "agent-process", i * 1000, metrics);
+                engine.evaluate_metrics("agent-process", metrics, i * 1000);
+            }
+
+            THEN("the process status reaches red and the alert message names the missing process")
+            {
+                auto status = store.latest_status_for_indicator("agent-process", "process:TheWatcherAgent.exe");
+                REQUIRE(status.has_value());
+                REQUIRE(status->new_status == "red");
+
+                auto alerts = store.list_unacknowledged_alerts();
+                REQUIRE_FALSE(alerts.empty());
+                REQUIRE(alerts.back().message.find("TheWatcherAgent.exe") != std::string::npos);
+            }
+        }
+
+        AND_WHEN("the watched process recovers")
+        {
+            auto missing = metrics_with_processes({"other.exe"});
+            insert_metrics(store, "agent-process", 1000, missing);
+            engine.evaluate_metrics("agent-process", missing, 1000);
+
+            auto recovered = metrics_with_processes({"TheWatcherAgent.exe"});
+            insert_metrics(store, "agent-process", 2000, recovered);
+            engine.evaluate_metrics("agent-process", recovered, 2000);
+
+            THEN("the status returns to green and pending count is cleared")
+            {
+                auto status = store.latest_status_for_indicator("agent-process", "process:TheWatcherAgent.exe");
+                REQUIRE(status.has_value());
+                REQUIRE(status->new_status == "green");
+                REQUIRE_FALSE(store.get_pending_status("agent-process", "process:TheWatcherAgent.exe").has_value());
             }
         }
     }

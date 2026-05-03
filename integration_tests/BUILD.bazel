@@ -14,7 +14,7 @@ cc_test(
         "@cpp_httplib//:httplib",
         "@cppzmq//:cppzmq",
         "@libsodium//:libsodium",
-        "@nlohmann_json//:json",
+        "@libcbor//:cbor",
     ],
     linkopts = select({
         "@platforms//os:windows": [],

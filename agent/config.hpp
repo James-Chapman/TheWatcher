@@ -1,7 +1,6 @@
 #pragma once
 
 #include <filesystem>
-#include <nlohmann/json.hpp>
 #include <string>
 
 namespace thewatcher::agent
@@ -20,16 +19,10 @@ struct AgentConfig
     int process_limit = 25;
     std::string config_path;
 
-    // Load TheWatcherAgent.conf KEY=VALUE config, creating a new config with
-    // fresh identity keys if absent. Existing JSON configs remain readable.
     static AgentConfig load_or_create(const std::filesystem::path& path);
     void save(const std::filesystem::path& path) const;
 
     static std::filesystem::path default_path();
 };
-
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(AgentConfig, agent_id, server_address, enrollment_address,
-                                                server_public_key, server_public_key_fingerprint, agent_public_key,
-                                                agent_secret_key, collection_interval, process_limit)
 
 } // namespace thewatcher::agent

@@ -18,18 +18,6 @@ using json = nlohmann::json;
 
 namespace
 {
-    double setting_number(Store& store, const std::string& key, double fallback)
-    {
-        try
-        {
-            return std::stod(store.get_setting(key, std::to_string(fallback)));
-        }
-        catch (...)
-        {
-            return fallback;
-        }
-    }
-
     double max_percent(const std::vector<double>& values)
     {
         double result = 0.0;
@@ -41,15 +29,6 @@ namespace
         return result;
     }
 
-    double disk_percent(const SystemMetrics& metrics)
-    {
-        std::vector<double> values;
-        values.reserve(metrics.disks.size());
-        for (const auto& disk : metrics.disks)
-            values.push_back(disk.usage_percent);
-        return max_percent(values);
-    }
-
     double temp_percent(const SystemMetrics& metrics)
     {
         std::vector<double> values;
@@ -59,49 +38,50 @@ namespace
         return max_percent(values);
     }
 
-    double process_percent(const SystemMetrics& metrics)
+    double network_mbps(const NetworkMetrics& network)
     {
-        std::vector<double> values;
-        values.reserve(metrics.top_processes.size());
-        for (const auto& process : metrics.top_processes)
-            values.push_back(process.cpu_percent);
-        return max_percent(values);
+        return static_cast<double>(network.bytes_recv_per_sec + network.bytes_sent_per_sec) * 8.0 / 1'000'000.0;
     }
 
-    double network_score(const SystemMetrics& metrics)
+    std::string disk_label(const DiskMetrics& disk)
     {
-        double score = 0.0;
-        for (const auto& net : metrics.networks)
-        {
-            score += static_cast<double>(net.errors_in + net.errors_out + net.drops_in + net.drops_out);
-            if (!net.is_up)
-                score += 1.0;
-        }
-        return score;
-    }
-
-    double value_for_indicator(const SystemMetrics& metrics, const std::string& indicator)
-    {
-        if (indicator == "cpu")
-            return metrics.cpu.usage_percent;
-        if (indicator == "memory")
-            return metrics.memory.usage_percent;
-        if (indicator == "disk")
-            return disk_percent(metrics);
-        if (indicator == "temperature")
-            return temp_percent(metrics);
-        if (indicator == "processes")
-            return process_percent(metrics);
-        if (indicator == "network")
-            return network_score(metrics);
-        return 0.0;
+        return disk.mount_point + " (" + disk.device + ")";
     }
 
     std::string transition_message(const std::string& indicator, IndicatorStatus previous, IndicatorStatus next,
-                                   double value, double average)
+                                   double value, const std::string& unit)
     {
         return indicator + " changed from " + status_to_string(previous) + " to " + status_to_string(next) +
-               " value=" + std::to_string(value) + " five_minute_average=" + std::to_string(average);
+               " value=" + std::to_string(value) + unit;
+    }
+
+    const DiskMonitorConfig* disk_config_for(const CollectorConfig& config, const DiskMetrics& disk)
+    {
+        if (config.disks.empty())
+            return nullptr;
+        for (const auto& item : config.disks)
+        {
+            if (item.mount_point == disk.mount_point)
+                return &item;
+        }
+        return nullptr;
+    }
+
+    const NetworkInterfaceConfig* network_config_for(const CollectorConfig& config, const NetworkMetrics& network)
+    {
+        if (config.networks.empty())
+            return nullptr;
+        for (const auto& item : config.networks)
+        {
+            if (item.interface_name == network.interface_name)
+                return &item;
+        }
+        return nullptr;
+    }
+
+    bool should_monitor_default_network(const NetworkMetrics& network)
+    {
+        return network.interface_name != "lo";
     }
 
     struct WebhookTarget
@@ -230,38 +210,114 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         return;
     }
 
-    const auto rows = store_.get_metrics(agent_id, 256);
-    const auto cutoff = timestamp_ms - 300000;
-    const std::vector<std::string> indicators = {"cpu", "memory", "disk", "network", "temperature", "processes"};
+    const auto config = agent ? agent->collector_config : default_collector_config();
 
-    for (const auto& indicator : indicators)
     {
-        double sum = 0.0;
-        int count = 0;
-        for (const auto& row : rows)
-        {
-            if (row.timestamp_ms < cutoff)
-                continue;
-            try
-            {
-                auto parsed = json::parse(row.metrics_json).get<SystemMetrics>();
-                sum += value_for_indicator(parsed, indicator);
-                ++count;
-            }
-            catch (const std::exception& e)
-            {
-                LOGF_WARNING("Skipping metric row during status evaluation agent_id=%s indicator=%s error=%s",
-                             agent_id.c_str(), indicator.c_str(), e.what());
-            }
-        }
-
-        const auto current_value = value_for_indicator(metrics, indicator);
-        const auto average = count > 0 ? sum / static_cast<double>(count) : current_value;
-        const auto next = classify_percent(agent ? &*agent : nullptr, indicator, current_value, average);
+        const auto indicator = std::string("cpu");
+        const auto raw = classify_percent(metrics.cpu.usage_percent, config.cpu);
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
+        const auto next = confirm_numeric_status(agent_id, indicator, previous, raw, config.cpu_readings);
         record_transition(agent_id, indicator, next,
-                          transition_message(indicator, previous, next, current_value, average), timestamp_ms);
+                          transition_message(indicator, previous, next, metrics.cpu.usage_percent, "%"), timestamp_ms);
+    }
+
+    {
+        const auto indicator = std::string("memory");
+        const auto raw = classify_percent(metrics.memory.usage_percent, config.memory);
+        const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
+        const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
+        const auto next = confirm_numeric_status(agent_id, indicator, previous, raw, config.memory_readings);
+        record_transition(agent_id, indicator, next,
+                          transition_message(indicator, previous, next, metrics.memory.usage_percent, "%"),
+                          timestamp_ms);
+    }
+
+    for (const auto& disk : metrics.disks)
+    {
+        const auto* disk_config = disk_config_for(config, disk);
+        if (disk_config && !disk_config->enabled)
+            continue;
+        if (!config.disks.empty() && !disk_config)
+            continue;
+
+        const auto thresholds = disk_config ? disk_config->thresholds : PercentThresholds{};
+        const auto indicator = "disk:" + disk.mount_point;
+        const auto raw = classify_percent(disk.usage_percent, thresholds);
+        const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
+        const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
+        const auto next = confirm_numeric_status(agent_id, indicator, previous, raw, config.disk_readings);
+        record_transition(agent_id, indicator, next,
+                          transition_message("disk " + disk_label(disk), previous, next, disk.usage_percent, "%"),
+                          timestamp_ms);
+    }
+
+    for (const auto& network : metrics.networks)
+    {
+        const auto* network_config = network_config_for(config, network);
+        if (network_config && !network_config->enabled)
+            continue;
+        if (!config.networks.empty() && !network_config)
+            continue;
+        if (config.networks.empty() && !should_monitor_default_network(network))
+            continue;
+
+        const auto thresholds = network_config ? network_config->thresholds : NetworkThresholds{};
+        const auto value = network_mbps(network);
+        auto raw = classify_network_mbps(value, thresholds);
+        if (!network.is_up)
+            raw = IndicatorStatus::Red;
+
+        const auto indicator = "network:" + network.interface_name;
+        const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
+        const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
+        const auto next = confirm_numeric_status(agent_id, indicator, previous, raw, config.network_readings);
+        record_transition(agent_id, indicator, next,
+                          transition_message("network " + network.interface_name, previous, next, value, "Mbps"),
+                          timestamp_ms);
+    }
+
+    for (const auto& watch : config.processes)
+    {
+        if (!watch.enabled || watch.name.empty())
+            continue;
+
+        int seen = 0;
+        for (const auto& process : metrics.top_processes)
+        {
+            if (process.name == watch.name)
+                ++seen;
+        }
+
+        const auto indicator = "process:" + watch.name;
+        const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
+        const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
+        IndicatorStatus next = IndicatorStatus::Green;
+        if (seen < watch.expected_count)
+        {
+            const auto pending = store_.get_pending_status(agent_id, indicator);
+            const auto missing_count = pending && pending->target_status == "missing" ? pending->count + 1 : 1;
+            store_.set_pending_status(agent_id, indicator, "missing", missing_count);
+            next = process_status_for_count(missing_count, config.process_readings);
+        }
+        else
+        {
+            store_.clear_pending_status(agent_id, indicator);
+        }
+
+        const auto message = "process " + watch.name + " expected=" + std::to_string(watch.expected_count) +
+                             " found=" + std::to_string(seen);
+        record_transition(agent_id, indicator, next, message, timestamp_ms);
+    }
+
+    {
+        const auto indicator = std::string("temperature");
+        const auto value = temp_percent(metrics);
+        const auto next = classify_percent(value, PercentThresholds{});
+        const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
+        const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
+        record_transition(agent_id, indicator, next, transition_message(indicator, previous, next, value, "C"),
+                          timestamp_ms);
     }
 }
 
@@ -279,64 +335,67 @@ void StatusEngine::exit_maintenance(const std::string& agent_id)
     store_.set_agent_maintenance(agent_id, false, "", 0);
 }
 
-IndicatorStatus StatusEngine::classify_percent(const AgentRecord* agent, const std::string& indicator, double value,
-                                               double average)
+IndicatorStatus StatusEngine::classify_percent(double value, const PercentThresholds& thresholds) const
 {
     if (!std::isfinite(value))
         return IndicatorStatus::Grey;
 
-    auto threshold_value = [&](const std::string& level, double fallback) {
-        if (agent)
-        {
-            if (indicator == "cpu")
-            {
-                if (level == "warning")
-                    return agent->cpu_warning_pct_of_avg;
-                if (level == "degraded")
-                    return agent->cpu_degraded_pct_of_avg;
-                return agent->cpu_critical_pct_of_avg;
-            }
-            if (indicator == "memory")
-            {
-                if (level == "warning")
-                    return agent->memory_warning_pct_of_avg;
-                if (level == "degraded")
-                    return agent->memory_degraded_pct_of_avg;
-                return agent->memory_critical_pct_of_avg;
-            }
-            if (indicator == "disk")
-            {
-                if (level == "warning")
-                    return agent->disk_warning_pct_of_avg;
-                if (level == "degraded")
-                    return agent->disk_degraded_pct_of_avg;
-                return agent->disk_critical_pct_of_avg;
-            }
-            if (indicator == "network")
-            {
-                if (level == "warning")
-                    return agent->network_warning_pct_of_avg;
-                if (level == "degraded")
-                    return agent->network_degraded_pct_of_avg;
-                return agent->network_critical_pct_of_avg;
-            }
-        }
-        return setting_number(store_, "threshold." + indicator + "." + level + "_pct_of_avg", fallback);
-    };
-
-    const auto warning_pct = threshold_value("warning", 125.0);
-    const auto amber_pct = threshold_value("degraded", 150.0);
-    const auto red_pct = threshold_value("critical", 200.0);
-    const auto base = average > 0.0 ? average : value;
-    const auto pct_of_avg = base > 0.0 ? (value / base) * 100.0 : 0.0;
-
-    if (pct_of_avg >= red_pct || value >= 95.0)
+    if (value >= thresholds.critical_percent)
         return IndicatorStatus::Red;
-    if (pct_of_avg >= amber_pct || value >= 85.0)
+    if (value >= thresholds.degraded_percent)
         return IndicatorStatus::Amber;
-    if (pct_of_avg >= warning_pct || value >= 70.0)
+    if (value >= thresholds.warning_percent)
         return IndicatorStatus::Yellow;
     return IndicatorStatus::Green;
+}
+
+IndicatorStatus StatusEngine::classify_network_mbps(double value, const NetworkThresholds& thresholds) const
+{
+    if (!std::isfinite(value))
+        return IndicatorStatus::Grey;
+    if (value >= thresholds.critical_mbps)
+        return IndicatorStatus::Red;
+    if (value >= thresholds.degraded_mbps)
+        return IndicatorStatus::Amber;
+    if (value >= thresholds.warning_mbps)
+        return IndicatorStatus::Yellow;
+    return IndicatorStatus::Green;
+}
+
+IndicatorStatus StatusEngine::confirm_numeric_status(const std::string& agent_id, const std::string& indicator,
+                                                     IndicatorStatus previous, IndicatorStatus raw,
+                                                     int required_readings)
+{
+    const auto required = std::max(1, required_readings);
+    if (raw == IndicatorStatus::Green || raw == IndicatorStatus::Grey || !is_worse_status(previous, raw))
+    {
+        store_.clear_pending_status(agent_id, indicator);
+        return raw;
+    }
+
+    const auto target = status_to_string(raw);
+    const auto pending = store_.get_pending_status(agent_id, indicator);
+    const auto count = pending && pending->target_status == target ? pending->count + 1 : 1;
+    if (count < required)
+    {
+        store_.set_pending_status(agent_id, indicator, target, count);
+        LOGF_DEBUG("Pending status confirmation agent_id=%s indicator=%s target=%s count=%d required=%d",
+                   agent_id.c_str(), indicator.c_str(), target.c_str(), count, required);
+        return previous == IndicatorStatus::Grey ? IndicatorStatus::Green : previous;
+    }
+
+    store_.clear_pending_status(agent_id, indicator);
+    return raw;
+}
+
+IndicatorStatus StatusEngine::process_status_for_count(int missing_count, int readings_to_red) const
+{
+    const auto red_after = std::max(1, readings_to_red);
+    if (missing_count >= red_after)
+        return IndicatorStatus::Red;
+    if (missing_count >= std::max(2, ((red_after * 2) + 2) / 3))
+        return IndicatorStatus::Amber;
+    return IndicatorStatus::Yellow;
 }
 
 void StatusEngine::record_transition(const std::string& agent_id, const std::string& indicator, IndicatorStatus next,
@@ -347,7 +406,7 @@ void StatusEngine::record_transition(const std::string& agent_id, const std::str
     if (previous_row && previous == next)
         return;
 
-    const auto final_message = previous_row ? message : indicator + " initial status " + status_to_string(next);
+    const auto final_message = message.empty() ? indicator + " initial status " + status_to_string(next) : message;
     store_.insert_status_history(
         {0, agent_id, indicator, status_to_string(previous), status_to_string(next), final_message, timestamp_ms});
 

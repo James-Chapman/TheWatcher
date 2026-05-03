@@ -1,4 +1,4 @@
-import type { AgentRecord, AlertRecord, AgentThresholds, DashboardAgent, GroupRecord, HealthColor, MetricsSnapshot } from './models';
+import type { AgentRecord, AlertRecord, AgentThresholds, CollectorConfig, DashboardAgent, GroupRecord, HealthColor, MetricsSnapshot, NetworkThresholds, PercentThresholds } from './models';
 export type SummaryKey = 'green' | 'yellow' | 'amber' | 'red' | 'blue' | 'offline';
 export type OverviewGroupFilter = 'all' | 'ungrouped' | string;
 export interface OverviewAgentGroup {
@@ -11,7 +11,12 @@ export interface DisplayAlert extends AlertRecord {
     agentId: string;
 }
 export declare const DEFAULT_THRESHOLDS: AgentThresholds;
-export declare function classifyPercent(value: number): HealthColor;
+export declare const DEFAULT_PERCENT_THRESHOLDS: PercentThresholds;
+export declare const DEFAULT_NETWORK_THRESHOLDS: NetworkThresholds;
+export declare const DEFAULT_COLLECTOR_CONFIG: CollectorConfig;
+export declare function collectorConfigWithDefaults(config?: CollectorConfig): CollectorConfig;
+export declare function classifyPercent(value: number, thresholds?: PercentThresholds): HealthColor;
+export declare function classifyNetworkMbps(value: number, thresholds?: NetworkThresholds): HealthColor;
 export declare function worstColor(colors: HealthColor[]): HealthColor;
 export declare function hostStatus(agent: Pick<DashboardAgent, 'maintenance' | 'components'>): HealthColor;
 export declare function formatBytes(bytes: number): string;

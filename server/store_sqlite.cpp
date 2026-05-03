@@ -2,6 +2,7 @@
 
 #include "common/SingleLog.hpp"
 
+#include <nlohmann/json.hpp>
 #include <sodium.h>
 #include <stdexcept>
 #include <string>
@@ -17,7 +18,8 @@ namespace
         "cpu_warning_pct_of_avg,cpu_degraded_pct_of_avg,cpu_critical_pct_of_avg,"
         "memory_warning_pct_of_avg,memory_degraded_pct_of_avg,memory_critical_pct_of_avg,"
         "disk_warning_pct_of_avg,disk_degraded_pct_of_avg,disk_critical_pct_of_avg,"
-        "network_warning_pct_of_avg,network_degraded_pct_of_avg,network_critical_pct_of_avg";
+        "network_warning_pct_of_avg,network_degraded_pct_of_avg,network_critical_pct_of_avg,"
+        "collector_config_json";
 
     struct Stmt
     {
@@ -74,7 +76,25 @@ namespace
         r.network_warning_pct_of_avg = sqlite3_column_double(s, 23);
         r.network_degraded_pct_of_avg = sqlite3_column_double(s, 24);
         r.network_critical_pct_of_avg = sqlite3_column_double(s, 25);
+        const auto collector_config_json = text_col(s, 26);
+        if (!collector_config_json.empty())
+        {
+            try
+            {
+                r.collector_config = nlohmann::json::parse(collector_config_json).get<CollectorConfig>();
+            }
+            catch (const std::exception& e)
+            {
+                LOGF_WARNING("Invalid collector config for agent_id=%s error=%s", r.agent_id.c_str(), e.what());
+                r.collector_config = default_collector_config();
+            }
+        }
         return r;
+    }
+
+    PendingStatusRecord row_to_pending_status(sqlite3_stmt* s)
+    {
+        return {text_col(s, 0), text_col(s, 1), text_col(s, 2), sqlite3_column_int(s, 3)};
     }
 
     MetricsRow row_to_metrics(sqlite3_stmt* s)
@@ -82,7 +102,13 @@ namespace
         MetricsRow r;
         r.agent_id = text_col(s, 0);
         r.timestamp_ms = sqlite3_column_int64(s, 1);
-        r.metrics_json = text_col(s, 2);
+        const auto* blob = sqlite3_column_blob(s, 2);
+        const auto bytes = sqlite3_column_bytes(s, 2);
+        if (blob != nullptr && bytes > 0)
+        {
+            const auto* data = static_cast<const uint8_t*>(blob);
+            r.metrics_cbor.assign(data, data + bytes);
+        }
         return r;
     }
 
@@ -220,7 +246,8 @@ void SqliteStore::init_schema()
             disk_critical_pct_of_avg    REAL NOT NULL DEFAULT 200.0,
             network_warning_pct_of_avg  REAL NOT NULL DEFAULT 125.0,
             network_degraded_pct_of_avg REAL NOT NULL DEFAULT 150.0,
-            network_critical_pct_of_avg REAL NOT NULL DEFAULT 200.0
+            network_critical_pct_of_avg REAL NOT NULL DEFAULT 200.0,
+            collector_config_json       TEXT NOT NULL DEFAULT ''
         );
     )");
     add_column_if_missing("agents", "rejected", "ALTER TABLE agents ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0;");
@@ -259,12 +286,20 @@ void SqliteStore::init_schema()
                           "ALTER TABLE agents ADD COLUMN network_degraded_pct_of_avg REAL NOT NULL DEFAULT 150.0;");
     add_column_if_missing("agents", "network_critical_pct_of_avg",
                           "ALTER TABLE agents ADD COLUMN network_critical_pct_of_avg REAL NOT NULL DEFAULT 200.0;");
+    add_column_if_missing("agents", "collector_config_json",
+                          "ALTER TABLE agents ADD COLUMN collector_config_json TEXT NOT NULL DEFAULT '';");
+    // Schema break in 0.3.0: metrics column changed from JSON TEXT to CBOR BLOB.
+    // Existing 0.2.x dev databases drop and recreate the metrics table on first start.
+    if (column_exists("metrics", "metrics_json") && !column_exists("metrics", "metrics_cbor"))
+    {
+        exec("DROP TABLE metrics;");
+    }
     exec(R"(
         CREATE TABLE IF NOT EXISTS metrics (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             agent_id     TEXT NOT NULL,
             timestamp_ms INTEGER NOT NULL,
-            metrics_json TEXT NOT NULL,
+            metrics_cbor BLOB NOT NULL,
             FOREIGN KEY (agent_id) REFERENCES agents(agent_id) ON DELETE CASCADE
         );
     )");
@@ -328,6 +363,16 @@ void SqliteStore::init_schema()
     exec("CREATE INDEX IF NOT EXISTS idx_status_history_agent_indicator ON status_history(agent_id, indicator, "
          "created_at DESC);");
     exec(R"(
+        CREATE TABLE IF NOT EXISTS pending_status (
+            agent_id      TEXT NOT NULL,
+            indicator     TEXT NOT NULL,
+            target_status TEXT NOT NULL,
+            count         INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(agent_id, indicator),
+            FOREIGN KEY(agent_id) REFERENCES agents(agent_id) ON DELETE CASCADE
+        );
+    )");
+    exec(R"(
         CREATE TABLE IF NOT EXISTS alerts (
             alert_id        INTEGER PRIMARY KEY AUTOINCREMENT,
             agent_id        TEXT NOT NULL,
@@ -374,8 +419,8 @@ void SqliteStore::upsert_agent(const AgentRecord& rec)
                rec.agent_id.c_str(), rec.approved ? 1 : 0, rec.rejected ? 1 : 0, rec.connected ? 1 : 0,
                rec.maintenance ? 1 : 0, rec.collection_interval, rec.process_limit);
     const char* sql = R"(
-        INSERT INTO agents(agent_id,hostname,platform,curve_public_key_z85,approved,rejected,connected,maintenance,maintenance_reason,maintenance_until,collection_interval,process_limit,first_seen,last_seen,cpu_warning_pct_of_avg,cpu_degraded_pct_of_avg,cpu_critical_pct_of_avg,memory_warning_pct_of_avg,memory_degraded_pct_of_avg,memory_critical_pct_of_avg,disk_warning_pct_of_avg,disk_degraded_pct_of_avg,disk_critical_pct_of_avg,network_warning_pct_of_avg,network_degraded_pct_of_avg,network_critical_pct_of_avg)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO agents(agent_id,hostname,platform,curve_public_key_z85,approved,rejected,connected,maintenance,maintenance_reason,maintenance_until,collection_interval,process_limit,first_seen,last_seen,cpu_warning_pct_of_avg,cpu_degraded_pct_of_avg,cpu_critical_pct_of_avg,memory_warning_pct_of_avg,memory_degraded_pct_of_avg,memory_critical_pct_of_avg,disk_warning_pct_of_avg,disk_degraded_pct_of_avg,disk_critical_pct_of_avg,network_warning_pct_of_avg,network_degraded_pct_of_avg,network_critical_pct_of_avg,collector_config_json)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(agent_id) DO UPDATE SET
             hostname=excluded.hostname,
             platform=excluded.platform,
@@ -386,6 +431,7 @@ void SqliteStore::upsert_agent(const AgentRecord& rec)
             maintenance_until=excluded.maintenance_until,
             collection_interval=excluded.collection_interval,
             process_limit=excluded.process_limit,
+            collector_config_json=excluded.collector_config_json,
             last_seen=excluded.last_seen;
     )";
     Stmt st;
@@ -416,6 +462,8 @@ void SqliteStore::upsert_agent(const AgentRecord& rec)
     sqlite3_bind_double(st.s, 24, rec.network_warning_pct_of_avg);
     sqlite3_bind_double(st.s, 25, rec.network_degraded_pct_of_avg);
     sqlite3_bind_double(st.s, 26, rec.network_critical_pct_of_avg);
+    const auto collector_config_json = nlohmann::json(rec.collector_config).dump();
+    sqlite3_bind_text(st.s, 27, collector_config_json.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step upsert_agent");
 }
 
@@ -556,6 +604,17 @@ void SqliteStore::set_agent_thresholds(const AgentRecord& rec)
     sqlite3_bind_double(st.s, 12, rec.network_critical_pct_of_avg);
     sqlite3_bind_text(st.s, 13, rec.agent_id.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step set_agent_thresholds");
+}
+
+void SqliteStore::set_agent_collector_config(const std::string& agent_id, const CollectorConfig& config)
+{
+    const auto collector_config_json = nlohmann::json(config).dump();
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "UPDATE agents SET collector_config_json=? WHERE agent_id=?;", -1, &st.s, nullptr),
+          db_, "prepare set_agent_collector_config");
+    sqlite3_bind_text(st.s, 1, collector_config_json.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    check(sqlite3_step(st.s), db_, "step set_agent_collector_config");
 }
 
 std::vector<GroupRecord> SqliteStore::list_groups()
@@ -753,12 +812,12 @@ void SqliteStore::delete_session(const std::string& token)
 void SqliteStore::insert_metrics(const MetricsRow& row)
 {
     Stmt st;
-    check(sqlite3_prepare_v2(db_, "INSERT INTO metrics(agent_id,timestamp_ms,metrics_json) VALUES(?,?,?);", -1, &st.s,
+    check(sqlite3_prepare_v2(db_, "INSERT INTO metrics(agent_id,timestamp_ms,metrics_cbor) VALUES(?,?,?);", -1, &st.s,
                              nullptr),
           db_, "prepare insert_metrics");
     sqlite3_bind_text(st.s, 1, row.agent_id.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(st.s, 2, row.timestamp_ms);
-    sqlite3_bind_text(st.s, 3, row.metrics_json.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_blob(st.s, 3, row.metrics_cbor.data(), static_cast<int>(row.metrics_cbor.size()), SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step insert_metrics");
 }
 
@@ -766,7 +825,7 @@ std::vector<MetricsRow> SqliteStore::get_metrics(const std::string& agent_id, in
 {
     Stmt st;
     check(sqlite3_prepare_v2(db_,
-                             "SELECT agent_id,timestamp_ms,metrics_json FROM metrics WHERE agent_id=? ORDER BY "
+                             "SELECT agent_id,timestamp_ms,metrics_cbor FROM metrics WHERE agent_id=? ORDER BY "
                              "timestamp_ms DESC LIMIT ?;",
                              -1, &st.s, nullptr),
           db_, "prepare get_metrics");
@@ -781,7 +840,7 @@ std::vector<MetricsRow> SqliteStore::get_metrics(const std::string& agent_id, in
 std::vector<MetricsRow> SqliteStore::latest_metrics()
 {
     const char* sql = R"(
-        SELECT m.agent_id, m.timestamp_ms, m.metrics_json
+        SELECT m.agent_id, m.timestamp_ms, m.metrics_cbor
         FROM metrics m
         INNER JOIN (
             SELECT agent_id, MAX(timestamp_ms) AS ts FROM metrics GROUP BY agent_id
@@ -844,6 +903,49 @@ std::vector<StatusHistoryRow> SqliteStore::list_status_history(const std::string
     while (sqlite3_step(st.s) == SQLITE_ROW)
         out.push_back(row_to_status(st.s));
     return out;
+}
+
+std::optional<PendingStatusRecord> SqliteStore::get_pending_status(const std::string& agent_id,
+                                                                   const std::string& indicator)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT agent_id,indicator,target_status,count FROM pending_status WHERE agent_id=? AND "
+                             "indicator=?;",
+                             -1, &st.s, nullptr),
+          db_, "prepare get_pending_status");
+    sqlite3_bind_text(st.s, 1, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, indicator.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st.s) == SQLITE_ROW)
+        return row_to_pending_status(st.s);
+    return std::nullopt;
+}
+
+void SqliteStore::set_pending_status(const std::string& agent_id, const std::string& indicator,
+                                     const std::string& target_status, int count)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "INSERT INTO pending_status(agent_id,indicator,target_status,count) VALUES(?,?,?,?) "
+                             "ON CONFLICT(agent_id,indicator) DO UPDATE SET "
+                             "target_status=excluded.target_status,count=excluded.count;",
+                             -1, &st.s, nullptr),
+          db_, "prepare set_pending_status");
+    sqlite3_bind_text(st.s, 1, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, indicator.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 3, target_status.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st.s, 4, count);
+    check(sqlite3_step(st.s), db_, "step set_pending_status");
+}
+
+void SqliteStore::clear_pending_status(const std::string& agent_id, const std::string& indicator)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "DELETE FROM pending_status WHERE agent_id=? AND indicator=?;", -1, &st.s, nullptr),
+          db_, "prepare clear_pending_status");
+    sqlite3_bind_text(st.s, 1, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, indicator.c_str(), -1, SQLITE_TRANSIENT);
+    check(sqlite3_step(st.s), db_, "step clear_pending_status");
 }
 
 int64_t SqliteStore::insert_alert(const AlertRecord& alert)

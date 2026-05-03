@@ -13,7 +13,7 @@ cc_library(
     deps = [
         "//common",
         "@libsodium//:libsodium",
-        "@nlohmann_json//:json",
+        "@libcbor//:cbor",
     ],
     visibility = [
         "//integration_tests:__pkg__",
@@ -36,7 +36,7 @@ cc_library(
         "//common:common_core",
         "@cpp_httplib//:httplib",
         "@libsodium//:libsodium",
-        "@nlohmann_json//:json",
+        "@libcbor//:cbor",
         "@sqlite3//:sqlite3",
     ],
     visibility = [
@@ -56,6 +56,7 @@ cc_library(
     ],
     hdrs = [
         "api.hpp",
+        "api_json.hpp",
         "server.hpp",
         "startup_signal.hpp",
         "zap_handler.hpp",
@@ -71,7 +72,7 @@ cc_library(
         "@cppzmq//:cppzmq",
         "@cpp_httplib//:httplib",
         "@libsodium//:libsodium",
-        "@nlohmann_json//:json",
+        "@libcbor//:cbor",
         "@sqlite3//:sqlite3",
     ],
     visibility = [

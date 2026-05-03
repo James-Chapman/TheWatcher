@@ -1,0 +1,23 @@
+config_test = executable(
+  'agent_config_test',
+  ['config_test.cpp'],
+  include_directories: root_inc,
+  dependencies: [agent_dep, catch2_dep, cbor_dep, platform_deps],
+)
+test('agent_config', config_test)
+
+collector_contract_test = executable(
+  'collector_contract_test',
+  ['collector_contract_test.cpp'],
+  include_directories: root_inc,
+  dependencies: [collectors_dep, common_dep, catch2_dep, platform_deps],
+)
+test('collector_contract', collector_contract_test)
+
+enrollment_test = executable(
+  'enrollment_test',
+  ['enrollment_test.cpp'],
+  include_directories: root_inc,
+  dependencies: [agent_dep, catch2_dep, cppzmq_dep, sodium_dep, platform_deps],
+)
+test('enrollment', enrollment_test)

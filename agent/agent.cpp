@@ -76,6 +76,20 @@ namespace
                        static_cast<unsigned long long>(process.memory_rss_bytes));
         }
     }
+
+    void apply_process_watches(std::vector<std::unique_ptr<Collector>>& collectors,
+                               const std::vector<ProcessWatchConfig>& watches)
+    {
+        for (auto& c : collectors)
+        {
+            if (auto* process = dynamic_cast<ProcessCollector*>(c.get()))
+            {
+                process->set_watches(watches);
+                LOGF_DEBUG("Applied %zu process watch(es) to process collector", watches.size());
+                break;
+            }
+        }
+    }
 } // namespace
 
 // ── Construction ──────────────────────────────────────────────────────────────
@@ -341,14 +355,17 @@ void Agent::handle_frame(const proto::Frame& f)
         auto cfg = proto::unpack<ConfigUpdate>(f.payload);
         interval_seconds_.store(cfg.interval_seconds);
         process_limit_.store(cfg.process_limit);
-        LOGF_INFO("Applied config update interval_seconds=%d process_limit=%d", cfg.interval_seconds,
-                  cfg.process_limit);
+        collector_config_ = cfg.collector_config;
+        LOGF_INFO("Applied config update interval_seconds=%d process_limit=%d disk_configs=%zu network_configs=%zu "
+                  "process_watches=%zu",
+                  cfg.interval_seconds, cfg.process_limit, collector_config_.disks.size(),
+                  collector_config_.networks.size(), collector_config_.processes.size());
         for (auto& c : collectors_)
         {
             if (auto* process = dynamic_cast<ProcessCollector*>(c.get()))
             {
                 process->set_limit(cfg.process_limit);
-                break;
+                process->set_watches(collector_config_.processes);
             }
         }
     }
@@ -420,6 +437,7 @@ void Agent::handle_command(const CommandMessage& cmd)
         collectors_.emplace_back(std::make_unique<TemperatureCollector>());
         collectors_.emplace_back(std::make_unique<ProcessCollector>(process_limit_.load()));
         collectors_.emplace_back(std::make_unique<NetworkCollector>());
+        apply_process_watches(collectors_, collector_config_.processes);
         ack(true, "collectors restarted");
         break;
     case CommandType::PAUSE:

@@ -1,4 +1,4 @@
-import type { AgentRecord, AgentThresholds, AlertRecord, GroupRecord, MetricsSnapshot, SessionInfo, UserRecord } from './models';
+import type { AgentCollectorConfigUpdate, AgentRecord, AgentThresholds, AlertRecord, GroupRecord, MetricsSnapshot, SessionInfo, UserRecord } from './models';
 export declare function fetchSession(): Promise<SessionInfo>;
 export declare function login(username: string, password: string): Promise<SessionInfo>;
 export declare function logout(): Promise<void>;
@@ -25,6 +25,7 @@ export declare function deleteAgent(agentId: string): Promise<void>;
 export declare function setAgentGroups(agentId: string, groupIds: number[]): Promise<void>;
 export declare function setAgentInterval(agentId: string, intervalSeconds: number): Promise<void>;
 export declare function setAgentProcessLimit(agentId: string, limit: number): Promise<void>;
+export declare function setAgentCollectorConfig(agentId: string, update: AgentCollectorConfigUpdate): Promise<void>;
 export declare function setAgentThresholds(agentId: string, thresholds: AgentThresholds): Promise<void>;
 export declare function setMaintenance(agentId: string, reason: string, untilMs: number): Promise<void>;
 export declare function pauseAgent(agentId: string): Promise<void>;

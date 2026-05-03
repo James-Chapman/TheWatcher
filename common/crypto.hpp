@@ -1,12 +1,12 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <iomanip>
 #include <sodium.h>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <zmq.h>
 
 namespace thewatcher::crypto
 {
@@ -18,11 +18,29 @@ struct CurveKeyPair
     std::string secret_key_z85; // 40 chars
 };
 
+inline constexpr char z85_alphabet[] =
+    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
+
+inline int z85_digit(char encoded)
+{
+    for (int i = 0; i < 85; ++i)
+    {
+        if (z85_alphabet[i] == encoded)
+        {
+            return i;
+        }
+    }
+
+    throw std::invalid_argument("Invalid z85 character");
+}
+
 inline void init()
 {
     if (sodium_init() < 0)
         throw std::runtime_error("libsodium initialisation failed");
 }
+
+inline std::string z85_encode(const std::array<unsigned char, 32>& raw);
 
 // Generate a new ZMQ CURVE keypair via libsodium Curve25519.
 inline CurveKeyPair generate_curve_keypair()
@@ -33,16 +51,8 @@ inline CurveKeyPair generate_curve_keypair()
     crypto_box_keypair(pk.data(), sk.data());
 
     CurveKeyPair kp;
-    kp.public_key_z85.resize(41);
-    kp.secret_key_z85.resize(41);
-
-    if (!zmq_z85_encode(kp.public_key_z85.data(), pk.data(), 32))
-        throw std::runtime_error("z85 encode of public key failed");
-    if (!zmq_z85_encode(kp.secret_key_z85.data(), sk.data(), 32))
-        throw std::runtime_error("z85 encode of secret key failed");
-
-    kp.public_key_z85.resize(40);
-    kp.secret_key_z85.resize(40);
+    kp.public_key_z85 = z85_encode(pk);
+    kp.secret_key_z85 = z85_encode(sk);
     return kp;
 }
 
@@ -51,19 +61,52 @@ inline std::array<unsigned char, 32> z85_decode(const std::string& z85)
 {
     if (z85.size() != 40)
         throw std::invalid_argument("CURVE z85 key must be exactly 40 characters");
+
     std::array<unsigned char, 32> raw{};
-    if (!zmq_z85_decode(raw.data(), z85.c_str()))
-        throw std::runtime_error("z85 decode failed");
+
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        uint64_t value = 0;
+        for (std::size_t j = 0; j < 5; ++j)
+        {
+            value = (value * 85u) + static_cast<uint64_t>(z85_digit(z85[(i * 5) + j]));
+        }
+        if (value > UINT32_MAX)
+        {
+            throw std::runtime_error("z85 decode overflow");
+        }
+
+        const auto decoded = static_cast<uint32_t>(value);
+        raw[(i * 4) + 0] = static_cast<unsigned char>((decoded >> 24) & 0xffu);
+        raw[(i * 4) + 1] = static_cast<unsigned char>((decoded >> 16) & 0xffu);
+        raw[(i * 4) + 2] = static_cast<unsigned char>((decoded >> 8) & 0xffu);
+        raw[(i * 4) + 3] = static_cast<unsigned char>(decoded & 0xffu);
+    }
+
     return raw;
 }
 
 // Encode a raw 32-byte key to z85.
 inline std::string z85_encode(const std::array<unsigned char, 32>& raw)
 {
-    std::string z85(41, '\0');
-    if (!zmq_z85_encode(z85.data(), raw.data(), 32))
-        throw std::runtime_error("z85 encode failed");
-    z85.resize(40);
+    std::string z85;
+    z85.reserve(40);
+
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        uint32_t value = (static_cast<uint32_t>(raw[(i * 4) + 0]) << 24) |
+                         (static_cast<uint32_t>(raw[(i * 4) + 1]) << 16) |
+                         (static_cast<uint32_t>(raw[(i * 4) + 2]) << 8) | static_cast<uint32_t>(raw[(i * 4) + 3]);
+
+        char encoded[5]{};
+        for (int j = 4; j >= 0; --j)
+        {
+            encoded[j] = z85_alphabet[value % 85u];
+            value /= 85u;
+        }
+        z85.append(encoded, 5);
+    }
+
     return z85;
 }
 

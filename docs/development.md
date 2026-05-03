@@ -56,6 +56,12 @@ npm.cmd test
 - Add tests before behavior changes.
 - Update docs for every behavior or workflow change.
 - Bump `MODULE.bazel` version and update `CHANGELOG.md` for each change set.
+- Bazel builds ZeroMQ as a static archive with libsodium/CURVE support through
+  `third_party/libzmq.BUILD`; do not add vcpkg manifests or vcpkg include/link
+  paths to Bazel targets.
+- Meson builds ZeroMQ and libsodium as local static subprojects from
+  `subprojects/*.wrap` plus `subprojects/packagefiles/`; do not add vcpkg,
+  pkg-config, or system package assumptions for these dependencies.
 - Keep persistence/status tests on `//server:server_store` when they do not
   need ZeroMQ. Use `//server:server_lib` only for tests that exercise the full
   server runtime.
@@ -101,15 +107,19 @@ usage, services, packages, or custom application health.
 5. Add the collector to the agent runtime.
 
    Register it in `Agent::Agent()` in `agent/agent.cpp`. If it needs runtime
-   settings, add those settings to `common/commands.hpp`, `server/store.hpp`,
-   `server/store_sqlite.cpp`, `server/api.cpp`, `dashboard/src/models.ts`, and
-   the dashboard controls.
+   settings, add those settings to `common/collector_config.hpp`,
+   `common/commands.hpp`, `server/store.hpp`, `server/store_sqlite.cpp`,
+   `server/api.cpp`, `dashboard/src/models.ts`, and the Agents Configure
+   modal. `ConfigUpdate` is the agent-facing carrier for these settings.
 
 6. Update dashboard models and status mapping.
 
    Update `dashboard/src/models.ts` for the API shape, `dashboard/src/status.ts`
    for health classification, and `dashboard/src/main.tsx` if the UI needs new
-   controls or columns.
+   controls or columns. Collector thresholds should be absolute values in the
+   same units the collector reports: percentages for CPU, memory, and disks;
+   combined megabits per second for network interfaces; exact executable counts
+   for process watches.
    If the new collector becomes an alerting indicator, also update
    `server/status_engine.cpp` and `server_tests/status_engine_test.cpp`.
 
@@ -164,7 +174,7 @@ Current archive-backed dependencies:
 - `libzmq`
 - `libsodium`
 - `cppzmq`
-- `msgpack-cxx`
+- `libcbor`
 
 See [Bazel Build Notes](bazel-build.md) before changing third-party wrappers.
 

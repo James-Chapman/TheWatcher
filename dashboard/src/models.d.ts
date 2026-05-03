@@ -17,6 +17,7 @@ export interface AgentRecord {
     last_seen: number;
     group_ids?: number[];
     thresholds?: AgentThresholds;
+    collector_config?: CollectorConfig;
 }
 export interface IndicatorThresholds {
     warning_pct_of_avg: number;
@@ -28,6 +29,49 @@ export interface AgentThresholds {
     memory: IndicatorThresholds;
     disk: IndicatorThresholds;
     network: IndicatorThresholds;
+}
+export interface PercentThresholds {
+    warning_percent: number;
+    degraded_percent: number;
+    critical_percent: number;
+}
+export interface NetworkThresholds {
+    warning_mbps: number;
+    degraded_mbps: number;
+    critical_mbps: number;
+}
+export interface DiskMonitorConfig {
+    mount_point: string;
+    device: string;
+    enabled: boolean;
+    thresholds: PercentThresholds;
+}
+export interface NetworkInterfaceConfig {
+    interface_name: string;
+    enabled: boolean;
+    thresholds: NetworkThresholds;
+}
+export interface ProcessWatchConfig {
+    name: string;
+    expected_count: number;
+    enabled: boolean;
+}
+export interface CollectorConfig {
+    cpu: PercentThresholds;
+    memory: PercentThresholds;
+    cpu_readings: number;
+    memory_readings: number;
+    disk_readings: number;
+    network_readings: number;
+    process_readings: number;
+    disks: DiskMonitorConfig[];
+    networks: NetworkInterfaceConfig[];
+    processes: ProcessWatchConfig[];
+}
+export interface AgentCollectorConfigUpdate {
+    collection_interval: number;
+    process_limit: number;
+    collector_config: CollectorConfig;
 }
 export interface GroupRecord {
     group_id: number;
@@ -138,6 +182,7 @@ export interface DashboardAgent {
     collectionInterval: number;
     processLimit: number;
     thresholds: AgentThresholds;
+    collectorConfig: CollectorConfig;
     lastSeen: number;
     uptime: string;
     group: string;

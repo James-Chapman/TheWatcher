@@ -1,4 +1,13 @@
-import type { AgentRecord, AgentThresholds, AlertRecord, GroupRecord, MetricsSnapshot, SessionInfo, UserRecord } from './models';
+import type {
+  AgentCollectorConfigUpdate,
+  AgentRecord,
+  AgentThresholds,
+  AlertRecord,
+  GroupRecord,
+  MetricsSnapshot,
+  SessionInfo,
+  UserRecord,
+} from './models';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -113,6 +122,10 @@ export async function setAgentInterval(agentId: string, intervalSeconds: number)
 
 export async function setAgentProcessLimit(agentId: string, limit: number): Promise<void> {
   await jsonPost<{ ok: boolean }>(`/api/agents/${encodeURIComponent(agentId)}/set_process_limit`, { limit });
+}
+
+export async function setAgentCollectorConfig(agentId: string, update: AgentCollectorConfigUpdate): Promise<void> {
+  await jsonPost<{ ok: boolean }>(`/api/agents/${encodeURIComponent(agentId)}/collector_config`, update);
 }
 
 export async function setAgentThresholds(agentId: string, thresholds: AgentThresholds): Promise<void> {

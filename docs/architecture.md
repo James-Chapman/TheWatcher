@@ -19,7 +19,7 @@ server/config.cpp
 
 Responsibilities:
 
-- Load or create `server.json`.
+- Load or create `TheWatcherServer.conf` (KEY=VALUE format).
 - Bind the ZeroMQ ROUTER data socket on `bind_address`.
 - Bind the ZeroMQ REP enrollment socket on `enrollment_address`.
 - Start the HTTP REST API on `api_host:api_port`.
@@ -77,8 +77,10 @@ common/logging.hpp
 common/windows_service.hpp
 ```
 
-Protocol frames are msgpack-encoded `thewatcher::proto::Frame` values. Each
-frame has a `FrameType`, `agent_id`, `timestamp_ms`, and typed payload.
+Protocol frames are CBOR-encoded `thewatcher::proto::Frame` values (libcbor
+0.13.0). Each frame is a definite-length CBOR array of `[type, agent_id,
+timestamp_ms, payload]`. The payload is itself a CBOR-encoded buffer whose
+shape is determined by `FrameType`.
 
 Frame types:
 
@@ -93,8 +95,10 @@ Frame types:
 | `ENROLL_RESPONSE` | Server to agent | Pending, approved, or rejected enrollment state. Approved responses include the server public key and BLAKE2b-256 fingerprint. |
 | `CONFIG_REQUEST` | Agent to server | Requests current runtime settings after metrics submission. |
 
-Commands are defined in `common/commands.hpp`. Metrics are defined in
-`common/metrics.hpp` and serialized to JSON for the REST API.
+Commands are defined in `common/commands.hpp` and CBOR-serialised. Metrics are
+defined in `common/metrics.hpp`, CBOR-serialised on the wire, persisted as a
+CBOR BLOB in SQLite, and converted to JSON inside `server/api.cpp` (via
+`server/api_json.hpp`'s nlohmann adapters) when served to the dashboard.
 
 ## Storage
 

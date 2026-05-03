@@ -17,37 +17,36 @@ import {
   requestAgentStatus,
   restartAgentCollectors,
   resumeAgent,
+  setAgentCollectorConfig,
   setAgentGroups,
-  setAgentInterval,
-  setAgentProcessLimit,
-  setAgentThresholds,
   setMaintenance,
 } from './api';
 import type {
-  AgentThresholds,
+  AgentCollectorConfigUpdate,
   AlertRecord,
+  CollectorConfig,
   DashboardAgent,
+  DiskMonitorConfig,
   GroupRecord,
   HealthColor,
-  IndicatorThresholds,
+  NetworkInterfaceConfig,
+  ProcessWatchConfig,
   SessionInfo,
   UserRecord,
 } from './models';
-import { groupOverviewAgents, summaryCounts, toDashboardAgents, toDisplayAlerts, type OverviewGroupFilter } from './status';
+import {
+  DEFAULT_NETWORK_THRESHOLDS,
+  DEFAULT_PERCENT_THRESHOLDS,
+  collectorConfigWithDefaults,
+  groupOverviewAgents,
+  summaryCounts,
+  toDashboardAgents,
+  toDisplayAlerts,
+  type OverviewGroupFilter,
+} from './status';
 import './styles.css';
 
 const COMPONENT_LABELS = ['CPU', 'Memory', 'Disk', 'Network', 'Temp', 'Proc', 'Heartbeat'];
-const THRESHOLD_INDICATORS: Array<keyof AgentThresholds> = ['cpu', 'memory', 'disk', 'network'];
-const THRESHOLD_LEVELS: Array<keyof IndicatorThresholds> = [
-  'warning_pct_of_avg',
-  'degraded_pct_of_avg',
-  'critical_pct_of_avg',
-];
-const THRESHOLD_LABELS: Record<keyof IndicatorThresholds, string> = {
-  warning_pct_of_avg: 'Warn',
-  degraded_pct_of_avg: 'Degrade',
-  critical_pct_of_avg: 'Critical',
-};
 
 type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users';
 
@@ -75,10 +74,8 @@ function Dashboard() {
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [busyAction, setBusyAction] = React.useState<string | null>(null);
-  const [intervalDrafts, setIntervalDrafts] = React.useState<Record<string, string>>({});
-  const [processDrafts, setProcessDrafts] = React.useState<Record<string, string>>({});
   const [groupDrafts, setGroupDrafts] = React.useState<Record<string, string>>({});
-  const [thresholdDrafts, setThresholdDrafts] = React.useState<Record<string, Record<string, string>>>({});
+  const [configAgentId, setConfigAgentId] = React.useState<string | null>(null);
   const [overviewGroupFilter, setOverviewGroupFilter] = React.useState<OverviewGroupFilter>('all');
 
   const refresh = React.useCallback(async () => {
@@ -136,6 +133,7 @@ function Dashboard() {
   const displayAlerts = toDisplayAlerts(alerts, agents);
   const admin = session.role === 'admin';
   const operator = session.role === 'admin' || session.role === 'operator';
+  const configAgent = agents.find((agent) => agent.id === configAgentId) ?? null;
 
   return (
     <>
@@ -210,17 +208,21 @@ function Dashboard() {
           error={error}
           groupDrafts={groupDrafts}
           groups={groups}
-          intervalDrafts={intervalDrafts}
           loading={loading}
           admin={admin}
           operator={operator}
-          processDrafts={processDrafts}
+          onConfigure={setConfigAgentId}
           runAction={runAction}
           setGroupDrafts={setGroupDrafts}
-          setIntervalDrafts={setIntervalDrafts}
-          setProcessDrafts={setProcessDrafts}
-          setThresholdDrafts={setThresholdDrafts}
-          thresholdDrafts={thresholdDrafts}
+        />
+      ) : null}
+      {configAgent ? (
+        <AgentConfigModal
+          agent={configAgent}
+          busy={busyAction === `${configAgent.id}:collector_config`}
+          onClose={() => setConfigAgentId(null)}
+          operator={operator && canManageAgent(configAgent)}
+          runAction={runAction}
         />
       ) : null}
       {view === 'pending' ? (
@@ -404,16 +406,11 @@ function AgentManagement({
   error,
   groupDrafts,
   groups,
-  intervalDrafts,
   loading,
+  onConfigure,
   operator,
-  processDrafts,
   runAction,
   setGroupDrafts,
-  setIntervalDrafts,
-  setProcessDrafts,
-  setThresholdDrafts,
-  thresholdDrafts,
 }: {
   admin: boolean;
   agents: DashboardAgent[];
@@ -421,49 +418,12 @@ function AgentManagement({
   error: string | null;
   groupDrafts: Record<string, string>;
   groups: GroupRecord[];
-  intervalDrafts: Record<string, string>;
   loading: boolean;
+  onConfigure: (agentId: string) => void;
   operator: boolean;
-  processDrafts: Record<string, string>;
   runAction: (key: string, action: () => Promise<void>) => Promise<void>;
   setGroupDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  setIntervalDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  setProcessDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  setThresholdDrafts: React.Dispatch<React.SetStateAction<Record<string, Record<string, string>>>>;
-  thresholdDrafts: Record<string, Record<string, string>>;
 }) {
-  const numericDraft = (value: string | undefined, fallback: number) => {
-    const parsed = Number.parseInt(value ?? '', 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-  };
-  const thresholdKey = (indicator: keyof AgentThresholds, level: keyof IndicatorThresholds) => `${indicator}.${level}`;
-  const thresholdDraftValue = (agent: DashboardAgent, indicator: keyof AgentThresholds, level: keyof IndicatorThresholds) =>
-    thresholdDrafts[agent.id]?.[thresholdKey(indicator, level)] ?? String(agent.thresholds[indicator][level]);
-  const setThresholdDraft = (
-    agent: DashboardAgent,
-    indicator: keyof AgentThresholds,
-    level: keyof IndicatorThresholds,
-    value: string,
-  ) => {
-    setThresholdDrafts((current) => ({
-      ...current,
-      [agent.id]: {
-        ...(current[agent.id] ?? {}),
-        [thresholdKey(indicator, level)]: value,
-      },
-    }));
-  };
-  const thresholdPayload = (agent: DashboardAgent): AgentThresholds => {
-    const next = structuredClone(agent.thresholds);
-    THRESHOLD_INDICATORS.forEach((indicator) => {
-      THRESHOLD_LEVELS.forEach((level) => {
-        const parsed = Number.parseFloat(thresholdDraftValue(agent, indicator, level));
-        next[indicator][level] = Number.isFinite(parsed) && parsed > 0 ? parsed : agent.thresholds[indicator][level];
-      });
-    });
-    return next;
-  };
-
   return (
     <main className="table-wrap management-wrap">
       {error ? <div className="banner error">API error: {error}</div> : null}
@@ -478,21 +438,29 @@ function AgentManagement({
               <th>State</th>
               <th>Last Seen</th>
               <th>Groups</th>
-              <th>Settings</th>
               <th>Commands</th>
               <th>Delete</th>
             </tr>
           </thead>
           <tbody>
             {agents.map((agent) => {
-              const intervalValue = intervalDrafts[agent.id] ?? String(agent.collectionInterval);
-              const processValue = processDrafts[agent.id] ?? String(agent.processLimit);
               const groupValue = groupDrafts[agent.id] ?? String(agent.groupIds[0] ?? groups[0]?.group_id ?? 0);
               const manageable = operator && canManageAgent(agent);
               const maintenanceCommand = maintenanceAction(agent);
               return (
                 <tr key={agent.id}>
-                  <td><AgentIdentity id={agent.id} name={agent.name} /></td>
+                  <td>
+                    <div className="agent-config-cell">
+                      <AgentIdentity id={agent.id} name={agent.name} />
+                      <ActionButton
+                        busy={busyAction === `${agent.id}:configure`}
+                        disabled={!manageable}
+                        icon={<SlidersHorizontal size={14} />}
+                        label="Configure"
+                        onClick={() => onConfigure(agent.id)}
+                      />
+                    </div>
+                  </td>
                   <td>{agent.platform}</td>
                   <td><StatusDot color={agent.status} label={colorLabel(agent.status)} /></td>
                   <td className="uptime">{agent.lastSeen > 0 ? `${Math.floor((Date.now() - agent.lastSeen) / 60000)}m` : 'never'}</td>
@@ -505,34 +473,6 @@ function AgentManagement({
                         ))}
                       </select>
                       <ActionButton busy={busyAction === `${agent.id}:groups`} disabled={!admin} icon={<SlidersHorizontal size={14} />} label="Set" onClick={() => runAction(`${agent.id}:groups`, () => setAgentGroups(agent.id, Number(groupValue) > 0 ? [Number(groupValue)] : []))} />
-                    </div>
-                  </td>
-                  <td>
-                    <div className="settings-grid">
-                      <label>Interval<input min="1" type="number" value={intervalValue} onChange={(event) => setIntervalDrafts((current) => ({ ...current, [agent.id]: event.target.value }))} /></label>
-                      <ActionButton busy={busyAction === `${agent.id}:interval`} disabled={!manageable} icon={<SlidersHorizontal size={14} />} label="Set" onClick={() => runAction(`${agent.id}:interval`, () => setAgentInterval(agent.id, numericDraft(intervalValue, 30)))} />
-                      <label>Processes<input min="1" type="number" value={processValue} onChange={(event) => setProcessDrafts((current) => ({ ...current, [agent.id]: event.target.value }))} /></label>
-                      <ActionButton busy={busyAction === `${agent.id}:processes`} disabled={!manageable} icon={<SlidersHorizontal size={14} />} label="Set" onClick={() => runAction(`${agent.id}:processes`, () => setAgentProcessLimit(agent.id, numericDraft(processValue, 10)))} />
-                      <div className="threshold-settings">
-                        {THRESHOLD_INDICATORS.map((indicator) => (
-                          <fieldset key={indicator}>
-                            <legend>{indicator}</legend>
-                            {THRESHOLD_LEVELS.map((level) => (
-                              <label key={level}>
-                                {THRESHOLD_LABELS[level]}
-                                <input
-                                  min="1"
-                                  step="1"
-                                  type="number"
-                                  value={thresholdDraftValue(agent, indicator, level)}
-                                  onChange={(event) => setThresholdDraft(agent, indicator, level, event.target.value)}
-                                />
-                              </label>
-                            ))}
-                          </fieldset>
-                        ))}
-                      </div>
-                      <ActionButton busy={busyAction === `${agent.id}:thresholds`} disabled={!manageable} icon={<SlidersHorizontal size={14} />} label="Thresholds" onClick={() => runAction(`${agent.id}:thresholds`, () => setAgentThresholds(agent.id, thresholdPayload(agent)))} />
                     </div>
                   </td>
                   <td>
@@ -550,6 +490,281 @@ function AgentManagement({
         </table>
       </div>
     </main>
+  );
+}
+
+function buildCollectorDraft(agent: DashboardAgent): AgentCollectorConfigUpdate {
+  const config = collectorConfigWithDefaults(agent.collectorConfig);
+  const diskByMount = new Map(config.disks.map((disk) => [disk.mount_point, disk]));
+  const metricDisks =
+    agent.metrics?.disks
+      .filter((disk) => !diskByMount.has(disk.mount_point))
+      .map<DiskMonitorConfig>((disk) => ({
+        mount_point: disk.mount_point,
+        device: disk.device,
+        enabled: true,
+        thresholds: { ...DEFAULT_PERCENT_THRESHOLDS },
+      })) ?? [];
+  const networkByName = new Map(config.networks.map((network) => [network.interface_name, network]));
+  const metricNetworks =
+    agent.metrics?.networks
+      .filter((network) => network.interface_name !== 'lo' && !networkByName.has(network.interface_name))
+      .map<NetworkInterfaceConfig>((network) => ({
+        interface_name: network.interface_name,
+        enabled: true,
+        thresholds: { ...DEFAULT_NETWORK_THRESHOLDS },
+      })) ?? [];
+
+  return {
+    collection_interval: agent.collectionInterval,
+    process_limit: agent.processLimit,
+    collector_config: {
+      ...config,
+      cpu: { ...config.cpu },
+      memory: { ...config.memory },
+      disks: [...config.disks.map((disk) => ({ ...disk, thresholds: { ...disk.thresholds } })), ...metricDisks],
+      networks: [
+        ...config.networks.map((network) => ({ ...network, thresholds: { ...network.thresholds } })),
+        ...metricNetworks,
+      ],
+      processes: config.processes.map((process) => ({ ...process })),
+    },
+  };
+}
+
+function AgentConfigModal({
+  agent,
+  busy,
+  onClose,
+  operator,
+  runAction,
+}: {
+  agent: DashboardAgent;
+  busy: boolean;
+  onClose: () => void;
+  operator: boolean;
+  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+}) {
+  const [draft, setDraft] = React.useState<AgentCollectorConfigUpdate>(() => buildCollectorDraft(agent));
+
+  React.useEffect(() => {
+    setDraft(buildCollectorDraft(agent));
+  }, [agent]);
+
+  const updateConfig = (update: (config: CollectorConfig) => CollectorConfig) => {
+    setDraft((current) => ({ ...current, collector_config: update(current.collector_config) }));
+  };
+  const updatePercent = (collector: 'cpu' | 'memory', field: keyof typeof DEFAULT_PERCENT_THRESHOLDS, value: number) => {
+    updateConfig((config) => ({
+      ...config,
+      [collector]: { ...config[collector], [field]: value },
+    }));
+  };
+  const updateReading = (
+    field: 'cpu_readings' | 'memory_readings' | 'disk_readings' | 'network_readings' | 'process_readings',
+    value: number,
+  ) => {
+    updateConfig((config) => ({ ...config, [field]: value }));
+  };
+  const updateDisk = (index: number, update: (disk: DiskMonitorConfig) => DiskMonitorConfig) => {
+    updateConfig((config) => ({
+      ...config,
+      disks: config.disks.map((disk, currentIndex) => (currentIndex === index ? update(disk) : disk)),
+    }));
+  };
+  const updateNetwork = (index: number, update: (network: NetworkInterfaceConfig) => NetworkInterfaceConfig) => {
+    updateConfig((config) => ({
+      ...config,
+      networks: config.networks.map((network, currentIndex) => (currentIndex === index ? update(network) : network)),
+    }));
+  };
+  const updateProcess = (index: number, update: (process: ProcessWatchConfig) => ProcessWatchConfig) => {
+    updateConfig((config) => ({
+      ...config,
+      processes: config.processes.map((process, currentIndex) => (currentIndex === index ? update(process) : process)),
+    }));
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <form
+        className="config-modal"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void runAction(`${agent.id}:collector_config`, () => setAgentCollectorConfig(agent.id, draft));
+        }}
+      >
+        <div className="modal-header">
+          <AgentIdentity id={agent.id} name={agent.name} />
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close configuration">
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="config-grid">
+          <section>
+            <h2>Collection</h2>
+            <div className="form-grid">
+              <NumberField label="Interval seconds" min={1} value={draft.collection_interval} onChange={(value) => setDraft((current) => ({ ...current, collection_interval: value }))} />
+              <NumberField label="Process sample limit" min={1} value={draft.process_limit} onChange={(value) => setDraft((current) => ({ ...current, process_limit: value }))} />
+              <NumberField label="CPU readings" min={1} value={draft.collector_config.cpu_readings} onChange={(value) => updateReading('cpu_readings', value)} />
+              <NumberField label="Memory readings" min={1} value={draft.collector_config.memory_readings} onChange={(value) => updateReading('memory_readings', value)} />
+              <NumberField label="Disk readings" min={1} value={draft.collector_config.disk_readings} onChange={(value) => updateReading('disk_readings', value)} />
+              <NumberField label="Network readings" min={1} value={draft.collector_config.network_readings} onChange={(value) => updateReading('network_readings', value)} />
+              <NumberField label="Process readings" min={1} value={draft.collector_config.process_readings} onChange={(value) => updateReading('process_readings', value)} />
+            </div>
+          </section>
+
+          <section>
+            <h2>CPU & Memory</h2>
+            <ThresholdRow label="CPU %" thresholds={draft.collector_config.cpu} onChange={(field, value) => updatePercent('cpu', field, value)} />
+            <ThresholdRow label="Memory %" thresholds={draft.collector_config.memory} onChange={(field, value) => updatePercent('memory', field, value)} />
+          </section>
+
+          <section className="wide-section">
+            <h2>Fixed Disks</h2>
+            <div className="config-list">
+              {draft.collector_config.disks.map((disk, index) => (
+                <div className="config-row" key={disk.mount_point}>
+                  <label className="toggle-line">
+                    <input type="checkbox" checked={disk.enabled} onChange={(event) => updateDisk(index, (current) => ({ ...current, enabled: event.target.checked }))} />
+                    <span>{disk.device ? `${disk.mount_point} (${disk.device})` : disk.mount_point}</span>
+                  </label>
+                  <ThresholdInputs
+                    thresholds={disk.thresholds}
+                    onChange={(field, value) => updateDisk(index, (current) => ({ ...current, thresholds: { ...current.thresholds, [field]: value } }))}
+                  />
+                </div>
+              ))}
+              {draft.collector_config.disks.length === 0 ? <div className="empty-config">No fixed disks reported yet.</div> : null}
+            </div>
+          </section>
+
+          <section className="wide-section">
+            <h2>Network Interfaces</h2>
+            <div className="config-list">
+              {draft.collector_config.networks.map((network, index) => (
+                <div className="config-row" key={network.interface_name}>
+                  <label className="toggle-line">
+                    <input type="checkbox" checked={network.enabled} onChange={(event) => updateNetwork(index, (current) => ({ ...current, enabled: event.target.checked }))} />
+                    <span>{network.interface_name}</span>
+                  </label>
+                  <NetworkThresholdInputs
+                    thresholds={network.thresholds}
+                    onChange={(field, value) => updateNetwork(index, (current) => ({ ...current, thresholds: { ...current.thresholds, [field]: value } }))}
+                  />
+                </div>
+              ))}
+              {draft.collector_config.networks.length === 0 ? <div className="empty-config">No network interfaces reported yet.</div> : null}
+            </div>
+          </section>
+
+          <section className="wide-section">
+            <div className="section-title-row">
+              <h2>Process Watches</h2>
+              <ActionButton
+                busy={false}
+                icon={<Plus size={14} />}
+                label="Process"
+                onClick={() =>
+                  updateConfig((config) => ({
+                    ...config,
+                    processes: [...config.processes, { name: '', expected_count: 1, enabled: true }],
+                  }))
+                }
+              />
+            </div>
+            <div className="config-list">
+              {draft.collector_config.processes.map((process, index) => (
+                <div className="process-row" key={`${process.name}:${index}`}>
+                  <label className="toggle-line">
+                    <input type="checkbox" checked={process.enabled} onChange={(event) => updateProcess(index, (current) => ({ ...current, enabled: event.target.checked }))} />
+                    <span>Enabled</span>
+                  </label>
+                  <input value={process.name} placeholder="exact executable name" onChange={(event) => updateProcess(index, (current) => ({ ...current, name: event.target.value }))} />
+                  <NumberField label="Expected" min={1} value={process.expected_count} onChange={(value) => updateProcess(index, (current) => ({ ...current, expected_count: value }))} />
+                  <ActionButton busy={false} danger icon={<Trash2 size={14} />} label="Remove" onClick={() => updateConfig((config) => ({ ...config, processes: config.processes.filter((_, currentIndex) => currentIndex !== index) }))} />
+                </div>
+              ))}
+              {draft.collector_config.processes.length === 0 ? <div className="empty-config">No process watches configured.</div> : null}
+            </div>
+          </section>
+        </div>
+
+        <div className="modal-actions">
+          <button className="text-button" type="button" onClick={onClose}>Cancel</button>
+          <button className="text-button" type="submit" disabled={!operator || busy}>{busy ? '...' : 'Save'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function NumberField({
+  label,
+  min,
+  onChange,
+  value,
+}: {
+  label: string;
+  min: number;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <label>
+      {label}
+      <input min={min} step="1" type="number" value={value} onChange={(event) => onChange(Number(event.target.value))} />
+    </label>
+  );
+}
+
+function ThresholdInputs({
+  onChange,
+  thresholds,
+}: {
+  onChange: (field: keyof typeof DEFAULT_PERCENT_THRESHOLDS, value: number) => void;
+  thresholds: typeof DEFAULT_PERCENT_THRESHOLDS;
+}) {
+  return (
+    <div className="threshold-inputs">
+      <NumberField label="Warn" min={1} value={thresholds.warning_percent} onChange={(value) => onChange('warning_percent', value)} />
+      <NumberField label="Degrade" min={1} value={thresholds.degraded_percent} onChange={(value) => onChange('degraded_percent', value)} />
+      <NumberField label="Critical" min={1} value={thresholds.critical_percent} onChange={(value) => onChange('critical_percent', value)} />
+    </div>
+  );
+}
+
+function ThresholdRow({
+  label,
+  onChange,
+  thresholds,
+}: {
+  label: string;
+  onChange: (field: keyof typeof DEFAULT_PERCENT_THRESHOLDS, value: number) => void;
+  thresholds: typeof DEFAULT_PERCENT_THRESHOLDS;
+}) {
+  return (
+    <div className="threshold-row">
+      <span>{label}</span>
+      <ThresholdInputs thresholds={thresholds} onChange={onChange} />
+    </div>
+  );
+}
+
+function NetworkThresholdInputs({
+  onChange,
+  thresholds,
+}: {
+  onChange: (field: keyof typeof DEFAULT_NETWORK_THRESHOLDS, value: number) => void;
+  thresholds: typeof DEFAULT_NETWORK_THRESHOLDS;
+}) {
+  return (
+    <div className="threshold-inputs">
+      <NumberField label="Warn Mb/s" min={1} value={thresholds.warning_mbps} onChange={(value) => onChange('warning_mbps', value)} />
+      <NumberField label="Degrade Mb/s" min={1} value={thresholds.degraded_mbps} onChange={(value) => onChange('degraded_mbps', value)} />
+      <NumberField label="Critical Mb/s" min={1} value={thresholds.critical_mbps} onChange={(value) => onChange('critical_mbps', value)} />
+    </div>
   );
 }
 
@@ -633,7 +848,7 @@ function UsersPage({
           }}
         >
           <input aria-label="Group name" placeholder="Group name" value={groupName} onChange={(event) => setGroupName(event.target.value)} />
-          <ActionButton busy={busyAction === 'group:create'} icon={<Plus size={14} />} label="Group" onClick={() => undefined} />
+          <ActionButton busy={busyAction === 'group:create'} icon={<Plus size={14} />} label="Group" onClick={() => undefined} type="submit" />
         </form>
         <form
           className="inline-form user-form"
@@ -659,7 +874,7 @@ function UsersPage({
               <option key={group.group_id} value={group.group_id}>{group.name}</option>
             ))}
           </select>
-          <ActionButton busy={busyAction === 'user:create'} icon={<Plus size={14} />} label="User" onClick={() => undefined} />
+          <ActionButton busy={busyAction === 'user:create'} icon={<Plus size={14} />} label="User" onClick={() => undefined} type="submit" />
         </form>
       </div>
       <div className="table-container">
@@ -695,9 +910,9 @@ function StatusDot({ color, label }: { color: HealthColor; label: string }) {
   return <span className="state-note"><span className={`dot ${color}`} /> {label}</span>;
 }
 
-function ActionButton({ busy, danger = false, disabled = false, icon, label, onClick }: { busy: boolean; danger?: boolean; disabled?: boolean; icon: React.ReactNode; label: string; onClick: () => void }) {
+function ActionButton({ busy, danger = false, disabled = false, icon, label, onClick, type = 'button' }: { busy: boolean; danger?: boolean; disabled?: boolean; icon: React.ReactNode; label: string; onClick: () => void; type?: 'button' | 'submit' }) {
   return (
-    <button className={`text-button ${danger ? 'danger' : ''}`} disabled={disabled || busy} onClick={onClick}>
+    <button className={`text-button ${danger ? 'danger' : ''}`} disabled={disabled || busy} onClick={onClick} type={type}>
       {icon}
       {busy ? '...' : label}
     </button>

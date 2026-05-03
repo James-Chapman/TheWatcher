@@ -15,7 +15,8 @@ Current capabilities:
 - pending enrollment approval/rejection with group assignment;
 - hostname-based alert notifications and alert acknowledgement/delete workflow;
 - user and group creation for admins;
-- poll interval, process limit, and per-agent threshold updates;
+- per-agent collector configuration for poll interval, process limit, CPU,
+  memory, disk, network, process watches, and consecutive-reading counts;
 - pause/resume maintenance mode;
 - restart collectors;
 - request immediate status;
@@ -103,9 +104,14 @@ as primary text and the agent id as smaller secondary text.
 
 The Agents view manages approved agents only:
 
-- approved agents can update poll interval and process limit;
-- approved agents can update CPU, memory, disk, and network warning,
-  degraded, and critical percentage thresholds;
+- approved agents have a Configure button beside the agent identity;
+- the Configure modal updates poll interval, process sample limit, CPU and
+  memory absolute percentage thresholds, fixed disk thresholds, network
+  interface Mbps thresholds, process watches, and consecutive-reading counts;
+- disk rows are shown by mount point/path with device name in brackets;
+- network thresholds are combined receive plus transmit megabits per second per
+  selected interface;
+- process watches use exact executable names plus an expected process count;
 - approved agents can enter or leave maintenance mode with a stored reason and
   optional expiry timestamp;
 - approved agents can restart collectors, request status, or disconnect;
@@ -158,9 +164,10 @@ The dashboard consumes:
 | `POST /api/agents/:id/reject` | Reject pending enrollment. |
 | `POST /api/agents/:id/groups` | Replace an approved agent's group memberships. |
 | `DELETE /api/agents/:id` | Delete agent and metrics. |
-| `POST /api/agents/:id/set_interval` | Persist and queue poll interval update. |
-| `POST /api/agents/:id/set_process_limit` | Persist and queue process limit update. |
-| `POST /api/agents/:id/thresholds` | Persist per-agent CPU, memory, disk, and network thresholds. |
+| `POST /api/agents/:id/set_interval` | Legacy endpoint for poll interval update. |
+| `POST /api/agents/:id/set_process_limit` | Legacy endpoint for process limit update. |
+| `POST /api/agents/:id/thresholds` | Legacy endpoint for old threshold rows. |
+| `POST /api/agents/:id/collector_config` | Persist collection interval, process limit, and full collector configuration. |
 | `POST /api/agents/:id/maintenance` | Enter maintenance with optional reason and expiry. |
 | `POST /api/agents/:id/pause` | Queue maintenance pause. |
 | `POST /api/agents/:id/resume` | Queue maintenance resume. |
@@ -182,6 +189,7 @@ maintenance_reason
 maintenance_until
 collection_interval
 process_limit
+collector_config
 thresholds
 first_seen
 last_seen
@@ -204,8 +212,17 @@ metrics
 - Approved enrollment responses include the server public key and pinned
   fingerprint the agent persists before connecting to the data socket.
 - Rejected agents receive an enrollment rejection on the next attempt.
-- Per-agent CPU, memory, disk, and network thresholds override global threshold
-  settings and retain the absolute 70/85/95 fallback caps.
+- CPU and memory use absolute per-agent percentage thresholds. Defaults are
+  warning 80, degraded 90, critical 95.
+- Disk checks are per fixed disk. Empty disk config means monitor all reported
+  fixed disks with default thresholds.
+- Network checks are per selected interface using combined receive plus transmit
+  megabits per second. Defaults are warning 100, degraded 200, critical 300.
+- Process checks use exact executable names and expected counts. Fewer running
+  instances than expected escalates yellow, amber, then red across configured
+  consecutive failed readings.
+- Worsening numeric collector transitions are committed only after the
+  configured number of consecutive readings. Recovery resets pending counts.
 - `connected` becomes true after inbound agent traffic.
 - `connected` becomes false after successful disconnect ACK or after
   `offline_after_seconds` with no inbound frame.

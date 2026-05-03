@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 
+using namespace thewatcher;
 using namespace thewatcher::server;
 
 namespace
@@ -334,6 +335,107 @@ SCENARIO("Agent threshold settings are persisted across upserts")
     }
 }
 
+SCENARIO("Agent collector config is persisted across upserts")
+{
+    GIVEN("a store with an approved agent")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord rec;
+        rec.agent_id = "agent-collector-config";
+        rec.approved = true;
+        rec.first_seen = 1;
+        rec.last_seen = 1;
+        store.upsert_agent(rec);
+
+        WHEN("collector configuration is saved")
+        {
+            CollectorConfig config;
+            config.cpu.warning_percent = 80.0;
+            config.cpu.degraded_percent = 90.0;
+            config.cpu.critical_percent = 95.0;
+            config.cpu_readings = 2;
+            config.disk_readings = 3;
+
+            DiskMonitorConfig disk;
+            disk.mount_point = "/";
+            disk.device = "/dev/sda1";
+            disk.enabled = true;
+            disk.thresholds.warning_percent = 81.0;
+            config.disks.push_back(disk);
+
+            NetworkInterfaceConfig network;
+            network.interface_name = "eth0";
+            network.enabled = false;
+            network.thresholds.warning_mbps = 100.0;
+            config.networks.push_back(network);
+
+            ProcessWatchConfig process;
+            process.name = "TheWatcherAgent.exe";
+            process.expected_count = 2;
+            config.processes.push_back(process);
+
+            rec.collector_config = config;
+            store.set_agent_collector_config(rec.agent_id, config);
+
+            THEN("get_agent returns the stored collector config")
+            {
+                auto got = store.get_agent(rec.agent_id);
+                REQUIRE(got.has_value());
+                REQUIRE(got->collector_config.cpu.warning_percent == 80.0);
+                REQUIRE(got->collector_config.cpu_readings == 2);
+                REQUIRE(got->collector_config.disk_readings == 3);
+                REQUIRE(got->collector_config.disks.size() == 1);
+                REQUIRE(got->collector_config.disks[0].mount_point == "/");
+                REQUIRE(got->collector_config.networks.size() == 1);
+                REQUIRE(got->collector_config.networks[0].enabled == false);
+                REQUIRE(got->collector_config.processes.size() == 1);
+                REQUIRE(got->collector_config.processes[0].expected_count == 2);
+            }
+        }
+    }
+}
+
+SCENARIO("Pending indicator readings are persisted and can be cleared")
+{
+    GIVEN("a store with an approved agent")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord rec;
+        rec.agent_id = "agent-pending-status";
+        rec.approved = true;
+        rec.first_seen = 1;
+        rec.last_seen = 1;
+        store.upsert_agent(rec);
+
+        WHEN("a pending indicator status is stored")
+        {
+            store.set_pending_status("agent-pending-status", "cpu", "red", 2);
+
+            THEN("the pending status can be read back")
+            {
+                auto pending = store.get_pending_status("agent-pending-status", "cpu");
+                REQUIRE(pending.has_value());
+                REQUIRE(pending->agent_id == "agent-pending-status");
+                REQUIRE(pending->indicator == "cpu");
+                REQUIRE(pending->target_status == "red");
+                REQUIRE(pending->count == 2);
+            }
+
+            AND_WHEN("the pending status is cleared")
+            {
+                store.clear_pending_status("agent-pending-status", "cpu");
+
+                THEN("the pending status is removed")
+                {
+                    REQUIRE_FALSE(store.get_pending_status("agent-pending-status", "cpu").has_value());
+                }
+            }
+        }
+    }
+}
+
 SCENARIO("Agent maintenance metadata and group membership survive reopening the store")
 {
     GIVEN("a file-backed store with a maintained approved agent assigned to groups")
@@ -533,7 +635,7 @@ SCENARIO("Metrics can be inserted and retrieved for an agent")
         MetricsRow row;
         row.agent_id = "agent-m1";
         row.timestamp_ms = 5000;
-        row.metrics_json = R"({"cpu":{"usage_percent":12.5}})";
+        row.metrics_cbor = {0xA1, 0x63, 'c', 'p', 'u', 0x00}; // arbitrary fixture bytes (CBOR map with one entry).
         store.insert_metrics(row);
 
         WHEN("get_metrics is called")
@@ -545,7 +647,7 @@ SCENARIO("Metrics can be inserted and retrieved for an agent")
                 REQUIRE(rows.size() == 1);
                 REQUIRE(rows[0].agent_id == "agent-m1");
                 REQUIRE(rows[0].timestamp_ms == 5000);
-                REQUIRE(rows[0].metrics_json == row.metrics_json);
+                REQUIRE(rows[0].metrics_cbor == row.metrics_cbor);
             }
         }
     }
@@ -568,7 +670,7 @@ SCENARIO("get_metrics respects the row limit and returns newest rows first")
             MetricsRow row;
             row.agent_id = "agent-m2";
             row.timestamp_ms = i * 1000;
-            row.metrics_json = "{}";
+            row.metrics_cbor = {0xA0}; // empty CBOR map.
             store.insert_metrics(row);
         }
 
@@ -609,7 +711,7 @@ SCENARIO("latest_metrics returns one row per agent with their most recent timest
                 MetricsRow row;
                 row.agent_id = id;
                 row.timestamp_ms = t;
-                row.metrics_json = "{}";
+                row.metrics_cbor = {0xA0}; // empty CBOR map.
                 store.insert_metrics(row);
             }
         }

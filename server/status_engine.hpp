@@ -33,8 +33,11 @@ public:
     void exit_maintenance(const std::string& agent_id);
 
 private:
-    IndicatorStatus classify_percent(const AgentRecord* agent, const std::string& indicator, double value,
-                                     double average);
+    IndicatorStatus classify_percent(double value, const PercentThresholds& thresholds) const;
+    IndicatorStatus classify_network_mbps(double value, const NetworkThresholds& thresholds) const;
+    IndicatorStatus confirm_numeric_status(const std::string& agent_id, const std::string& indicator,
+                                           IndicatorStatus previous, IndicatorStatus raw, int required_readings);
+    IndicatorStatus process_status_for_count(int missing_count, int readings_to_red) const;
     void record_transition(const std::string& agent_id, const std::string& indicator, IndicatorStatus next,
                            const std::string& message, int64_t timestamp_ms);
 

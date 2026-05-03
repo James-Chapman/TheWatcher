@@ -1,5 +1,6 @@
 #include "api.hpp"
 
+#include "api_json.hpp"
 #include "common/SingleLog.hpp"
 #include "common/protocol.hpp"
 
@@ -96,6 +97,7 @@ namespace
             {"process_limit",        a.process_limit                     },
             {"first_seen",           a.first_seen                        },
             {"last_seen",            a.last_seen                         },
+            {"collector_config",     a.collector_config                  },
             {"thresholds",
              {{"cpu",
                {{"warning_pct_of_avg", a.cpu_warning_pct_of_avg},
@@ -124,6 +126,48 @@ namespace
             throw std::runtime_error(indicator + " thresholds must be greater than zero");
         if (!(warning < degraded && degraded < critical))
             throw std::runtime_error(indicator + " thresholds must be ordered warning < degraded < critical");
+    }
+
+    void validate_percent_thresholds(const PercentThresholds& thresholds, const std::string& label)
+    {
+        validate_thresholds(thresholds.warning_percent, thresholds.degraded_percent, thresholds.critical_percent,
+                            label);
+        if (thresholds.critical_percent > 100.0)
+            throw std::runtime_error(label + " critical threshold must be less than or equal to 100");
+    }
+
+    void validate_network_thresholds(const NetworkThresholds& thresholds, const std::string& label)
+    {
+        validate_thresholds(thresholds.warning_mbps, thresholds.degraded_mbps, thresholds.critical_mbps, label);
+    }
+
+    void validate_collector_config(const CollectorConfig& config)
+    {
+        validate_percent_thresholds(config.cpu, "cpu");
+        validate_percent_thresholds(config.memory, "memory");
+        if (config.cpu_readings <= 0 || config.memory_readings <= 0 || config.disk_readings <= 0 ||
+            config.network_readings <= 0 || config.process_readings <= 0)
+            throw std::runtime_error("collector readings must be greater than zero");
+
+        for (const auto& disk : config.disks)
+        {
+            if (disk.mount_point.empty())
+                throw std::runtime_error("disk mount_point is required");
+            validate_percent_thresholds(disk.thresholds, "disk " + disk.mount_point);
+        }
+        for (const auto& network : config.networks)
+        {
+            if (network.interface_name.empty())
+                throw std::runtime_error("network interface_name is required");
+            validate_network_thresholds(network.thresholds, "network " + network.interface_name);
+        }
+        for (const auto& process : config.processes)
+        {
+            if (process.name.empty())
+                throw std::runtime_error("process name is required");
+            if (process.expected_count <= 0)
+                throw std::runtime_error("process expected_count must be greater than zero");
+        }
     }
 
     void read_indicator_thresholds(const json& thresholds, const std::string& indicator, double& warning,
@@ -754,9 +798,9 @@ void ApiServer::setup_routes()
                 if (!can_access_agent(*session, r.agent_id))
                     continue;
                 arr.push_back({
-                    {"agent_id",     r.agent_id                 },
-                    {"timestamp_ms", r.timestamp_ms             },
-                    {"metrics",      json::parse(r.metrics_json)}
+                    {"agent_id",     r.agent_id                                                       },
+                    {"timestamp_ms", r.timestamp_ms                                                   },
+                    {"metrics",      json(thewatcher::proto::unpack<SystemMetrics>(r.metrics_cbor))   }
                 });
             }
             res.set_content(arr.dump(), "application/json");
@@ -790,9 +834,9 @@ void ApiServer::setup_routes()
             for (auto& r : rows)
             {
                 arr.push_back({
-                    {"agent_id",     r.agent_id                 },
-                    {"timestamp_ms", r.timestamp_ms             },
-                    {"metrics",      json::parse(r.metrics_json)}
+                    {"agent_id",     r.agent_id                                                       },
+                    {"timestamp_ms", r.timestamp_ms                                                   },
+                    {"metrics",      json(thewatcher::proto::unpack<SystemMetrics>(r.metrics_cbor))   }
                 });
             }
             res.set_content(arr.dump(), "application/json");
@@ -988,6 +1032,58 @@ void ApiServer::setup_routes()
         catch (const std::exception& e)
         {
             LOGF_WARNING("POST /api/agents/:id/thresholds failed: %s", e.what());
+            res.status = 400;
+            set_json(res, json{
+                              {"error", e.what()}
+            });
+        }
+    });
+
+    http_->Post("/api/agents/:id/collector_config", [this](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto id = req.path_params.at("id");
+            if (!require_agent_access(req, res, "operator", id))
+                return;
+
+            auto rec = store_.get_agent(id);
+            if (!rec)
+            {
+                res.status = 404;
+                set_json(res, json{
+                                  {"error", "agent not found"}
+                });
+                return;
+            }
+
+            auto body = json::parse(req.body);
+            const auto interval = body.at("collection_interval").get<int>();
+            const auto process_limit = body.at("process_limit").get<int>();
+            if (interval <= 0)
+                throw std::runtime_error("collection_interval must be greater than zero");
+            if (process_limit <= 0)
+                throw std::runtime_error("process_limit must be greater than zero");
+
+            auto config = body.at("collector_config").get<CollectorConfig>();
+            validate_collector_config(config);
+
+            rec->collection_interval = interval;
+            rec->process_limit = process_limit;
+            rec->collector_config = config;
+            store_.upsert_agent(*rec);
+            store_.set_agent_collector_config(id, config);
+            LOGF_INFO(
+                "Updated collector config id=%s interval=%d process_limit=%d disk_configs=%zu network_configs=%zu "
+                "process_watches=%zu",
+                id.c_str(), interval, process_limit, config.disks.size(), config.networks.size(),
+                config.processes.size());
+            set_json(res, json{
+                              {"ok", true}
+            });
+        }
+        catch (const std::exception& e)
+        {
+            LOGF_WARNING("POST /api/agents/:id/collector_config failed: %s", e.what());
             res.status = 400;
             set_json(res, json{
                               {"error", e.what()}

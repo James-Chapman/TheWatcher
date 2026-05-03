@@ -12,8 +12,8 @@
 #include <zmq.hpp>
 
 #ifdef _WIN32
-#include <sysinfoapi.h>
 #include <windows.h>
+#include <sysinfoapi.h>
 #elif defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
 #include <sys/sysctl.h>
 #include <sys/time.h>

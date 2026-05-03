@@ -1,9 +1,9 @@
 #pragma once
 
+#include "collectors/collector.hpp"
 #include "common/commands.hpp"
 #include "common/metrics.hpp"
 #include "common/protocol.hpp"
-#include "collectors/collector.hpp"
 #include "config.hpp"
 
 #include <atomic>
@@ -60,6 +60,7 @@ private:
 
     std::atomic<int> interval_seconds_{5}; // Default to 5 seconds
     std::atomic<int> process_limit_{100};  // Default limit of 100 processes
+    CollectorConfig collector_config_;
     std::atomic<bool> paused_{false};
     std::atomic<bool> connected_{false};
 

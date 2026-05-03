@@ -10,10 +10,11 @@
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
+// JSON support intentionally absent: TheWatcherAgent.conf is KEY=VALUE only.
 
 #ifdef _WIN32
-#include <shlobj.h>
 #include <windows.h>
+#include <shlobj.h>
 #else
 #include <pwd.h>
 #include <unistd.h>
@@ -44,18 +45,6 @@ namespace
         while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
             value.pop_back();
         return value;
-    }
-
-    bool starts_with_json_object(const std::filesystem::path& path)
-    {
-        std::ifstream f(path);
-        char ch = '\0';
-        while (f.get(ch))
-        {
-            if (!std::isspace(static_cast<unsigned char>(ch)))
-                return ch == '{';
-        }
-        return false;
     }
 
     std::unordered_map<std::string, std::string> read_key_value_file(const std::filesystem::path& path)
@@ -161,17 +150,6 @@ AgentConfig AgentConfig::load_or_create(const std::filesystem::path& path)
     if (std::filesystem::exists(path))
     {
         LOG_DEBUG("Agent config exists");
-        if (starts_with_json_object(path))
-        {
-            LOG_DEBUG("Loading legacy JSON agent config");
-            std::ifstream f(path);
-            nlohmann::json j;
-            f >> j;
-            auto cfg = j.get<AgentConfig>();
-            cfg.config_path = path.string();
-            return cfg;
-        }
-
         AgentConfig cfg;
         cfg.config_path = path.string();
         LOG_DEBUG("Loading key-value agent config");
