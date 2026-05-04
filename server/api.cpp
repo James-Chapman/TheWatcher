@@ -1196,19 +1196,19 @@ void ApiServer::setup_routes()
             int days = 7;
             if (req.has_param("days"))
                 days = std::max(1, std::min(90, std::stoi(req.get_param_value("days"))));
-            const auto now = now_ms();
-            const auto since = now - (static_cast<int64_t>(days) * 86400LL * 1000LL);
-            const auto actual = store_.count_metrics_in_window(id, since, now);
-            const auto window_ms = now - std::max(since, agent->first_seen);
-            const auto expected = window_ms > 0 ? window_ms / (static_cast<int64_t>(agent->collection_interval) * 1000LL) : 0;
-            double pct = expected > 0 ? std::min(100.0, (static_cast<double>(actual) / static_cast<double>(expected)) * 100.0) : 0.0;
-            set_json(res, json{
-                              {"agent_id",        id    },
-                              {"days",            days  },
-                              {"uptime_percent",  pct   },
-                              {"actual_samples",  actual},
-                              {"expected_samples", expected}
-            });
+            const int64_t now = now_ms();
+            const int64_t since = now - (static_cast<int64_t>(days) * 86400LL * 1000LL);
+            const int64_t actual = store_.count_metrics_in_window(id, since, now);
+            const int64_t window_ms = now - std::max(since, agent->first_seen);
+            const int64_t expected = window_ms > 0 ? window_ms / (static_cast<int64_t>(agent->collection_interval) * 1000LL) : 0;
+            const double pct = expected > 0 ? std::min(100.0, (static_cast<double>(actual) / static_cast<double>(expected)) * 100.0) : 0.0;
+            json resp_body = json::object();
+            resp_body["agent_id"] = id;
+            resp_body["days"] = days;
+            resp_body["uptime_percent"] = pct;
+            resp_body["actual_samples"] = actual;
+            resp_body["expected_samples"] = expected;
+            set_json(res, resp_body);
         }
         catch (const std::exception& e)
         {

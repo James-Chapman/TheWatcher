@@ -900,4 +900,3 @@ SCENARIO("active_maintenance_windows only returns windows that span the current 
         }
     }
 }
-}
