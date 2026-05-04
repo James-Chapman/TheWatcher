@@ -174,6 +174,19 @@ void Server::run(StartupSignal* startup)
                 const auto cutoff = now_ms() - (static_cast<int64_t>(config_.offline_after_seconds) * 1000);
                 LOGF_TRACE("Scanning for offline agents cutoff_ms=%lld", static_cast<long long>(cutoff));
                 store_->mark_agents_offline_before(cutoff);
+                const auto ts = now_ms();
+                for (const auto& agent_id : store_->get_offline_unalerted_agent_ids())
+                {
+                    AlertRecord alert;
+                    alert.agent_id = agent_id;
+                    alert.indicator = "Heartbeat";
+                    alert.old_status = "green";
+                    alert.new_status = "red";
+                    alert.message = "Agent has gone offline (no heartbeat received)";
+                    alert.created_at = ts;
+                    store_->insert_alert(alert);
+                    LOGF_INFO("Created dead-agent alert for agent_id=%s", agent_id.c_str());
+                }
             }
             next_offline_scan = std::chrono::steady_clock::now() + std::chrono::seconds{1};
         }
@@ -234,9 +247,15 @@ void Server::handle_router_frame(zmq::socket_t& router)
     auto rec = store_->get_agent(agent_id);
     if (rec)
     {
+        const bool was_offline = !rec->connected;
         rec->connected = true;
         rec->last_seen = now_ms();
         store_->upsert_agent(*rec);
+        if (was_offline)
+        {
+            store_->archive_heartbeat_alerts_for_agent(agent_id, now_ms());
+            LOGF_INFO("Agent reconnected, archived heartbeat alerts for agent_id=%s", agent_id.c_str());
+        }
         LOGF_TRACE("Updated last_seen for agent_id=%s", agent_id.c_str());
     }
     else

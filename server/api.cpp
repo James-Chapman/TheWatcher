@@ -227,7 +227,8 @@ namespace
             {"created_at",      alert.created_at     },
             {"acknowledged_by", alert.acknowledged_by},
             {"acknowledged_at", alert.acknowledged_at},
-            {"deleted_at",      alert.deleted_at     }
+            {"deleted_at",      alert.deleted_at     },
+            {"note",            alert.note           }
         };
     }
 
@@ -521,7 +522,8 @@ void ApiServer::setup_routes()
         auto session = require_role(req, res, "viewer");
         if (!session)
             return;
-        auto alerts = store_.list_alerts(false);
+        const bool include_archived = req.get_param_value("include_archived") == "1";
+        auto alerts = store_.list_alerts(include_archived);
         json arr = json::array();
         for (const auto& alert : alerts)
         {
@@ -556,15 +558,103 @@ void ApiServer::setup_routes()
         if (!allowed)
         {
             res.status = 403;
-            set_json(res, json{
-                              {"error", "alert is outside the user's groups"}
-            });
+            set_json(res, json{{"error", "alert is outside the user's groups"}});
             return;
         }
-        store_.acknowledge_alert(alert_id, session->username, now_ms());
-        set_json(res, json{
-                          {"ok", true}
-        });
+        std::string note;
+        if (!req.body.empty())
+        {
+            try
+            {
+                const auto body = json::parse(req.body);
+                if (body.contains("note") && body["note"].is_string())
+                    note = body["note"].get<std::string>();
+            }
+            catch (...) {}
+        }
+        store_.acknowledge_alert(alert_id, session->username, now_ms(), note);
+        set_json(res, json{{"ok", true}});
+    });
+
+    http_->Post("/api/alerts/bulk-ack", [this](const httplib::Request& req, httplib::Response& res) {
+        auto session = require_role(req, res, "operator");
+        if (!session)
+            return;
+        if (req.body.empty())
+        {
+            res.status = 400;
+            set_json(res, json{{"error", "body required"}});
+            return;
+        }
+        json body;
+        try { body = json::parse(req.body); }
+        catch (...) { res.status = 400; set_json(res, json{{"error", "invalid JSON"}}); return; }
+
+        if (!body.contains("alert_ids") || !body["alert_ids"].is_array())
+        {
+            res.status = 400;
+            set_json(res, json{{"error", "alert_ids array required"}});
+            return;
+        }
+        const std::string note = (body.contains("note") && body["note"].is_string())
+                                     ? body["note"].get<std::string>()
+                                     : "";
+        const auto all_alerts = store_.list_alerts(false);
+        std::vector<int64_t> allowed_ids;
+        for (const auto& id_val : body["alert_ids"])
+        {
+            if (!id_val.is_number_integer()) continue;
+            const auto id = id_val.get<int64_t>();
+            for (const auto& alert : all_alerts)
+            {
+                if (alert.alert_id == id && can_access_agent(*session, alert.agent_id))
+                {
+                    allowed_ids.push_back(id);
+                    break;
+                }
+            }
+        }
+        store_.bulk_acknowledge_alerts(allowed_ids, session->username, now_ms(), note);
+        set_json(res, json{{"ok", true}, {"count", allowed_ids.size()}});
+    });
+
+    http_->Post("/api/alerts/bulk-archive", [this](const httplib::Request& req, httplib::Response& res) {
+        auto session = require_role(req, res, "operator");
+        if (!session)
+            return;
+        if (req.body.empty())
+        {
+            res.status = 400;
+            set_json(res, json{{"error", "body required"}});
+            return;
+        }
+        json body;
+        try { body = json::parse(req.body); }
+        catch (...) { res.status = 400; set_json(res, json{{"error", "invalid JSON"}}); return; }
+
+        if (!body.contains("alert_ids") || !body["alert_ids"].is_array())
+        {
+            res.status = 400;
+            set_json(res, json{{"error", "alert_ids array required"}});
+            return;
+        }
+        const auto all_alerts = store_.list_alerts(false);
+        std::vector<int64_t> allowed_ids;
+        for (const auto& id_val : body["alert_ids"])
+        {
+            if (!id_val.is_number_integer()) continue;
+            const auto id = id_val.get<int64_t>();
+            for (const auto& alert : all_alerts)
+            {
+                if (alert.alert_id == id && can_access_agent(*session, alert.agent_id))
+                {
+                    allowed_ids.push_back(id);
+                    break;
+                }
+            }
+        }
+        store_.bulk_soft_delete_alerts(allowed_ids, now_ms());
+        set_json(res, json{{"ok", true}, {"count", allowed_ids.size()}});
     });
 
     http_->Delete("/api/alerts/:id", [this](const httplib::Request& req, httplib::Response& res) {

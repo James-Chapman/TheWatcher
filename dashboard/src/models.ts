@@ -116,6 +116,7 @@ export interface AlertRecord {
   acknowledged_by: string;
   acknowledged_at: number;
   deleted_at: number;
+  note: string;
 }
 
 export interface CpuMetrics {

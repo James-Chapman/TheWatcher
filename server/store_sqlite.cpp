@@ -148,7 +148,8 @@ namespace
                 sqlite3_column_int64(s, 6),
                 text_col(s, 7),
                 sqlite3_column_int64(s, 8),
-                sqlite3_column_int64(s, 9)};
+                sqlite3_column_int64(s, 9),
+                text_col(s, 10)};
     }
 
     std::string hash_default_password()
@@ -288,6 +289,8 @@ void SqliteStore::init_schema()
                           "ALTER TABLE agents ADD COLUMN network_critical_pct_of_avg REAL NOT NULL DEFAULT 200.0;");
     add_column_if_missing("agents", "collector_config_json",
                           "ALTER TABLE agents ADD COLUMN collector_config_json TEXT NOT NULL DEFAULT '';");
+    add_column_if_missing("alerts", "note",
+                          "ALTER TABLE alerts ADD COLUMN note TEXT NOT NULL DEFAULT '';");
     // Schema break in 0.3.0: metrics column changed from JSON TEXT to CBOR BLOB.
     // Existing 0.2.x dev databases drop and recreate the metrics table on first start.
     if (column_exists("metrics", "metrics_json") && !column_exists("metrics", "metrics_cbor"))
@@ -953,7 +956,7 @@ int64_t SqliteStore::insert_alert(const AlertRecord& alert)
     Stmt st;
     check(sqlite3_prepare_v2(db_,
                              "INSERT INTO alerts(agent_id,indicator,old_status,new_status,message,created_at,"
-                             "acknowledged_by,acknowledged_at,deleted_at) VALUES(?,?,?,?,?,?,?,?,?);",
+                             "acknowledged_by,acknowledged_at,deleted_at,note) VALUES(?,?,?,?,?,?,?,?,?,?);",
                              -1, &st.s, nullptr),
           db_, "prepare insert_alert");
     sqlite3_bind_text(st.s, 1, alert.agent_id.c_str(), -1, SQLITE_TRANSIENT);
@@ -965,6 +968,7 @@ int64_t SqliteStore::insert_alert(const AlertRecord& alert)
     sqlite3_bind_text(st.s, 7, alert.acknowledged_by.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(st.s, 8, alert.acknowledged_at);
     sqlite3_bind_int64(st.s, 9, alert.deleted_at);
+    sqlite3_bind_text(st.s, 10, alert.note.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step insert_alert");
     return sqlite3_last_insert_rowid(db_);
 }
@@ -974,9 +978,9 @@ std::vector<AlertRecord> SqliteStore::list_alerts(bool include_deleted)
     const char* sql =
         include_deleted
             ? "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,acknowledged_by,"
-              "acknowledged_at,deleted_at FROM alerts ORDER BY created_at DESC,alert_id DESC;"
+              "acknowledged_at,deleted_at,note FROM alerts ORDER BY created_at DESC,alert_id DESC;"
             : "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,acknowledged_by,"
-              "acknowledged_at,deleted_at FROM alerts WHERE deleted_at=0 ORDER BY created_at DESC,alert_id DESC;";
+              "acknowledged_at,deleted_at,note FROM alerts WHERE deleted_at=0 ORDER BY created_at DESC,alert_id DESC;";
     Stmt st;
     check(sqlite3_prepare_v2(db_, sql, -1, &st.s, nullptr), db_, "prepare list_alerts");
     std::vector<AlertRecord> out;
@@ -990,7 +994,7 @@ std::vector<AlertRecord> SqliteStore::list_unacknowledged_alerts()
     Stmt st;
     check(sqlite3_prepare_v2(db_,
                              "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,"
-                             "acknowledged_by,acknowledged_at,deleted_at FROM alerts WHERE deleted_at=0 AND "
+                             "acknowledged_by,acknowledged_at,deleted_at,note FROM alerts WHERE deleted_at=0 AND "
                              "acknowledged_at=0 ORDER BY created_at DESC,alert_id DESC;",
                              -1, &st.s, nullptr),
           db_, "prepare list_unacknowledged_alerts");
@@ -1000,18 +1004,33 @@ std::vector<AlertRecord> SqliteStore::list_unacknowledged_alerts()
     return out;
 }
 
-void SqliteStore::acknowledge_alert(int64_t alert_id, const std::string& username, int64_t acknowledged_at)
+void SqliteStore::acknowledge_alert(int64_t alert_id, const std::string& username, int64_t acknowledged_at,
+                                    const std::string& note)
 {
     Stmt st;
     check(sqlite3_prepare_v2(db_,
-                             "UPDATE alerts SET acknowledged_by=?,acknowledged_at=? WHERE alert_id=? AND "
+                             "UPDATE alerts SET acknowledged_by=?,acknowledged_at=?,note=? WHERE alert_id=? AND "
                              "deleted_at=0;",
                              -1, &st.s, nullptr),
           db_, "prepare acknowledge_alert");
     sqlite3_bind_text(st.s, 1, username.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(st.s, 2, acknowledged_at);
-    sqlite3_bind_int64(st.s, 3, alert_id);
+    sqlite3_bind_text(st.s, 3, note.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 4, alert_id);
     check(sqlite3_step(st.s), db_, "step acknowledge_alert");
+}
+
+void SqliteStore::bulk_acknowledge_alerts(const std::vector<int64_t>& alert_ids, const std::string& username,
+                                          int64_t acknowledged_at, const std::string& note)
+{
+    for (const auto id : alert_ids)
+        acknowledge_alert(id, username, acknowledged_at, note);
+}
+
+void SqliteStore::bulk_soft_delete_alerts(const std::vector<int64_t>& alert_ids, int64_t deleted_at)
+{
+    for (const auto id : alert_ids)
+        soft_delete_alert(id, deleted_at);
 }
 
 void SqliteStore::soft_delete_alert(int64_t alert_id, int64_t deleted_at)
@@ -1035,6 +1054,37 @@ void SqliteStore::clear_active_alerts_for_agent(const std::string& agent_id, int
     sqlite3_bind_int64(st.s, 1, cleared_at);
     sqlite3_bind_text(st.s, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step clear_active_alerts_for_agent");
+}
+
+std::vector<std::string> SqliteStore::get_offline_unalerted_agent_ids()
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT a.agent_id FROM agents a WHERE a.approved=1 AND a.connected=0 "
+                             "AND a.maintenance=0 AND a.last_seen>0 "
+                             "AND NOT EXISTS ("
+                             "  SELECT 1 FROM alerts al WHERE al.agent_id=a.agent_id "
+                             "  AND al.indicator='Heartbeat' AND al.deleted_at=0"
+                             ");",
+                             -1, &st.s, nullptr),
+          db_, "prepare get_offline_unalerted_agent_ids");
+    std::vector<std::string> out;
+    while (sqlite3_step(st.s) == SQLITE_ROW)
+        out.push_back(text_col(st.s, 0));
+    return out;
+}
+
+void SqliteStore::archive_heartbeat_alerts_for_agent(const std::string& agent_id, int64_t deleted_at)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "UPDATE alerts SET deleted_at=? WHERE agent_id=? AND indicator='Heartbeat' "
+                             "AND deleted_at=0;",
+                             -1, &st.s, nullptr),
+          db_, "prepare archive_heartbeat_alerts_for_agent");
+    sqlite3_bind_int64(st.s, 1, deleted_at);
+    sqlite3_bind_text(st.s, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    check(sqlite3_step(st.s), db_, "step archive_heartbeat_alerts_for_agent");
 }
 
 std::string SqliteStore::get_setting(const std::string& key, const std::string& fallback)

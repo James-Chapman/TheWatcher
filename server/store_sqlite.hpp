@@ -58,9 +58,15 @@ public:
     int64_t insert_alert(const AlertRecord& alert) override;
     std::vector<AlertRecord> list_alerts(bool include_deleted) override;
     std::vector<AlertRecord> list_unacknowledged_alerts() override;
-    void acknowledge_alert(int64_t alert_id, const std::string& username, int64_t acknowledged_at) override;
+    void acknowledge_alert(int64_t alert_id, const std::string& username, int64_t acknowledged_at,
+                           const std::string& note = "") override;
+    void bulk_acknowledge_alerts(const std::vector<int64_t>& alert_ids, const std::string& username,
+                                 int64_t acknowledged_at, const std::string& note = "") override;
     void soft_delete_alert(int64_t alert_id, int64_t deleted_at) override;
+    void bulk_soft_delete_alerts(const std::vector<int64_t>& alert_ids, int64_t deleted_at) override;
     void clear_active_alerts_for_agent(const std::string& agent_id, int64_t cleared_at) override;
+    std::vector<std::string> get_offline_unalerted_agent_ids() override;
+    void archive_heartbeat_alerts_for_agent(const std::string& agent_id, int64_t deleted_at) override;
     std::string get_setting(const std::string& key, const std::string& fallback) override;
     void set_setting(const std::string& key, const std::string& value) override;
 

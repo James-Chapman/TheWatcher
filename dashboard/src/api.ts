@@ -71,8 +71,8 @@ export async function createUser(username: string, password: string, role: UserR
   await jsonPost<{ user_id: number }>('/api/users', { username, password, role, group_ids: groupIds });
 }
 
-export async function fetchAlerts(): Promise<AlertRecord[]> {
-  return fetchJson<AlertRecord[]>('/api/alerts');
+export async function fetchAlerts(includeArchived = false): Promise<AlertRecord[]> {
+  return fetchJson<AlertRecord[]>(includeArchived ? '/api/alerts?include_archived=1' : '/api/alerts');
 }
 
 export async function fetchUnacknowledgedAlerts(): Promise<AlertRecord[]> {
@@ -157,8 +157,12 @@ export async function requestAgentStatus(agentId: string): Promise<void> {
   await mutateJson<{ ok: boolean }>(`/api/agents/${encodeURIComponent(agentId)}/get_status`, { method: 'POST' });
 }
 
-export async function acknowledgeAlert(alertId: number): Promise<void> {
-  await mutateJson<{ ok: boolean }>(`/api/alerts/${alertId}/ack`, { method: 'POST' });
+export async function acknowledgeAlert(alertId: number, note = ''): Promise<void> {
+  await jsonPost<{ ok: boolean }>(`/api/alerts/${alertId}/ack`, { note });
+}
+
+export async function bulkAcknowledgeAlerts(alertIds: number[], note = ''): Promise<void> {
+  await jsonPost<{ ok: boolean }>('/api/alerts/bulk-ack', { alert_ids: alertIds, note });
 }
 
 export async function deleteAlert(alertId: number): Promise<void> {
@@ -167,4 +171,8 @@ export async function deleteAlert(alertId: number): Promise<void> {
 
 export async function archiveAlert(alertId: number): Promise<void> {
   await mutateJson<{ ok: boolean }>(`/api/alerts/${alertId}`, { method: 'DELETE' });
+}
+
+export async function bulkArchiveAlerts(alertIds: number[]): Promise<void> {
+  await jsonPost<{ ok: boolean }>('/api/alerts/bulk-archive', { alert_ids: alertIds });
 }
