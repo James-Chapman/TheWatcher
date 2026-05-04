@@ -85,17 +85,19 @@ export async function loadDashboardData(): Promise<{
   metrics: MetricsSnapshot[];
   groups: GroupRecord[];
   alerts: AlertRecord[];
+  allAlerts: AlertRecord[];
   users: UserRecord[];
 }> {
-  const [agents, pending, metrics, groups, alerts, users] = await Promise.all([
+  const [agents, pending, metrics, groups, alerts, allAlerts, users] = await Promise.all([
     fetchAgents(),
     fetchPendingEnrollments().catch(() => []),
     fetchLatestMetrics(),
     fetchGroups().catch(() => []),
     fetchUnacknowledgedAlerts().catch(() => []),
+    fetchAlerts().catch(() => []),
     fetchUsers().catch(() => []),
   ]);
-  return { agents, pending, metrics, groups, alerts, users };
+  return { agents, pending, metrics, groups, alerts, allAlerts, users };
 }
 
 export async function approveAgent(agentId: string, groupIds: number[] = []): Promise<void> {
@@ -160,5 +162,9 @@ export async function acknowledgeAlert(alertId: number): Promise<void> {
 }
 
 export async function deleteAlert(alertId: number): Promise<void> {
+  await mutateJson<{ ok: boolean }>(`/api/alerts/${alertId}`, { method: 'DELETE' });
+}
+
+export async function archiveAlert(alertId: number): Promise<void> {
   await mutateJson<{ ok: boolean }>(`/api/alerts/${alertId}`, { method: 'DELETE' });
 }

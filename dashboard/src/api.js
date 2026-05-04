@@ -55,15 +55,16 @@ export async function fetchUnacknowledgedAlerts() {
     return fetchJson('/api/alerts/unacknowledged');
 }
 export async function loadDashboardData() {
-    const [agents, pending, metrics, groups, alerts, users] = await Promise.all([
+    const [agents, pending, metrics, groups, alerts, allAlerts, users] = await Promise.all([
         fetchAgents(),
         fetchPendingEnrollments().catch(() => []),
         fetchLatestMetrics(),
         fetchGroups().catch(() => []),
         fetchUnacknowledgedAlerts().catch(() => []),
+        fetchAlerts().catch(() => []),
         fetchUsers().catch(() => []),
     ]);
-    return { agents, pending, metrics, groups, alerts, users };
+    return { agents, pending, metrics, groups, alerts, allAlerts, users };
 }
 export async function approveAgent(agentId, groupIds = []) {
     await jsonPost(`/api/agents/${encodeURIComponent(agentId)}/approve`, { group_ids: groupIds });
@@ -113,5 +114,8 @@ export async function acknowledgeAlert(alertId) {
     await mutateJson(`/api/alerts/${alertId}/ack`, { method: 'POST' });
 }
 export async function deleteAlert(alertId) {
+    await mutateJson(`/api/alerts/${alertId}`, { method: 'DELETE' });
+}
+export async function archiveAlert(alertId) {
     await mutateJson(`/api/alerts/${alertId}`, { method: 'DELETE' });
 }

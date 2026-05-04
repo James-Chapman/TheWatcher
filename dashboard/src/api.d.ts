@@ -17,6 +17,7 @@ export declare function loadDashboardData(): Promise<{
     metrics: MetricsSnapshot[];
     groups: GroupRecord[];
     alerts: AlertRecord[];
+    allAlerts: AlertRecord[];
     users: UserRecord[];
 }>;
 export declare function approveAgent(agentId: string, groupIds?: number[]): Promise<void>;
@@ -34,3 +35,4 @@ export declare function restartAgentCollectors(agentId: string): Promise<void>;
 export declare function requestAgentStatus(agentId: string): Promise<void>;
 export declare function acknowledgeAlert(alertId: number): Promise<void>;
 export declare function deleteAlert(alertId: number): Promise<void>;
+export declare function archiveAlert(alertId: number): Promise<void>;

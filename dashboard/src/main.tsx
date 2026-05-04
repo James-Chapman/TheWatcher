@@ -4,6 +4,7 @@ import { Check, LogOut, Pause, Play, Plus, RefreshCw, RotateCw, Search, SlidersH
 import { canManageAgent, maintenanceAction, maintenanceActionLabel } from './agentActions';
 import {
   acknowledgeAlert,
+  archiveAlert,
   approveAgent,
   createGroup,
   createUser,
@@ -68,6 +69,7 @@ function Dashboard() {
   const [pending, setPending] = React.useState<DashboardAgent[]>([]);
   const [groups, setGroups] = React.useState<GroupRecord[]>([]);
   const [alerts, setAlerts] = React.useState<AlertRecord[]>([]);
+  const [allAlerts, setAllAlerts] = React.useState<AlertRecord[]>([]);
   const [users, setUsers] = React.useState<UserRecord[]>([]);
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   const [loadedAt, setLoadedAt] = React.useState<Date | null>(null);
@@ -87,6 +89,7 @@ function Dashboard() {
       setPending(toDashboardAgents(data.pending, [], []));
       setGroups(data.groups);
       setAlerts(data.alerts);
+      setAllAlerts(data.allAlerts);
       setUsers(data.users);
       setLoadedAt(new Date());
     } catch (err) {
@@ -229,7 +232,7 @@ function Dashboard() {
         <PendingEnrollments agents={pending} busyAction={busyAction} groups={groups} runAction={runAction} />
       ) : null}
       {view === 'alerts' ? (
-        <AlertsPage alerts={displayAlerts} busyAction={busyAction} operator={operator} runAction={runAction} />
+        <AlertsPage alerts={toDisplayAlerts(allAlerts, agents)} busyAction={busyAction} operator={operator} runAction={runAction} />
       ) : null}
       {view === 'users' ? <UsersPage busyAction={busyAction} groups={groups} runAction={runAction} users={users} /> : null}
     </>
@@ -799,20 +802,34 @@ function AlertsPage({ alerts, busyAction, operator, runAction }: { alerts: Retur
       <div className="management-header"><h1>Alerts</h1></div>
       <div className="table-container">
         <table className="management-table">
-          <thead><tr><th>Agent</th><th>Indicator</th><th>State</th><th>Created</th><th>Message</th><th>Actions</th></tr></thead>
-          <tbody>{alerts.map((alert) => (
-            <tr key={alert.alert_id}>
-              <td><AgentIdentity id={alert.agentId} name={alert.agentName} /></td>
-              <td>{alert.indicator}</td>
-              <td><StatusDot color={alert.new_status} label={colorLabel(alert.new_status)} /></td>
-              <td className="uptime">{new Date(alert.created_at).toLocaleString()}</td>
-              <td>{alert.message}</td>
-              <td><div className="button-row">
-                <ActionButton busy={busyAction === `alert:${alert.alert_id}:ack`} disabled={!operator} icon={<Check size={14} />} label="Ack" onClick={() => runAction(`alert:${alert.alert_id}:ack`, () => acknowledgeAlert(alert.alert_id))} />
-                <ActionButton busy={busyAction === `alert:${alert.alert_id}:delete`} danger disabled={!operator} icon={<Trash2 size={14} />} label="Delete" onClick={() => runAction(`alert:${alert.alert_id}:delete`, () => deleteAlert(alert.alert_id))} />
-              </div></td>
-            </tr>
-          ))}</tbody>
+          <thead><tr><th>Agent</th><th>Indicator</th><th>State</th><th>Created</th><th>Message</th><th>Acknowledged</th><th>Actions</th></tr></thead>
+          <tbody>{alerts.map((alert) => {
+            const isAcknowledged = alert.acknowledged_at > 0;
+            return (
+              <tr key={alert.alert_id}>
+                <td><AgentIdentity id={alert.agentId} name={alert.agentName} /></td>
+                <td>{alert.indicator}</td>
+                <td><StatusDot color={alert.new_status} label={colorLabel(alert.new_status)} /></td>
+                <td className="uptime">{new Date(alert.created_at).toLocaleString()}</td>
+                <td>{alert.message}</td>
+                <td className="uptime">
+                  {isAcknowledged ? (
+                    <span>{alert.acknowledged_by} &mdash; {new Date(alert.acknowledged_at).toLocaleString()}</span>
+                  ) : null}
+                </td>
+                <td><div className="button-row">
+                  {!isAcknowledged ? (
+                    <>
+                      <ActionButton busy={busyAction === `alert:${alert.alert_id}:ack`} disabled={!operator} icon={<Check size={14} />} label="Acknowledge" onClick={() => runAction(`alert:${alert.alert_id}:ack`, () => acknowledgeAlert(alert.alert_id))} />
+                      <ActionButton busy={busyAction === `alert:${alert.alert_id}:ack-archive`} disabled={!operator} icon={<Trash2 size={14} />} label="Acknowledge & Archive" onClick={() => runAction(`alert:${alert.alert_id}:ack-archive`, async () => { await acknowledgeAlert(alert.alert_id); await archiveAlert(alert.alert_id); })} />
+                    </>
+                  ) : (
+                    <ActionButton busy={busyAction === `alert:${alert.alert_id}:archive`} danger disabled={!operator} icon={<Trash2 size={14} />} label="Archive" onClick={() => runAction(`alert:${alert.alert_id}:archive`, () => archiveAlert(alert.alert_id))} />
+                  )}
+                </div></td>
+              </tr>
+            );
+          })}</tbody>
         </table>
       </div>
     </main>
