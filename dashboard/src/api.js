@@ -48,8 +48,8 @@ export async function createGroup(name) {
 export async function createUser(username, password, role, groupIds) {
     await jsonPost('/api/users', { username, password, role, group_ids: groupIds });
 }
-export async function fetchAlerts() {
-    return fetchJson('/api/alerts');
+export async function fetchAlerts(includeArchived = false) {
+    return fetchJson(includeArchived ? '/api/alerts?include_archived=1' : '/api/alerts');
 }
 export async function fetchUnacknowledgedAlerts() {
     return fetchJson('/api/alerts/unacknowledged');
@@ -110,12 +110,18 @@ export async function restartAgentCollectors(agentId) {
 export async function requestAgentStatus(agentId) {
     await mutateJson(`/api/agents/${encodeURIComponent(agentId)}/get_status`, { method: 'POST' });
 }
-export async function acknowledgeAlert(alertId) {
-    await mutateJson(`/api/alerts/${alertId}/ack`, { method: 'POST' });
+export async function acknowledgeAlert(alertId, note = '') {
+    await jsonPost(`/api/alerts/${alertId}/ack`, { note });
+}
+export async function bulkAcknowledgeAlerts(alertIds, note = '') {
+    await jsonPost('/api/alerts/bulk-ack', { alert_ids: alertIds, note });
 }
 export async function deleteAlert(alertId) {
     await mutateJson(`/api/alerts/${alertId}`, { method: 'DELETE' });
 }
 export async function archiveAlert(alertId) {
     await mutateJson(`/api/alerts/${alertId}`, { method: 'DELETE' });
+}
+export async function bulkArchiveAlerts(alertIds) {
+    await jsonPost('/api/alerts/bulk-archive', { alert_ids: alertIds });
 }

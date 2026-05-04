@@ -733,3 +733,259 @@ SCENARIO("latest_metrics returns one row per agent with their most recent timest
         }
     }
 }
+
+// ── Alert note field ──────────────────────────────────────────────────────────
+
+SCENARIO("Acknowledging an alert stores the operator note alongside the ack metadata")
+{
+    GIVEN("a store with an agent and an active alert")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord rec;
+        rec.agent_id = "agent-note";
+        rec.approved = true;
+        rec.first_seen = 1;
+        rec.last_seen = 1;
+        store.upsert_agent(rec);
+
+        AlertRecord alert;
+        alert.agent_id = "agent-note";
+        alert.indicator = "cpu";
+        alert.old_status = "green";
+        alert.new_status = "red";
+        alert.message = "cpu changed";
+        alert.created_at = 100;
+        const auto alert_id = store.insert_alert(alert);
+
+        WHEN("the alert is acknowledged with a note")
+        {
+            store.acknowledge_alert(alert_id, "operator1", 200, "Investigated — transient spike, no action needed");
+
+            THEN("list_alerts returns the stored note and ack metadata")
+            {
+                auto alerts = store.list_alerts(false);
+                REQUIRE(alerts.size() == 1);
+                REQUIRE(alerts[0].acknowledged_by == "operator1");
+                REQUIRE(alerts[0].acknowledged_at == 200);
+                REQUIRE(alerts[0].note == "Investigated — transient spike, no action needed");
+            }
+        }
+
+        WHEN("the alert is acknowledged without a note")
+        {
+            store.acknowledge_alert(alert_id, "operator2", 300);
+
+            THEN("the note is empty and ack metadata is still recorded")
+            {
+                auto alerts = store.list_alerts(false);
+                REQUIRE(alerts.size() == 1);
+                REQUIRE(alerts[0].acknowledged_by == "operator2");
+                REQUIRE(alerts[0].note == "");
+            }
+        }
+    }
+}
+
+// ── Bulk alert operations ─────────────────────────────────────────────────────
+
+SCENARIO("Bulk acknowledging alerts sets ack metadata on all specified alerts")
+{
+    GIVEN("a store with an agent and three active alerts")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord rec;
+        rec.agent_id = "agent-bulk";
+        rec.approved = true;
+        rec.first_seen = 1;
+        rec.last_seen = 1;
+        store.upsert_agent(rec);
+
+        std::vector<int64_t> ids;
+        for (int i = 0; i < 3; ++i)
+        {
+            AlertRecord alert;
+            alert.agent_id = "agent-bulk";
+            alert.indicator = "cpu";
+            alert.old_status = "green";
+            alert.new_status = "red";
+            alert.message = "alert";
+            alert.created_at = 100 + i;
+            ids.push_back(store.insert_alert(alert));
+        }
+
+        WHEN("bulk_acknowledge_alerts is called on the first two")
+        {
+            store.bulk_acknowledge_alerts({ids[0], ids[1]}, "ops-team", 500, "bulk ack");
+
+            THEN("the first two are acknowledged with the note")
+            {
+                auto alerts = store.list_alerts(false);
+                int acked = 0;
+                for (const auto& a : alerts)
+                {
+                    if (a.acknowledged_at > 0)
+                    {
+                        REQUIRE(a.acknowledged_by == "ops-team");
+                        REQUIRE(a.note == "bulk ack");
+                        ++acked;
+                    }
+                }
+                REQUIRE(acked == 2);
+            }
+
+            AND_THEN("the third alert remains unacknowledged")
+            {
+                REQUIRE(store.list_unacknowledged_alerts().size() == 1);
+            }
+        }
+    }
+}
+
+SCENARIO("Bulk soft-deleting alerts hides all specified alerts from active queries")
+{
+    GIVEN("a store with an agent and four alerts")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord rec;
+        rec.agent_id = "agent-bulk-del";
+        rec.approved = true;
+        rec.first_seen = 1;
+        rec.last_seen = 1;
+        store.upsert_agent(rec);
+
+        std::vector<int64_t> ids;
+        for (int i = 0; i < 4; ++i)
+        {
+            AlertRecord alert;
+            alert.agent_id = "agent-bulk-del";
+            alert.indicator = "disk";
+            alert.old_status = "green";
+            alert.new_status = "amber";
+            alert.message = "alert";
+            alert.created_at = 200 + i;
+            ids.push_back(store.insert_alert(alert));
+        }
+
+        WHEN("bulk_soft_delete_alerts archives three of the four")
+        {
+            store.bulk_soft_delete_alerts({ids[0], ids[1], ids[2]}, 999);
+
+            THEN("only one active alert remains")
+            {
+                REQUIRE(store.list_alerts(false).size() == 1);
+            }
+
+            AND_THEN("the historical view includes all four")
+            {
+                REQUIRE(store.list_alerts(true).size() == 4);
+            }
+        }
+    }
+}
+
+// ── Dead-agent alert helpers ──────────────────────────────────────────────────
+
+SCENARIO("get_offline_unalerted_agent_ids returns only offline approved agents with no active Heartbeat alert")
+{
+    GIVEN("a store with several agents in different states")
+    {
+        SqliteStore store(":memory:");
+
+        auto make_agent = [&](const std::string& id, bool approved, bool connected, bool maintenance) {
+            AgentRecord r;
+            r.agent_id = id;
+            r.approved = approved;
+            r.connected = connected;
+            r.maintenance = maintenance;
+            r.first_seen = 1;
+            r.last_seen = connected ? 9999 : 1; // offline agents have old last_seen
+            store.upsert_agent(r);
+        };
+
+        make_agent("agent-online",      true,  true,  false); // online — excluded
+        make_agent("agent-offline-ok",  true,  false, false); // offline, no alert — should appear
+        make_agent("agent-offline-alerted", true, false, false); // offline, has alert — excluded
+        make_agent("agent-pending",     false, false, false); // not approved — excluded
+        make_agent("agent-maintenance", true,  false, true);  // maintenance — excluded
+
+        AlertRecord alert;
+        alert.agent_id = "agent-offline-alerted";
+        alert.indicator = "Heartbeat";
+        alert.old_status = "green";
+        alert.new_status = "red";
+        alert.message = "offline";
+        alert.created_at = 100;
+        store.insert_alert(alert);
+
+        WHEN("get_offline_unalerted_agent_ids is called")
+        {
+            auto ids = store.get_offline_unalerted_agent_ids();
+
+            THEN("only the unalerted offline approved non-maintenance agent is returned")
+            {
+                REQUIRE(ids.size() == 1);
+                REQUIRE(ids[0] == "agent-offline-ok");
+            }
+        }
+    }
+}
+
+SCENARIO("archive_heartbeat_alerts_for_agent removes active Heartbeat alerts for that agent only")
+{
+    GIVEN("two agents each with an active Heartbeat alert")
+    {
+        SqliteStore store(":memory:");
+
+        for (auto id : {"agent-A", "agent-B"})
+        {
+            AgentRecord r;
+            r.agent_id = id;
+            r.approved = true;
+            r.first_seen = 1;
+            r.last_seen = 1;
+            store.upsert_agent(r);
+
+            AlertRecord alert;
+            alert.agent_id = id;
+            alert.indicator = "Heartbeat";
+            alert.old_status = "green";
+            alert.new_status = "red";
+            alert.message = "offline";
+            alert.created_at = 100;
+            store.insert_alert(alert);
+        }
+
+        WHEN("archive_heartbeat_alerts_for_agent is called for agent-A")
+        {
+            store.archive_heartbeat_alerts_for_agent("agent-A", 500);
+
+            THEN("agent-A has no active alerts")
+            {
+                auto active = store.list_alerts(false);
+                for (const auto& a : active)
+                    REQUIRE(a.agent_id != "agent-A");
+            }
+
+            AND_THEN("agent-B still has its active alert")
+            {
+                auto active = store.list_alerts(false);
+                bool found = false;
+                for (const auto& a : active)
+                    found = found || (a.agent_id == "agent-B");
+                REQUIRE(found);
+            }
+
+            AND_THEN("the archived alert for agent-A is visible in the historical view")
+            {
+                auto all = store.list_alerts(true);
+                bool found = false;
+                for (const auto& a : all)
+                    found = found || (a.agent_id == "agent-A" && a.deleted_at == 500);
+                REQUIRE(found);
+            }
+        }
+    }
+}
