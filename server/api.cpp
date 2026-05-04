@@ -227,7 +227,21 @@ namespace
             {"created_at",      alert.created_at     },
             {"acknowledged_by", alert.acknowledged_by},
             {"acknowledged_at", alert.acknowledged_at},
-            {"deleted_at",      alert.deleted_at     }
+            {"deleted_at",      alert.deleted_at     },
+            {"escalated_at",    alert.escalated_at   }
+        };
+    }
+
+    json maintenance_window_to_json(const MaintenanceWindowRecord& w)
+    {
+        return {
+            {"window_id",  w.window_id },
+            {"agent_id",   w.agent_id  },
+            {"start_ms",   w.start_ms  },
+            {"end_ms",     w.end_ms    },
+            {"reason",     w.reason    },
+            {"created_by", w.created_by},
+            {"created_at", w.created_at}
         };
     }
 
@@ -1162,6 +1176,111 @@ void ApiServer::setup_routes()
     http_->Post("/api/agents/:id/restart_collectors", simple_cmd(CommandType::RESTART_COLLECTORS));
     http_->Post("/api/agents/:id/disconnect", simple_cmd(CommandType::DISCONNECT));
     http_->Post("/api/agents/:id/get_status", simple_cmd(CommandType::GET_STATUS));
+
+    // GET /api/uptime/:id?days=N — uptime percentage for one agent
+    http_->Get("/api/uptime/:id", [this](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto id = req.path_params.at("id");
+            if (!require_agent_access(req, res, "viewer", id))
+                return;
+            auto agent = store_.get_agent(id);
+            if (!agent)
+            {
+                res.status = 404;
+                set_json(res, json{
+                                  {"error", "agent not found"}
+                });
+                return;
+            }
+            int days = 7;
+            if (req.has_param("days"))
+                days = std::max(1, std::min(90, std::stoi(req.get_param_value("days"))));
+            const auto now = now_ms();
+            const auto since = now - (static_cast<int64_t>(days) * 86400LL * 1000LL);
+            const auto actual = store_.count_metrics_in_window(id, since, now);
+            const auto window_ms = now - std::max(since, agent->first_seen);
+            const auto expected = window_ms > 0 ? window_ms / (static_cast<int64_t>(agent->collection_interval) * 1000LL) : 0;
+            double pct = expected > 0 ? std::min(100.0, (static_cast<double>(actual) / static_cast<double>(expected)) * 100.0) : 0.0;
+            set_json(res, json{
+                              {"agent_id",        id    },
+                              {"days",            days  },
+                              {"uptime_percent",  pct   },
+                              {"actual_samples",  actual},
+                              {"expected_samples", expected}
+            });
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{
+                                  {"error", e.what()}
+            });
+        }
+    });
+
+    // GET /api/maintenance-windows — list all maintenance windows
+    http_->Get("/api/maintenance-windows", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "viewer"))
+            return;
+        auto windows = store_.list_maintenance_windows();
+        json arr = json::array();
+        for (const auto& w : windows)
+            arr.push_back(maintenance_window_to_json(w));
+        set_json(res, arr);
+    });
+
+    // POST /api/maintenance-windows — create a maintenance window
+    http_->Post("/api/maintenance-windows", [this](const httplib::Request& req, httplib::Response& res) {
+        auto session = require_role(req, res, "operator");
+        if (!session)
+            return;
+        try
+        {
+            auto body = json::parse(req.body);
+            MaintenanceWindowRecord rec;
+            rec.agent_id = body.value("agent_id", std::string("*"));
+            rec.start_ms = body.at("start_ms").get<int64_t>();
+            rec.end_ms = body.at("end_ms").get<int64_t>();
+            rec.reason = body.value("reason", std::string(""));
+            rec.created_by = session->username;
+            rec.created_at = now_ms();
+            if (rec.end_ms <= rec.start_ms)
+                throw std::runtime_error("end_ms must be after start_ms");
+            auto window_id = store_.create_maintenance_window(rec);
+            set_json(res, json{
+                              {"window_id", window_id}
+            });
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{
+                              {"error", e.what()}
+            });
+        }
+    });
+
+    // DELETE /api/maintenance-windows/:id — delete a maintenance window
+    http_->Delete("/api/maintenance-windows/:id", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "operator"))
+            return;
+        try
+        {
+            const auto window_id = std::stoll(req.path_params.at("id"));
+            store_.delete_maintenance_window(window_id);
+            set_json(res, json{
+                              {"ok", true}
+            });
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{
+                              {"error", e.what()}
+            });
+        }
+    });
 }
 
 } // namespace thewatcher::server
