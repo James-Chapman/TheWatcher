@@ -174,6 +174,7 @@ describe('GIVEN alerts and known dashboard agents', () => {
         acknowledged_by: '',
         acknowledged_at: 0,
         deleted_at: 0,
+        escalated_at: 0,
       },
       {
         alert_id: 2,
@@ -186,6 +187,7 @@ describe('GIVEN alerts and known dashboard agents', () => {
         acknowledged_by: '',
         acknowledged_at: 0,
         deleted_at: 0,
+        escalated_at: 0,
       },
     ];
 

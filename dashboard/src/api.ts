@@ -4,8 +4,10 @@ import type {
   AgentThresholds,
   AlertRecord,
   GroupRecord,
+  MaintenanceWindowRecord,
   MetricsSnapshot,
   SessionInfo,
+  UptimeReport,
   UserRecord,
 } from './models';
 
@@ -87,8 +89,9 @@ export async function loadDashboardData(): Promise<{
   alerts: AlertRecord[];
   allAlerts: AlertRecord[];
   users: UserRecord[];
+  maintenanceWindows: MaintenanceWindowRecord[];
 }> {
-  const [agents, pending, metrics, groups, alerts, allAlerts, users] = await Promise.all([
+  const [agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows] = await Promise.all([
     fetchAgents(),
     fetchPendingEnrollments().catch(() => []),
     fetchLatestMetrics(),
@@ -96,8 +99,9 @@ export async function loadDashboardData(): Promise<{
     fetchUnacknowledgedAlerts().catch(() => []),
     fetchAlerts().catch(() => []),
     fetchUsers().catch(() => []),
+    fetchMaintenanceWindows().catch(() => []),
   ]);
-  return { agents, pending, metrics, groups, alerts, allAlerts, users };
+  return { agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows };
 }
 
 export async function approveAgent(agentId: string, groupIds: number[] = []): Promise<void> {
@@ -167,4 +171,34 @@ export async function deleteAlert(alertId: number): Promise<void> {
 
 export async function archiveAlert(alertId: number): Promise<void> {
   await mutateJson<{ ok: boolean }>(`/api/alerts/${alertId}`, { method: 'DELETE' });
+}
+
+export async function fetchMetricHistory(agentId: string, limit = 20): Promise<MetricsSnapshot[]> {
+  return fetchJson<MetricsSnapshot[]>(`/api/metrics/${encodeURIComponent(agentId)}?limit=${limit}`);
+}
+
+export async function fetchUptimeReport(agentId: string, days = 7): Promise<UptimeReport> {
+  return fetchJson<UptimeReport>(`/api/uptime/${encodeURIComponent(agentId)}?days=${days}`);
+}
+
+export async function fetchMaintenanceWindows(): Promise<MaintenanceWindowRecord[]> {
+  return fetchJson<MaintenanceWindowRecord[]>('/api/maintenance-windows');
+}
+
+export async function createMaintenanceWindow(
+  agentId: string,
+  startMs: number,
+  endMs: number,
+  reason: string,
+): Promise<void> {
+  await jsonPost<{ window_id: number }>('/api/maintenance-windows', {
+    agent_id: agentId,
+    start_ms: startMs,
+    end_ms: endMs,
+    reason,
+  });
+}
+
+export async function deleteMaintenanceWindow(windowId: number): Promise<void> {
+  await mutateJson<{ ok: boolean }>(`/api/maintenance-windows/${windowId}`, { method: 'DELETE' });
 }

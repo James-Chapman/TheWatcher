@@ -55,7 +55,7 @@ export async function fetchUnacknowledgedAlerts() {
     return fetchJson('/api/alerts/unacknowledged');
 }
 export async function loadDashboardData() {
-    const [agents, pending, metrics, groups, alerts, allAlerts, users] = await Promise.all([
+    const [agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows] = await Promise.all([
         fetchAgents(),
         fetchPendingEnrollments().catch(() => []),
         fetchLatestMetrics(),
@@ -63,8 +63,9 @@ export async function loadDashboardData() {
         fetchUnacknowledgedAlerts().catch(() => []),
         fetchAlerts().catch(() => []),
         fetchUsers().catch(() => []),
+        fetchMaintenanceWindows().catch(() => []),
     ]);
-    return { agents, pending, metrics, groups, alerts, allAlerts, users };
+    return { agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows };
 }
 export async function approveAgent(agentId, groupIds = []) {
     await jsonPost(`/api/agents/${encodeURIComponent(agentId)}/approve`, { group_ids: groupIds });
@@ -118,4 +119,19 @@ export async function deleteAlert(alertId) {
 }
 export async function archiveAlert(alertId) {
     await mutateJson(`/api/alerts/${alertId}`, { method: 'DELETE' });
+}
+export async function fetchMetricHistory(agentId, limit = 20) {
+    return fetchJson(`/api/metrics/${encodeURIComponent(agentId)}?limit=${limit}`);
+}
+export async function fetchUptimeReport(agentId, days = 7) {
+    return fetchJson(`/api/uptime/${encodeURIComponent(agentId)}?days=${days}`);
+}
+export async function fetchMaintenanceWindows() {
+    return fetchJson('/api/maintenance-windows');
+}
+export async function createMaintenanceWindow(agentId, startMs, endMs, reason) {
+    await jsonPost('/api/maintenance-windows', { agent_id: agentId, start_ms: startMs, end_ms: endMs, reason });
+}
+export async function deleteMaintenanceWindow(windowId) {
+    await mutateJson(`/api/maintenance-windows/${windowId}`, { method: 'DELETE' });
 }
