@@ -55,7 +55,7 @@ export async function fetchUnacknowledgedAlerts() {
     return fetchJson('/api/alerts/unacknowledged');
 }
 export async function loadDashboardData() {
-    const [agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows] = await Promise.all([
+    const [agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows, silences] = await Promise.all([
         fetchAgents(),
         fetchPendingEnrollments().catch(() => []),
         fetchLatestMetrics(),
@@ -64,8 +64,9 @@ export async function loadDashboardData() {
         fetchAlerts().catch(() => []),
         fetchUsers().catch(() => []),
         fetchMaintenanceWindows().catch(() => []),
+        fetchSilences().catch(() => []),
     ]);
-    return { agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows };
+    return { agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows, silences };
 }
 export async function approveAgent(agentId, groupIds = []) {
     await jsonPost(`/api/agents/${encodeURIComponent(agentId)}/approve`, { group_ids: groupIds });
@@ -174,4 +175,21 @@ export async function changeUserPassword(userId, password) {
         headers: { 'Content-Type': 'application/json' },
         method: 'PUT',
     });
+}
+export async function fetchSilences() {
+    return fetchJson('/api/silences');
+}
+export async function createSilence(agentId, indicator, reason, untilMs) {
+    await jsonPost('/api/silences', {
+        agent_id: agentId,
+        indicator,
+        reason,
+        until_ms: untilMs,
+    });
+}
+export async function deleteSilence(silenceId) {
+    await mutateJson(`/api/silences/${silenceId}`, { method: 'DELETE' });
+}
+export async function fetchAgentHistory(agentId, limit = 100) {
+    return fetchJson(`/api/agents/${encodeURIComponent(agentId)}/history?limit=${limit}`);
 }
