@@ -15,9 +15,15 @@ export interface AgentRecord {
     process_limit: number;
     first_seen: number;
     last_seen: number;
+    description: string;
     group_ids?: number[];
     thresholds?: AgentThresholds;
     collector_config?: CollectorConfig;
+}
+export interface ServerSettings {
+    webhook_url: string;
+    offline_after_seconds: number;
+    escalation_timeout_seconds: number;
 }
 export interface IndicatorThresholds {
     warning_pct_of_avg: number;
@@ -101,6 +107,24 @@ export interface AlertRecord {
     acknowledged_by: string;
     acknowledged_at: number;
     deleted_at: number;
+    note: string;
+    escalated_at: number;
+}
+export interface MaintenanceWindowRecord {
+    window_id: number;
+    agent_id: string;
+    start_ms: number;
+    end_ms: number;
+    reason: string;
+    created_by: string;
+    created_at: number;
+}
+export interface UptimeReport {
+    agent_id: string;
+    days: number;
+    uptime_percent: number;
+    actual_samples: number;
+    expected_samples: number;
 }
 export interface CpuMetrics {
     usage_percent: number;
@@ -191,4 +215,5 @@ export interface DashboardAgent {
     alertColor: HealthColor;
     components: ComponentHealth[];
     metrics?: SystemMetrics;
+    description: string;
 }

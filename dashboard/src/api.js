@@ -136,8 +136,42 @@ export async function fetchMaintenanceWindows() {
     return fetchJson('/api/maintenance-windows');
 }
 export async function createMaintenanceWindow(agentId, startMs, endMs, reason) {
-    await jsonPost('/api/maintenance-windows', { agent_id: agentId, start_ms: startMs, end_ms: endMs, reason });
+    await jsonPost('/api/maintenance-windows', {
+        agent_id: agentId,
+        start_ms: startMs,
+        end_ms: endMs,
+        reason,
+    });
 }
 export async function deleteMaintenanceWindow(windowId) {
     await mutateJson(`/api/maintenance-windows/${windowId}`, { method: 'DELETE' });
+}
+export async function setAgentDescription(agentId, description) {
+    await jsonPost(`/api/agents/${encodeURIComponent(agentId)}/description`, { description });
+}
+export async function fetchSettings() {
+    return fetchJson('/api/settings');
+}
+export async function updateSettings(settings) {
+    await mutateJson('/api/settings', {
+        body: JSON.stringify(settings),
+        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT',
+    });
+}
+export async function disableUser(userId) {
+    await mutateJson(`/api/users/${userId}/disable`, { method: 'PUT' });
+}
+export async function enableUser(userId) {
+    await mutateJson(`/api/users/${userId}/enable`, { method: 'PUT' });
+}
+export async function deleteUser(userId) {
+    await mutateJson(`/api/users/${userId}`, { method: 'DELETE' });
+}
+export async function changeUserPassword(userId, password) {
+    await mutateJson(`/api/users/${userId}/password`, {
+        body: JSON.stringify({ password }),
+        headers: { 'Content-Type': 'application/json' },
+        method: 'PUT',
+    });
 }

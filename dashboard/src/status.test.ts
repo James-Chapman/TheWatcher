@@ -5,13 +5,19 @@ import {
   DEFAULT_PERCENT_THRESHOLDS,
   DEFAULT_THRESHOLDS,
   agentStatus,
+  classifyNetworkMbps,
   classifyPercent,
+  collectorConfigWithDefaults,
+  formatBytes,
+  formatDuration,
   groupOverviewAgents,
+  hostStatus,
   summaryCounts,
   toDashboardAgents,
   toDisplayAlerts,
+  worstColor,
 } from './status';
-import type { AgentRecord, AlertRecord, DashboardAgent, GroupRecord, MetricsSnapshot } from './models';
+import type { AgentRecord, AlertRecord, CollectorConfig, DashboardAgent, GroupRecord, MetricsSnapshot } from './models';
 
 function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
@@ -29,6 +35,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     process_limit: 25,
     first_seen: 1,
     last_seen: 1,
+    description: '',
     ...overrides,
   };
 }
@@ -45,9 +52,9 @@ describe('GIVEN dashboard health thresholds', () => {
 describe('GIVEN agents with component health', () => {
   it('WHEN summary counts are calculated THEN each agent contributes to its host state', () => {
     const agents: DashboardAgent[] = [
-      { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }] },
-      { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }] },
-      { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }] },
+      { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }], description: '' },
+      { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }], description: '' },
+      { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }], description: '' },
     ];
 
     expect(agentStatus(agents[2])).toBe('red');
@@ -222,5 +229,280 @@ describe('GIVEN alerts and known dashboard agents', () => {
       agentName: 'agent-missing',
       agentId: 'agent-missing',
     });
+  });
+});
+
+describe('GIVEN formatBytes', () => {
+  it('WHEN given zero or negative values THEN returns "0 B"', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(-1)).toBe('0 B');
+    expect(formatBytes(Number.NaN)).toBe('0 B');
+  });
+
+  it('WHEN given byte-scale values THEN returns bytes without a decimal', () => {
+    expect(formatBytes(1)).toBe('1 B');
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(1023)).toBe('1023 B');
+  });
+
+  it('WHEN given kilobyte-scale values THEN returns KB with one decimal for small values', () => {
+    expect(formatBytes(1024)).toBe('1.0 KB');
+    expect(formatBytes(1536)).toBe('1.5 KB');
+    expect(formatBytes(10 * 1024)).toBe('10 KB');
+  });
+
+  it('WHEN given megabyte-scale values THEN returns MB', () => {
+    expect(formatBytes(1024 * 1024)).toBe('1.0 MB');
+    expect(formatBytes(500 * 1024 * 1024)).toBe('500 MB');
+  });
+
+  it('WHEN given gigabyte-scale values THEN returns GB with one decimal for small values', () => {
+    expect(formatBytes(8 * 1024 * 1024 * 1024)).toBe('8.0 GB');
+    expect(formatBytes(100 * 1024 * 1024 * 1024)).toBe('100 GB');
+  });
+});
+
+describe('GIVEN formatDuration', () => {
+  it('WHEN given zero or negative values THEN returns "unknown"', () => {
+    expect(formatDuration(0)).toBe('unknown');
+    expect(formatDuration(-60)).toBe('unknown');
+    expect(formatDuration(Number.NaN)).toBe('unknown');
+  });
+
+  it('WHEN given sub-hour durations THEN returns minutes only', () => {
+    expect(formatDuration(60)).toBe('1m');
+    expect(formatDuration(3540)).toBe('59m');
+  });
+
+  it('WHEN given hour-scale durations THEN returns hours and minutes', () => {
+    expect(formatDuration(3600)).toBe('1h 0m');
+    expect(formatDuration(3600 + 30 * 60)).toBe('1h 30m');
+    expect(formatDuration(23 * 3600 + 59 * 60)).toBe('23h 59m');
+  });
+
+  it('WHEN given day-scale durations THEN returns days and hours', () => {
+    expect(formatDuration(86400)).toBe('1d 0h');
+    expect(formatDuration(2 * 86400 + 6 * 3600)).toBe('2d 6h');
+  });
+});
+
+describe('GIVEN classifyNetworkMbps', () => {
+  it('WHEN traffic is below warning threshold THEN color is green', () => {
+    expect(classifyNetworkMbps(0)).toBe('green');
+    expect(classifyNetworkMbps(99)).toBe('green');
+  });
+
+  it('WHEN traffic crosses warning THEN color is yellow', () => {
+    expect(classifyNetworkMbps(100)).toBe('yellow');
+    expect(classifyNetworkMbps(149)).toBe('yellow');
+  });
+
+  it('WHEN traffic crosses degraded THEN color is amber', () => {
+    expect(classifyNetworkMbps(200)).toBe('amber');
+  });
+
+  it('WHEN traffic crosses critical THEN color is red', () => {
+    expect(classifyNetworkMbps(300)).toBe('red');
+  });
+
+  it('WHEN traffic uses custom thresholds THEN they override the defaults', () => {
+    const custom = { warning_mbps: 10, degraded_mbps: 20, critical_mbps: 30 };
+    expect(classifyNetworkMbps(5, custom)).toBe('green');
+    expect(classifyNetworkMbps(15, custom)).toBe('yellow');
+    expect(classifyNetworkMbps(25, custom)).toBe('amber');
+    expect(classifyNetworkMbps(35, custom)).toBe('red');
+  });
+
+  it('WHEN given a non-finite value THEN color is grey', () => {
+    expect(classifyNetworkMbps(Number.NaN)).toBe('grey');
+    expect(classifyNetworkMbps(Infinity)).toBe('grey');
+  });
+});
+
+describe('GIVEN worstColor', () => {
+  it('WHEN all colors are green THEN returns green', () => {
+    expect(worstColor(['green', 'green'])).toBe('green');
+  });
+
+  it('WHEN the array is empty THEN returns green', () => {
+    expect(worstColor([])).toBe('green');
+  });
+
+  it('WHEN colors include red THEN red wins regardless of position', () => {
+    expect(worstColor(['green', 'red', 'yellow'])).toBe('red');
+    expect(worstColor(['red', 'amber'])).toBe('red');
+  });
+
+  it('WHEN severity order is green < grey < yellow < amber < red THEN highest wins', () => {
+    expect(worstColor(['green', 'grey'])).toBe('grey');
+    expect(worstColor(['grey', 'yellow'])).toBe('yellow');
+    expect(worstColor(['yellow', 'amber'])).toBe('amber');
+    expect(worstColor(['amber', 'red'])).toBe('red');
+  });
+});
+
+describe('GIVEN hostStatus', () => {
+  it('WHEN the agent is in maintenance THEN status is blue regardless of components', () => {
+    const result = hostStatus({ maintenance: true, components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '99%', detail: '' }] });
+    expect(result).toBe('blue');
+  });
+
+  it('WHEN all components are grey (no data) THEN status is promoted to yellow', () => {
+    const result = hostStatus({ maintenance: false, components: [{ key: 'cpu', label: 'CPU', color: 'grey', value: 'no data', detail: '' }] });
+    expect(result).toBe('yellow');
+  });
+
+  it('WHEN components include a red component THEN status is red', () => {
+    const result = hostStatus({
+      maintenance: false,
+      components: [
+        { key: 'cpu', label: 'CPU', color: 'green', value: '10%', detail: '' },
+        { key: 'memory', label: 'Memory', color: 'red', value: '98%', detail: '' },
+      ],
+    });
+    expect(result).toBe('red');
+  });
+});
+
+describe('GIVEN collectorConfigWithDefaults', () => {
+  it('WHEN called with undefined THEN returns the default config', () => {
+    const config = collectorConfigWithDefaults(undefined);
+    expect(config.cpu).toEqual(DEFAULT_PERCENT_THRESHOLDS);
+    expect(config.memory).toEqual(DEFAULT_PERCENT_THRESHOLDS);
+    expect(config.cpu_readings).toBe(DEFAULT_COLLECTOR_CONFIG.cpu_readings);
+  });
+
+  it('WHEN called with a partial config THEN merges with defaults', () => {
+    const partial: Partial<CollectorConfig> = { cpu: { warning_percent: 50, degraded_percent: 70, critical_percent: 90 } } as CollectorConfig;
+    const config = collectorConfigWithDefaults(partial as CollectorConfig);
+    expect(config.cpu.warning_percent).toBe(50);
+    expect(config.memory).toEqual(DEFAULT_PERCENT_THRESHOLDS);
+  });
+});
+
+describe('GIVEN toDashboardAgents with metric components', () => {
+  function baseAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
+    return {
+      agent_id: 'comp-agent',
+      hostname: 'comp-host',
+      platform: 'linux',
+      curve_public_key_z85: '',
+      approved: true,
+      rejected: false,
+      connected: true,
+      maintenance: false,
+      maintenance_reason: '',
+      maintenance_until: 0,
+      collection_interval: 30,
+      process_limit: 25,
+      first_seen: 1,
+      last_seen: 1,
+      description: '',
+      ...overrides,
+    };
+  }
+
+  function baseSnapshot(agentId: string, overrides: Partial<MetricsSnapshot['metrics']> = {}): MetricsSnapshot {
+    return {
+      agent_id: agentId,
+      timestamp_ms: 1000,
+      metrics: {
+        cpu: { usage_percent: 10, num_logical_cores: 4, load_avg_1m: 0.5 },
+        memory: { total_bytes: 8 * 1024 * 1024 * 1024, used_bytes: 2 * 1024 * 1024 * 1024, usage_percent: 25 },
+        disks: [{ device: '/dev/sda1', mount_point: '/', filesystem: 'ext4', total_bytes: 100e9, used_bytes: 30e9, usage_percent: 30 }],
+        temperatures: [{ sensor_name: 'cpu', sensor_label: 'core0', temperature_celsius: 45 }],
+        top_processes: [{ pid: 1, name: 'init', status: 'running', cpu_percent: 1, memory_rss_bytes: 1000, num_threads: 1 }],
+        networks: [{ interface_name: 'eth0', bytes_sent_per_sec: 1e6, bytes_recv_per_sec: 1e6, errors_in: 0, errors_out: 0, drops_in: 0, drops_out: 0, is_up: true }],
+        os_name: 'Linux',
+        os_version: '6.1',
+        hostname: 'comp-host',
+        platform: 'linux',
+        uptime_seconds: 3600,
+        ...overrides,
+      },
+    };
+  }
+
+  it('WHEN disk usage is high THEN disk component color reflects severity', () => {
+    const snapshot = baseSnapshot('comp-agent');
+    snapshot.metrics.disks[0].usage_percent = 96;
+    const [dashAgent] = toDashboardAgents([baseAgent()], [snapshot]);
+    const disk = dashAgent.components.find((c) => c.key === 'disk')!;
+    expect(disk.color).toBe('red');
+    expect(disk.value).toBe('96%');
+  });
+
+  it('WHEN a disk monitor config is disabled THEN that disk is excluded from the health color', () => {
+    const agentWithConfig = baseAgent({
+      collector_config: {
+        ...DEFAULT_COLLECTOR_CONFIG,
+        disks: [{ mount_point: '/', device: '/dev/sda1', enabled: false, thresholds: DEFAULT_PERCENT_THRESHOLDS }],
+      },
+    });
+    const snapshot = baseSnapshot('comp-agent');
+    snapshot.metrics.disks[0].usage_percent = 99;
+    const [dashAgent] = toDashboardAgents([agentWithConfig], [snapshot]);
+    const disk = dashAgent.components.find((c) => c.key === 'disk')!;
+    expect(disk.color).toBe('grey');
+    expect(disk.value).toBe('none');
+  });
+
+  it('WHEN temperature is above thresholds THEN temperature component reflects it', () => {
+    const snapshot = baseSnapshot('comp-agent');
+    snapshot.metrics.temperatures[0].temperature_celsius = 96;
+    const [dashAgent] = toDashboardAgents([baseAgent()], [snapshot]);
+    const temp = dashAgent.components.find((c) => c.key === 'temperature')!;
+    expect(temp.color).toBe('red');
+    expect(temp.value).toBe('96C');
+  });
+
+  it('WHEN no temperature sensors are reported THEN temperature component is grey', () => {
+    const snapshot = baseSnapshot('comp-agent');
+    snapshot.metrics.temperatures = [];
+    const [dashAgent] = toDashboardAgents([baseAgent()], [snapshot]);
+    const temp = dashAgent.components.find((c) => c.key === 'temperature')!;
+    expect(temp.color).toBe('grey');
+    expect(temp.value).toBe('n/a');
+  });
+
+  it('WHEN a network interface has packet errors THEN network component is red', () => {
+    const snapshot = baseSnapshot('comp-agent');
+    snapshot.metrics.networks[0].errors_in = 5;
+    const [dashAgent] = toDashboardAgents([baseAgent()], [snapshot]);
+    const net = dashAgent.components.find((c) => c.key === 'network')!;
+    expect(net.color).toBe('red');
+    expect(net.detail).toMatch(/errors/);
+  });
+
+  it('WHEN an interface is down THEN network component is red', () => {
+    const snapshot = baseSnapshot('comp-agent');
+    snapshot.metrics.networks[0].is_up = false;
+    const [dashAgent] = toDashboardAgents([baseAgent()], [snapshot]);
+    const net = dashAgent.components.find((c) => c.key === 'network')!;
+    expect(net.color).toBe('red');
+  });
+
+  it('WHEN the loopback interface is the only one and no config is set THEN it is excluded from monitoring', () => {
+    const snapshot = baseSnapshot('comp-agent');
+    snapshot.metrics.networks = [{ interface_name: 'lo', bytes_sent_per_sec: 0, bytes_recv_per_sec: 0, errors_in: 0, errors_out: 0, drops_in: 0, drops_out: 0, is_up: true }];
+    const [dashAgent] = toDashboardAgents([baseAgent()], [snapshot]);
+    const net = dashAgent.components.find((c) => c.key === 'network')!;
+    expect(net.color).toBe('grey');
+    expect(net.value).toBe('none');
+  });
+
+  it('WHEN memory usage is high THEN memory component reflects severity', () => {
+    const snapshot = baseSnapshot('comp-agent');
+    snapshot.metrics.memory.usage_percent = 95;
+    const [dashAgent] = toDashboardAgents([baseAgent()], [snapshot]);
+    const mem = dashAgent.components.find((c) => c.key === 'memory')!;
+    expect(mem.color).toBe('red');
+    expect(mem.value).toBe('95%');
+  });
+
+  it('WHEN the agent description is set THEN toDashboardAgents maps it through', () => {
+    const agentWithDesc = baseAgent({ description: 'Primary web server' });
+    const [dashAgent] = toDashboardAgents([agentWithDesc], []);
+    expect(dashAgent.description).toBe('Primary web server');
   });
 });

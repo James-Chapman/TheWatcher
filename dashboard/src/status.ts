@@ -336,6 +336,7 @@ export function toDashboardAgents(
         alertColor: unacked.has(agent.agent_id) ? 'red' : 'green',
         components,
         metrics,
+        description: agent.description ?? '',
       };
       row.status = hostStatus(row);
       return row;

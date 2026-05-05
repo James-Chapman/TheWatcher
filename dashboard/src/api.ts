@@ -6,6 +6,7 @@ import type {
   GroupRecord,
   MaintenanceWindowRecord,
   MetricsSnapshot,
+  ServerSettings,
   SessionInfo,
   UptimeReport,
   UserRecord,
@@ -209,4 +210,40 @@ export async function createMaintenanceWindow(
 
 export async function deleteMaintenanceWindow(windowId: number): Promise<void> {
   await mutateJson<{ ok: boolean }>(`/api/maintenance-windows/${windowId}`, { method: 'DELETE' });
+}
+
+export async function setAgentDescription(agentId: string, description: string): Promise<void> {
+  await jsonPost<{ ok: boolean }>(`/api/agents/${encodeURIComponent(agentId)}/description`, { description });
+}
+
+export async function fetchSettings(): Promise<ServerSettings> {
+  return fetchJson<ServerSettings>('/api/settings');
+}
+
+export async function updateSettings(settings: Partial<ServerSettings>): Promise<void> {
+  await mutateJson<{ ok: boolean }>('/api/settings', {
+    body: JSON.stringify(settings),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'PUT',
+  });
+}
+
+export async function disableUser(userId: number): Promise<void> {
+  await mutateJson<{ ok: boolean }>(`/api/users/${userId}/disable`, { method: 'PUT' });
+}
+
+export async function enableUser(userId: number): Promise<void> {
+  await mutateJson<{ ok: boolean }>(`/api/users/${userId}/enable`, { method: 'PUT' });
+}
+
+export async function deleteUser(userId: number): Promise<void> {
+  await mutateJson<{ ok: boolean }>(`/api/users/${userId}`, { method: 'DELETE' });
+}
+
+export async function changeUserPassword(userId: number, password: string): Promise<void> {
+  await mutateJson<{ ok: boolean }>(`/api/users/${userId}/password`, {
+    body: JSON.stringify({ password }),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'PUT',
+  });
 }

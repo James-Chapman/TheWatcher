@@ -19,7 +19,7 @@ namespace
         "memory_warning_pct_of_avg,memory_degraded_pct_of_avg,memory_critical_pct_of_avg,"
         "disk_warning_pct_of_avg,disk_degraded_pct_of_avg,disk_critical_pct_of_avg,"
         "network_warning_pct_of_avg,network_degraded_pct_of_avg,network_critical_pct_of_avg,"
-        "collector_config_json";
+        "collector_config_json,description";
 
     struct Stmt
     {
@@ -89,6 +89,7 @@ namespace
                 r.collector_config = default_collector_config();
             }
         }
+        r.description = text_col(s, 27);
         return r;
     }
 
@@ -260,10 +261,13 @@ void SqliteStore::init_schema()
             network_warning_pct_of_avg  REAL NOT NULL DEFAULT 125.0,
             network_degraded_pct_of_avg REAL NOT NULL DEFAULT 150.0,
             network_critical_pct_of_avg REAL NOT NULL DEFAULT 200.0,
-            collector_config_json       TEXT NOT NULL DEFAULT ''
+            collector_config_json       TEXT NOT NULL DEFAULT '',
+            description                 TEXT NOT NULL DEFAULT ''
         );
     )");
     add_column_if_missing("agents", "rejected", "ALTER TABLE agents ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0;");
+    add_column_if_missing("agents", "description",
+                          "ALTER TABLE agents ADD COLUMN description TEXT NOT NULL DEFAULT '';");
     add_column_if_missing("agents", "connected", "ALTER TABLE agents ADD COLUMN connected INTEGER NOT NULL DEFAULT 0;");
     add_column_if_missing("agents", "maintenance",
                           "ALTER TABLE agents ADD COLUMN maintenance INTEGER NOT NULL DEFAULT 0;");
@@ -450,8 +454,8 @@ void SqliteStore::upsert_agent(const AgentRecord& rec)
                rec.agent_id.c_str(), rec.approved ? 1 : 0, rec.rejected ? 1 : 0, rec.connected ? 1 : 0,
                rec.maintenance ? 1 : 0, rec.collection_interval, rec.process_limit);
     const char* sql = R"(
-        INSERT INTO agents(agent_id,hostname,platform,curve_public_key_z85,approved,rejected,connected,maintenance,maintenance_reason,maintenance_until,collection_interval,process_limit,first_seen,last_seen,cpu_warning_pct_of_avg,cpu_degraded_pct_of_avg,cpu_critical_pct_of_avg,memory_warning_pct_of_avg,memory_degraded_pct_of_avg,memory_critical_pct_of_avg,disk_warning_pct_of_avg,disk_degraded_pct_of_avg,disk_critical_pct_of_avg,network_warning_pct_of_avg,network_degraded_pct_of_avg,network_critical_pct_of_avg,collector_config_json)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO agents(agent_id,hostname,platform,curve_public_key_z85,approved,rejected,connected,maintenance,maintenance_reason,maintenance_until,collection_interval,process_limit,first_seen,last_seen,cpu_warning_pct_of_avg,cpu_degraded_pct_of_avg,cpu_critical_pct_of_avg,memory_warning_pct_of_avg,memory_degraded_pct_of_avg,memory_critical_pct_of_avg,disk_warning_pct_of_avg,disk_degraded_pct_of_avg,disk_critical_pct_of_avg,network_warning_pct_of_avg,network_degraded_pct_of_avg,network_critical_pct_of_avg,collector_config_json,description)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(agent_id) DO UPDATE SET
             hostname=excluded.hostname,
             platform=excluded.platform,
@@ -495,6 +499,7 @@ void SqliteStore::upsert_agent(const AgentRecord& rec)
     sqlite3_bind_double(st.s, 26, rec.network_critical_pct_of_avg);
     const auto collector_config_json = nlohmann::json(rec.collector_config).dump();
     sqlite3_bind_text(st.s, 27, collector_config_json.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 28, rec.description.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step upsert_agent");
 }
 
@@ -800,6 +805,43 @@ std::vector<int64_t> SqliteStore::get_user_groups(int64_t user_id)
     return out;
 }
 
+void SqliteStore::disable_user(int64_t user_id)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "UPDATE users SET disabled=1 WHERE user_id=? AND built_in=0;", -1, &st.s, nullptr),
+          db_, "prepare disable_user");
+    sqlite3_bind_int64(st.s, 1, user_id);
+    check(sqlite3_step(st.s), db_, "step disable_user");
+}
+
+void SqliteStore::enable_user(int64_t user_id)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "UPDATE users SET disabled=0 WHERE user_id=?;", -1, &st.s, nullptr), db_,
+          "prepare enable_user");
+    sqlite3_bind_int64(st.s, 1, user_id);
+    check(sqlite3_step(st.s), db_, "step enable_user");
+}
+
+void SqliteStore::delete_user(int64_t user_id)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "DELETE FROM users WHERE user_id=? AND built_in=0;", -1, &st.s, nullptr), db_,
+          "prepare delete_user");
+    sqlite3_bind_int64(st.s, 1, user_id);
+    check(sqlite3_step(st.s), db_, "step delete_user");
+}
+
+void SqliteStore::update_user_password(int64_t user_id, const std::string& password_hash)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "UPDATE users SET password_hash=? WHERE user_id=?;", -1, &st.s, nullptr), db_,
+          "prepare update_user_password");
+    sqlite3_bind_text(st.s, 1, password_hash.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 2, user_id);
+    check(sqlite3_step(st.s), db_, "step update_user_password");
+}
+
 void SqliteStore::create_session(const SessionRecord& session)
 {
     Stmt st;
@@ -1084,6 +1126,16 @@ void SqliteStore::clear_active_alerts_for_agent(const std::string& agent_id, int
     sqlite3_bind_int64(st.s, 1, cleared_at);
     sqlite3_bind_text(st.s, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step clear_active_alerts_for_agent");
+}
+
+void SqliteStore::set_agent_description(const std::string& agent_id, const std::string& description)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "UPDATE agents SET description=? WHERE agent_id=?;", -1, &st.s, nullptr), db_,
+          "prepare set_agent_description");
+    sqlite3_bind_text(st.s, 1, description.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    check(sqlite3_step(st.s), db_, "step set_agent_description");
 }
 
 std::vector<std::string> SqliteStore::get_offline_unalerted_agent_ids()

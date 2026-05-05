@@ -339,3 +339,120 @@ SCENARIO("Maintenance clears active alerts and records blue indicator state")
         }
     }
 }
+
+SCENARIO("status_to_string and status_from_string are mutual inverses for all states")
+{
+    GIVEN("each IndicatorStatus value")
+    {
+        const std::vector<std::pair<IndicatorStatus, std::string>> cases = {
+            {IndicatorStatus::Green,  "green"},
+            {IndicatorStatus::Grey,   "grey"},
+            {IndicatorStatus::Yellow, "yellow"},
+            {IndicatorStatus::Amber,  "amber"},
+            {IndicatorStatus::Red,    "red"},
+            {IndicatorStatus::Blue,   "blue"},
+        };
+
+        WHEN("each status is converted to string and back")
+        {
+            THEN("the roundtrip produces the original status")
+            {
+                for (const auto& [status, name] : cases)
+                {
+                    REQUIRE(status_to_string(status) == name);
+                    REQUIRE(status_from_string(name) == status);
+                }
+            }
+        }
+
+        WHEN("an unknown string is converted")
+        {
+            THEN("it maps to Grey")
+            {
+                REQUIRE(status_from_string("unknown") == IndicatorStatus::Grey);
+                REQUIRE(status_from_string("") == IndicatorStatus::Grey);
+            }
+        }
+
+        WHEN("the legacy alias 'orange' is converted")
+        {
+            THEN("it maps to Amber")
+            {
+                REQUIRE(status_from_string("orange") == IndicatorStatus::Amber);
+            }
+        }
+    }
+}
+
+SCENARIO("is_worse_status returns true only when severity strictly increases")
+{
+    GIVEN("the full severity ordering: Green < Grey < Yellow < Amber < Red")
+    {
+        WHEN("a status transitions to something more severe")
+        {
+            THEN("is_worse_status returns true")
+            {
+                REQUIRE(is_worse_status(IndicatorStatus::Green,  IndicatorStatus::Yellow));
+                REQUIRE(is_worse_status(IndicatorStatus::Green,  IndicatorStatus::Amber));
+                REQUIRE(is_worse_status(IndicatorStatus::Green,  IndicatorStatus::Red));
+                REQUIRE(is_worse_status(IndicatorStatus::Yellow, IndicatorStatus::Amber));
+                REQUIRE(is_worse_status(IndicatorStatus::Yellow, IndicatorStatus::Red));
+                REQUIRE(is_worse_status(IndicatorStatus::Amber,  IndicatorStatus::Red));
+                REQUIRE(is_worse_status(IndicatorStatus::Grey,   IndicatorStatus::Yellow));
+            }
+        }
+
+        WHEN("a status stays the same or improves")
+        {
+            THEN("is_worse_status returns false")
+            {
+                REQUIRE_FALSE(is_worse_status(IndicatorStatus::Red,    IndicatorStatus::Red));
+                REQUIRE_FALSE(is_worse_status(IndicatorStatus::Red,    IndicatorStatus::Amber));
+                REQUIRE_FALSE(is_worse_status(IndicatorStatus::Red,    IndicatorStatus::Green));
+                REQUIRE_FALSE(is_worse_status(IndicatorStatus::Amber,  IndicatorStatus::Green));
+                REQUIRE_FALSE(is_worse_status(IndicatorStatus::Yellow, IndicatorStatus::Green));
+                REQUIRE_FALSE(is_worse_status(IndicatorStatus::Green,  IndicatorStatus::Green));
+            }
+        }
+
+        WHEN("either status is Blue (maintenance)")
+        {
+            THEN("is_worse_status always returns false")
+            {
+                REQUIRE_FALSE(is_worse_status(IndicatorStatus::Blue,  IndicatorStatus::Red));
+                REQUIRE_FALSE(is_worse_status(IndicatorStatus::Green, IndicatorStatus::Blue));
+                REQUIRE_FALSE(is_worse_status(IndicatorStatus::Blue,  IndicatorStatus::Blue));
+            }
+        }
+    }
+}
+
+SCENARIO("exit_maintenance clears the maintenance flag on the agent")
+{
+    GIVEN("an approved agent in maintenance mode")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-exit-maint");
+
+        StatusEngine engine(store);
+        engine.enter_maintenance("agent-exit-maint", "planned downtime", 99999, 1000);
+
+        auto in_maint = store.get_agent("agent-exit-maint");
+        REQUIRE(in_maint.has_value());
+        REQUIRE(in_maint->maintenance == true);
+
+        WHEN("exit_maintenance is called")
+        {
+            engine.exit_maintenance("agent-exit-maint");
+
+            THEN("the agent is no longer in maintenance mode")
+            {
+                auto after = store.get_agent("agent-exit-maint");
+                REQUIRE(after.has_value());
+                REQUIRE(after->maintenance == false);
+                REQUIRE(after->maintenance_reason.empty());
+                REQUIRE(after->maintenance_until == 0);
+            }
+        }
+    }
+}

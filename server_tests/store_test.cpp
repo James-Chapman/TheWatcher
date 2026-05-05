@@ -1157,3 +1157,675 @@ SCENARIO("active_maintenance_windows only returns windows that span the current 
         }
     }
 }
+
+SCENARIO("set_agent_description stores a description against a known agent")
+{
+    GIVEN("a store with an approved agent")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord agent;
+        agent.agent_id = "desc-agent";
+        agent.hostname = "host";
+        agent.approved = true;
+        store.upsert_agent(agent);
+
+        WHEN("set_agent_description is called with a non-empty string")
+        {
+            store.set_agent_description("desc-agent", "Primary database server");
+
+            THEN("the description is returned when the agent is listed")
+            {
+                auto agents = store.list_agents();
+                auto it = std::find_if(agents.begin(), agents.end(),
+                    [](const AgentRecord& r) { return r.agent_id == "desc-agent"; });
+                REQUIRE(it != agents.end());
+                REQUIRE(it->description == "Primary database server");
+            }
+        }
+
+        WHEN("set_agent_description is called twice")
+        {
+            store.set_agent_description("desc-agent", "first");
+            store.set_agent_description("desc-agent", "second");
+
+            THEN("the latest value is stored")
+            {
+                auto agents = store.list_agents();
+                auto it = std::find_if(agents.begin(), agents.end(),
+                    [](const AgentRecord& r) { return r.agent_id == "desc-agent"; });
+                REQUIRE(it != agents.end());
+                REQUIRE(it->description == "second");
+            }
+        }
+    }
+}
+
+SCENARIO("disable_user and enable_user toggle the disabled flag")
+{
+    GIVEN("a store with a non-built-in user")
+    {
+        SqliteStore store(":memory:");
+
+        store.create_user("operator1", "hash", "operator");
+
+        auto users = store.list_users();
+        auto it = std::find_if(users.begin(), users.end(),
+            [](const UserRecord& r) { return r.username == "operator1"; });
+        REQUIRE(it != users.end());
+        int64_t uid = it->user_id;
+
+        WHEN("the user is disabled")
+        {
+            store.disable_user(uid);
+
+            THEN("list_users shows the user as disabled")
+            {
+                auto updated = store.list_users();
+                auto u = std::find_if(updated.begin(), updated.end(),
+                    [](const UserRecord& r) { return r.username == "operator1"; });
+                REQUIRE(u != updated.end());
+                REQUIRE(u->disabled == true);
+            }
+        }
+
+        WHEN("a disabled user is re-enabled")
+        {
+            store.disable_user(uid);
+            store.enable_user(uid);
+
+            THEN("list_users shows the user as active again")
+            {
+                auto updated = store.list_users();
+                auto u = std::find_if(updated.begin(), updated.end(),
+                    [](const UserRecord& r) { return r.username == "operator1"; });
+                REQUIRE(u != updated.end());
+                REQUIRE(u->disabled == false);
+            }
+        }
+    }
+}
+
+SCENARIO("delete_user removes a non-built-in user")
+{
+    GIVEN("a store with two users")
+    {
+        SqliteStore store(":memory:");
+
+        store.create_user("to-delete", "h1", "viewer");
+        store.create_user("to-keep", "h2", "viewer");
+
+        auto before = store.list_users();
+        auto it = std::find_if(before.begin(), before.end(),
+            [](const UserRecord& r) { return r.username == "to-delete"; });
+        REQUIRE(it != before.end());
+        int64_t del_uid = it->user_id;
+
+        WHEN("delete_user is called for the first user")
+        {
+            store.delete_user(del_uid);
+
+            THEN("the user no longer appears in list_users")
+            {
+                auto after = store.list_users();
+                auto gone = std::find_if(after.begin(), after.end(),
+                    [](const UserRecord& r) { return r.username == "to-delete"; });
+                REQUIRE(gone == after.end());
+
+                auto kept = std::find_if(after.begin(), after.end(),
+                    [](const UserRecord& r) { return r.username == "to-keep"; });
+                REQUIRE(kept != after.end());
+            }
+        }
+    }
+}
+
+SCENARIO("update_user_password changes the stored credential hash")
+{
+    GIVEN("a store with a user")
+    {
+        SqliteStore store(":memory:");
+
+        store.create_user("pwuser", "old-hash", "viewer");
+
+        auto users = store.list_users();
+        auto it = std::find_if(users.begin(), users.end(),
+            [](const UserRecord& r) { return r.username == "pwuser"; });
+        REQUIRE(it != users.end());
+        int64_t uid = it->user_id;
+
+        WHEN("update_user_password is called with a new hash")
+        {
+            store.update_user_password(uid, "new-hash");
+
+            THEN("the stored password_hash reflects the new value")
+            {
+                auto updated = store.list_users();
+                auto u = std::find_if(updated.begin(), updated.end(),
+                    [](const UserRecord& r) { return r.username == "pwuser"; });
+                REQUIRE(u != updated.end());
+                REQUIRE(u->password_hash == "new-hash");
+                REQUIRE(u->password_hash != "old-hash");
+            }
+        }
+    }
+}
+
+SCENARIO("list_approved_agents and list_pending_agents filter by enrollment state")
+{
+    GIVEN("a store with approved, pending, and rejected agents")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord pending_agent;
+        pending_agent.agent_id = "pending-1";
+        pending_agent.hostname = "pending-host";
+        pending_agent.approved = false;
+        pending_agent.rejected = false;
+        store.upsert_agent(pending_agent);
+
+        AgentRecord approved_agent;
+        approved_agent.agent_id = "approved-1";
+        approved_agent.hostname = "approved-host";
+        approved_agent.approved = false;
+        store.upsert_agent(approved_agent);
+        store.approve_agent("approved-1");
+
+        AgentRecord rejected_agent;
+        rejected_agent.agent_id = "rejected-1";
+        rejected_agent.hostname = "rejected-host";
+        rejected_agent.approved = false;
+        rejected_agent.rejected = false;
+        store.upsert_agent(rejected_agent);
+        store.reject_agent("rejected-1");
+
+        WHEN("list_approved_agents is called")
+        {
+            auto approved = store.list_approved_agents();
+
+            THEN("only the approved agent is returned")
+            {
+                REQUIRE(approved.size() == 1);
+                REQUIRE(approved[0].agent_id == "approved-1");
+            }
+        }
+
+        WHEN("list_pending_agents is called")
+        {
+            auto pending = store.list_pending_agents();
+
+            THEN("only the unapproved, unrejected agent is returned")
+            {
+                REQUIRE(pending.size() == 1);
+                REQUIRE(pending[0].agent_id == "pending-1");
+            }
+        }
+    }
+}
+
+SCENARIO("session lifecycle: create, retrieve by token, and expire")
+{
+    GIVEN("an empty store")
+    {
+        SqliteStore store(":memory:");
+
+        WHEN("a session is created and retrieved before expiry")
+        {
+            SessionRecord session;
+            session.token = "tok-abc";
+            session.user_id = 1;
+            session.username = "thewatcher";
+            session.role = "admin";
+            session.created_at = 1000;
+            session.expires_at = 9999;
+            store.create_session(session);
+
+            auto result = store.get_session("tok-abc", 5000);
+
+            THEN("the session record is returned with correct fields")
+            {
+                REQUIRE(result.has_value());
+                REQUIRE(result->username == "thewatcher");
+                REQUIRE(result->role == "admin");
+                REQUIRE(result->expires_at == 9999);
+            }
+        }
+
+        WHEN("a session is retrieved after its expiry time")
+        {
+            SessionRecord session;
+            session.token = "tok-expired";
+            session.user_id = 1;
+            session.username = "thewatcher";
+            session.role = "admin";
+            session.created_at = 1000;
+            session.expires_at = 2000;
+            store.create_session(session);
+
+            auto result = store.get_session("tok-expired", 5000);
+
+            THEN("no session is returned")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+
+        WHEN("a session is deleted and then looked up")
+        {
+            SessionRecord session;
+            session.token = "tok-delete";
+            session.user_id = 1;
+            session.username = "thewatcher";
+            session.role = "admin";
+            session.created_at = 1000;
+            session.expires_at = 99999;
+            store.create_session(session);
+            store.delete_session("tok-delete");
+
+            auto result = store.get_session("tok-delete", 5000);
+
+            THEN("no session is returned")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+
+        WHEN("an unknown token is looked up")
+        {
+            auto result = store.get_session("nonexistent-token", 1000);
+
+            THEN("no session is returned")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+    }
+}
+
+SCENARIO("settings key-value store persists values with fallback for missing keys")
+{
+    GIVEN("an empty store")
+    {
+        SqliteStore store(":memory:");
+
+        WHEN("a missing key is fetched without a fallback")
+        {
+            auto value = store.get_setting("no_such_key", "");
+
+            THEN("an empty string is returned")
+            {
+                REQUIRE(value.empty());
+            }
+        }
+
+        WHEN("a missing key is fetched with an explicit fallback")
+        {
+            auto value = store.get_setting("no_such_key", "default-value");
+
+            THEN("the fallback is returned")
+            {
+                REQUIRE(value == "default-value");
+            }
+        }
+
+        WHEN("a key is set and then retrieved")
+        {
+            store.set_setting("notifications.webhook_url", "https://hooks.example.com/alert");
+            auto value = store.get_setting("notifications.webhook_url", "");
+
+            THEN("the stored value is returned")
+            {
+                REQUIRE(value == "https://hooks.example.com/alert");
+            }
+        }
+
+        WHEN("a key is overwritten")
+        {
+            store.set_setting("offline_after_seconds", "120");
+            store.set_setting("offline_after_seconds", "300");
+
+            THEN("the latest value is returned")
+            {
+                REQUIRE(store.get_setting("offline_after_seconds", "") == "300");
+            }
+        }
+    }
+}
+
+SCENARIO("group management: groups can be created and listed")
+{
+    GIVEN("a fresh store with only the built-in Admins group")
+    {
+        SqliteStore store(":memory:");
+        auto initial = store.list_groups();
+        REQUIRE(initial.size() == 1);
+        REQUIRE(initial[0].name == "Admins");
+        REQUIRE(initial[0].built_in == true);
+
+        WHEN("a new group is created")
+        {
+            auto new_id = store.create_group("Production");
+
+            THEN("it appears in list_groups and the returned id is positive")
+            {
+                REQUIRE(new_id > 0);
+                auto groups = store.list_groups();
+                REQUIRE(groups.size() == 2);
+                bool found = false;
+                for (const auto& g : groups)
+                    found = found || (g.name == "Production" && !g.built_in);
+                REQUIRE(found);
+            }
+        }
+
+        WHEN("multiple groups are created")
+        {
+            store.create_group("Group A");
+            store.create_group("Group B");
+
+            THEN("list_groups returns all of them")
+            {
+                REQUIRE(store.list_groups().size() == 3); // Admins + A + B
+            }
+        }
+    }
+}
+
+SCENARIO("agent group membership can be set and retrieved")
+{
+    GIVEN("a store with an agent and two groups")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord agent;
+        agent.agent_id = "grp-agent";
+        agent.hostname = "grp-host";
+        agent.approved = true;
+        store.upsert_agent(agent);
+
+        int64_t gid1 = store.create_group("Production");
+        int64_t gid2 = store.create_group("Databases");
+
+        WHEN("the agent is assigned to both groups")
+        {
+            store.set_agent_groups("grp-agent", {gid1, gid2});
+            auto groups = store.get_agent_groups("grp-agent");
+
+            THEN("both group ids are returned")
+            {
+                REQUIRE(groups.size() == 2);
+                bool has1 = std::find(groups.begin(), groups.end(), gid1) != groups.end();
+                bool has2 = std::find(groups.begin(), groups.end(), gid2) != groups.end();
+                REQUIRE(has1);
+                REQUIRE(has2);
+            }
+        }
+
+        WHEN("the agent's group assignment is replaced")
+        {
+            store.set_agent_groups("grp-agent", {gid1, gid2});
+            store.set_agent_groups("grp-agent", {gid2});
+            auto groups = store.get_agent_groups("grp-agent");
+
+            THEN("only the new group is retained")
+            {
+                REQUIRE(groups.size() == 1);
+                REQUIRE(groups[0] == gid2);
+            }
+        }
+
+        WHEN("the agent is assigned to no groups")
+        {
+            store.set_agent_groups("grp-agent", {gid1});
+            store.set_agent_groups("grp-agent", {});
+
+            THEN("get_agent_groups returns an empty list")
+            {
+                REQUIRE(store.get_agent_groups("grp-agent").empty());
+            }
+        }
+    }
+}
+
+SCENARIO("user group membership can be set and retrieved")
+{
+    GIVEN("a store with a user and two groups")
+    {
+        SqliteStore store(":memory:");
+
+        int64_t uid = store.create_user("viewer1", "hash", "viewer");
+        int64_t gid1 = store.create_group("TeamA");
+        int64_t gid2 = store.create_group("TeamB");
+
+        WHEN("the user is assigned to a group")
+        {
+            store.set_user_groups(uid, {gid1});
+            auto groups = store.get_user_groups(uid);
+
+            THEN("that group is returned")
+            {
+                REQUIRE(groups.size() == 1);
+                REQUIRE(groups[0] == gid1);
+            }
+        }
+
+        WHEN("the user's group assignment is replaced")
+        {
+            store.set_user_groups(uid, {gid1});
+            store.set_user_groups(uid, {gid2});
+            auto groups = store.get_user_groups(uid);
+
+            THEN("only the new group is retained")
+            {
+                REQUIRE(groups.size() == 1);
+                REQUIRE(groups[0] == gid2);
+            }
+        }
+    }
+}
+
+SCENARIO("status history records transitions and the latest entry is queryable per indicator")
+{
+    GIVEN("a store with an approved agent")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord agent;
+        agent.agent_id = "hist-agent";
+        agent.hostname = "hist-host";
+        agent.approved = true;
+        store.upsert_agent(agent);
+
+        WHEN("two status transitions are inserted for the cpu indicator")
+        {
+            StatusHistoryRow row1;
+            row1.agent_id = "hist-agent";
+            row1.indicator = "cpu";
+            row1.old_status = "green";
+            row1.new_status = "yellow";
+            row1.message = "cpu changed";
+            row1.created_at = 1000;
+            store.insert_status_history(row1);
+
+            StatusHistoryRow row2;
+            row2.agent_id = "hist-agent";
+            row2.indicator = "cpu";
+            row2.old_status = "yellow";
+            row2.new_status = "red";
+            row2.message = "cpu worsened";
+            row2.created_at = 2000;
+            store.insert_status_history(row2);
+
+            THEN("latest_status_for_indicator returns the most recent row")
+            {
+                auto latest = store.latest_status_for_indicator("hist-agent", "cpu");
+                REQUIRE(latest.has_value());
+                REQUIRE(latest->new_status == "red");
+                REQUIRE(latest->old_status == "yellow");
+                REQUIRE(latest->created_at == 2000);
+            }
+
+            AND_THEN("list_status_history returns both rows with the most recent first")
+            {
+                auto history = store.list_status_history("hist-agent", 10);
+                REQUIRE(history.size() == 2);
+                REQUIRE(history[0].new_status == "red");
+                REQUIRE(history[1].new_status == "yellow");
+            }
+        }
+
+        WHEN("a transition is inserted for a different indicator")
+        {
+            StatusHistoryRow cpu_row;
+            cpu_row.agent_id = "hist-agent";
+            cpu_row.indicator = "cpu";
+            cpu_row.old_status = "green";
+            cpu_row.new_status = "amber";
+            cpu_row.created_at = 1000;
+            store.insert_status_history(cpu_row);
+
+            StatusHistoryRow mem_row;
+            mem_row.agent_id = "hist-agent";
+            mem_row.indicator = "memory";
+            mem_row.old_status = "green";
+            mem_row.new_status = "yellow";
+            mem_row.created_at = 2000;
+            store.insert_status_history(mem_row);
+
+            THEN("latest_status_for_indicator is independent per indicator")
+            {
+                auto cpu_latest = store.latest_status_for_indicator("hist-agent", "cpu");
+                REQUIRE(cpu_latest.has_value());
+                REQUIRE(cpu_latest->new_status == "amber");
+
+                auto mem_latest = store.latest_status_for_indicator("hist-agent", "memory");
+                REQUIRE(mem_latest.has_value());
+                REQUIRE(mem_latest->new_status == "yellow");
+            }
+        }
+
+        WHEN("latest_status_for_indicator is called for an unknown indicator")
+        {
+            THEN("nullopt is returned")
+            {
+                REQUIRE_FALSE(store.latest_status_for_indicator("hist-agent", "unknown").has_value());
+            }
+        }
+    }
+}
+
+SCENARIO("pending status accumulates consecutive readings and clears on recovery")
+{
+    GIVEN("a store with an approved agent")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord agent;
+        agent.agent_id = "pending-agent";
+        agent.hostname = "pending-host";
+        agent.approved = true;
+        store.upsert_agent(agent);
+
+        WHEN("a pending status is set for the first reading")
+        {
+            store.set_pending_status("pending-agent", "cpu", "red", 1);
+
+            THEN("get_pending_status returns the stored record")
+            {
+                auto pending = store.get_pending_status("pending-agent", "cpu");
+                REQUIRE(pending.has_value());
+                REQUIRE(pending->target_status == "red");
+                REQUIRE(pending->count == 1);
+            }
+        }
+
+        WHEN("the pending count is incremented across two calls")
+        {
+            store.set_pending_status("pending-agent", "cpu", "red", 1);
+            store.set_pending_status("pending-agent", "cpu", "red", 2);
+
+            THEN("the count is updated to the latest value")
+            {
+                auto pending = store.get_pending_status("pending-agent", "cpu");
+                REQUIRE(pending.has_value());
+                REQUIRE(pending->count == 2);
+            }
+        }
+
+        WHEN("the pending status is cleared")
+        {
+            store.set_pending_status("pending-agent", "cpu", "red", 1);
+            store.clear_pending_status("pending-agent", "cpu");
+
+            THEN("get_pending_status returns nullopt")
+            {
+                REQUIRE_FALSE(store.get_pending_status("pending-agent", "cpu").has_value());
+            }
+        }
+
+        WHEN("get_pending_status is called when no record exists")
+        {
+            THEN("nullopt is returned")
+            {
+                REQUIRE_FALSE(store.get_pending_status("pending-agent", "cpu").has_value());
+            }
+        }
+    }
+}
+
+SCENARIO("clear_active_alerts_for_agent archives only that agent's alerts")
+{
+    GIVEN("a store with active alerts for two different agents")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord a1;
+        a1.agent_id = "agent-one";
+        a1.hostname = "host-one";
+        a1.approved = true;
+        store.upsert_agent(a1);
+
+        AgentRecord a2;
+        a2.agent_id = "agent-two";
+        a2.hostname = "host-two";
+        a2.approved = true;
+        store.upsert_agent(a2);
+
+        AlertRecord alert1;
+        alert1.agent_id = "agent-one";
+        alert1.indicator = "cpu";
+        alert1.old_status = "green";
+        alert1.new_status = "red";
+        alert1.created_at = 1000;
+        store.insert_alert(alert1);
+
+        AlertRecord alert2;
+        alert2.agent_id = "agent-two";
+        alert2.indicator = "memory";
+        alert2.old_status = "green";
+        alert2.new_status = "amber";
+        alert2.created_at = 2000;
+        store.insert_alert(alert2);
+
+        WHEN("clear_active_alerts_for_agent is called for agent-one")
+        {
+            store.clear_active_alerts_for_agent("agent-one", 5000);
+
+            THEN("agent-one's alert is archived but agent-two's alert remains active")
+            {
+                auto unacked = store.list_unacknowledged_alerts();
+                REQUIRE(unacked.size() == 1);
+                REQUIRE(unacked[0].agent_id == "agent-two");
+            }
+
+            AND_THEN("the cleared alert is still retrievable and shows as acknowledged by maintenance")
+            {
+                auto all = store.list_alerts(false);
+                bool found_cleared = false;
+                for (const auto& a : all)
+                    found_cleared = found_cleared || (a.agent_id == "agent-one" && a.acknowledged_at > 0);
+                REQUIRE(found_cleared);
+            }
+        }
+    }
+}
