@@ -100,6 +100,7 @@ struct AlertRecord
     std::string acknowledged_by;
     int64_t acknowledged_at = 0;
     int64_t deleted_at = 0;
+    std::string note;
     int64_t escalated_at = 0;
 };
 
@@ -171,9 +172,15 @@ public:
     virtual int64_t insert_alert(const AlertRecord& alert) = 0;
     virtual std::vector<AlertRecord> list_alerts(bool include_deleted = false) = 0;
     virtual std::vector<AlertRecord> list_unacknowledged_alerts() = 0;
-    virtual void acknowledge_alert(int64_t alert_id, const std::string& username, int64_t acknowledged_at) = 0;
+    virtual void acknowledge_alert(int64_t alert_id, const std::string& username, int64_t acknowledged_at,
+                                   const std::string& note = "") = 0;
+    virtual void bulk_acknowledge_alerts(const std::vector<int64_t>& alert_ids, const std::string& username,
+                                         int64_t acknowledged_at, const std::string& note = "") = 0;
     virtual void soft_delete_alert(int64_t alert_id, int64_t deleted_at) = 0;
+    virtual void bulk_soft_delete_alerts(const std::vector<int64_t>& alert_ids, int64_t deleted_at) = 0;
     virtual void clear_active_alerts_for_agent(const std::string& agent_id, int64_t cleared_at) = 0;
+    virtual std::vector<std::string> get_offline_unalerted_agent_ids() = 0;
+    virtual void archive_heartbeat_alerts_for_agent(const std::string& agent_id, int64_t deleted_at) = 0;
     virtual void escalate_old_alerts(int64_t cutoff_ms, int64_t now_ms) = 0;
     virtual int64_t count_metrics_in_window(const std::string& agent_id, int64_t since_ms, int64_t until_ms) = 0;
     virtual int64_t create_maintenance_window(const MaintenanceWindowRecord& rec) = 0;

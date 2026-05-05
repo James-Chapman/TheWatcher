@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  acknowledgeAlert,
+  archiveAlert,
   approveAgent,
+  bulkAcknowledgeAlerts,
+  bulkArchiveAlerts,
   createGroup,
   createMaintenanceWindow,
   createUser,
   deleteAgent,
   deleteMaintenanceWindow,
+  fetchAlerts,
   fetchMaintenanceWindows,
   fetchMetricHistory,
   fetchUptimeReport,
@@ -146,6 +151,59 @@ describe('GIVEN agent management API actions', () => {
       credentials: 'include',
       method: 'POST',
     });
+  });
+
+  it('WHEN alert actions are performed THEN the correct endpoints and payloads are used', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await acknowledgeAlert(42, 'looks like a spike');
+    await acknowledgeAlert(43);
+    await archiveAlert(44);
+    await bulkAcknowledgeAlerts([10, 11, 12], 'batch ack note');
+    await bulkArchiveAlerts([20, 21]);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/alerts/42/ack', {
+      body: JSON.stringify({ note: 'looks like a spike' }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/alerts/43/ack', {
+      body: JSON.stringify({ note: '' }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/alerts/44', {
+      credentials: 'include',
+      method: 'DELETE',
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(4, '/api/alerts/bulk-ack', {
+      body: JSON.stringify({ alert_ids: [10, 11, 12], note: 'batch ack note' }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(5, '/api/alerts/bulk-archive', {
+      body: JSON.stringify({ alert_ids: [20, 21] }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+  });
+
+  it('WHEN alerts are fetched THEN include_archived param controls whether deleted alerts are included', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchAlerts();
+    await fetchAlerts(false);
+    await fetchAlerts(true);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/alerts', { credentials: 'include' });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/alerts', { credentials: 'include' });
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/alerts?include_archived=1', { credentials: 'include' });
   });
 
   it('WHEN users and groups are created THEN admin payloads are sent to the backend', async () => {

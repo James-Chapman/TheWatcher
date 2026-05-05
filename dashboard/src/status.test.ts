@@ -159,6 +159,25 @@ describe('GIVEN overview agents assigned to groups', () => {
   });
 });
 
+describe('GIVEN alerts mixed acknowledged and unacknowledged', () => {
+  it('WHEN dashboard agents are built THEN alertColor is red only when an unacknowledged alert exists', () => {
+    const agents = [
+      agent({ agent_id: 'agent-acked' }),
+      agent({ agent_id: 'agent-unacked' }),
+      agent({ agent_id: 'agent-clean' }),
+    ];
+    const alerts: AlertRecord[] = [
+      { alert_id: 1, agent_id: 'agent-acked', indicator: 'cpu', old_status: 'green', new_status: 'red', message: '', created_at: 1, acknowledged_by: 'admin', acknowledged_at: 999, deleted_at: 0, note: '', escalated_at: 0 },
+      { alert_id: 2, agent_id: 'agent-unacked', indicator: 'cpu', old_status: 'green', new_status: 'red', message: '', created_at: 2, acknowledged_by: '', acknowledged_at: 0, deleted_at: 0, note: '', escalated_at: 0 },
+    ];
+
+    const rows = toDashboardAgents(agents, [], alerts);
+    expect(rows.find((r) => r.id === 'agent-acked')?.alertColor).toBe('green');
+    expect(rows.find((r) => r.id === 'agent-unacked')?.alertColor).toBe('red');
+    expect(rows.find((r) => r.id === 'agent-clean')?.alertColor).toBe('green');
+  });
+});
+
 describe('GIVEN alerts and known dashboard agents', () => {
   it('WHEN display alerts are built THEN the hostname is primary and the agent id remains available', () => {
     const rows = toDashboardAgents([agent({ agent_id: 'agent-prod', hostname: 'prod-1' })], []);
@@ -174,6 +193,7 @@ describe('GIVEN alerts and known dashboard agents', () => {
         acknowledged_by: '',
         acknowledged_at: 0,
         deleted_at: 0,
+        note: '',
         escalated_at: 0,
       },
       {
@@ -187,6 +207,7 @@ describe('GIVEN alerts and known dashboard agents', () => {
         acknowledged_by: '',
         acknowledged_at: 0,
         deleted_at: 0,
+        note: '',
         escalated_at: 0,
       },
     ];
