@@ -149,7 +149,19 @@ namespace
                 text_col(s, 7),
                 sqlite3_column_int64(s, 8),
                 sqlite3_column_int64(s, 9),
-                text_col(s, 10)};
+                text_col(s, 10),
+                sqlite3_column_int64(s, 11)};
+    }
+
+    MaintenanceWindowRecord row_to_maintenance_window(sqlite3_stmt* s)
+    {
+        return {sqlite3_column_int64(s, 0),
+                text_col(s, 1),
+                sqlite3_column_int64(s, 2),
+                sqlite3_column_int64(s, 3),
+                text_col(s, 4),
+                text_col(s, 5),
+                sqlite3_column_int64(s, 6)};
     }
 
     std::string hash_default_password()
@@ -289,8 +301,6 @@ void SqliteStore::init_schema()
                           "ALTER TABLE agents ADD COLUMN network_critical_pct_of_avg REAL NOT NULL DEFAULT 200.0;");
     add_column_if_missing("agents", "collector_config_json",
                           "ALTER TABLE agents ADD COLUMN collector_config_json TEXT NOT NULL DEFAULT '';");
-    add_column_if_missing("alerts", "note",
-                          "ALTER TABLE alerts ADD COLUMN note TEXT NOT NULL DEFAULT '';");
     // Schema break in 0.3.0: metrics column changed from JSON TEXT to CBOR BLOB.
     // Existing 0.2.x dev databases drop and recreate the metrics table on first start.
     if (column_exists("metrics", "metrics_json") && !column_exists("metrics", "metrics_cbor"))
@@ -387,10 +397,28 @@ void SqliteStore::init_schema()
             acknowledged_by TEXT NOT NULL DEFAULT '',
             acknowledged_at INTEGER NOT NULL DEFAULT 0,
             deleted_at      INTEGER NOT NULL DEFAULT 0,
+            note            TEXT NOT NULL DEFAULT '',
+            escalated_at    INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(agent_id) REFERENCES agents(agent_id) ON DELETE CASCADE
         );
     )");
+    add_column_if_missing("alerts", "note",
+                          "ALTER TABLE alerts ADD COLUMN note TEXT NOT NULL DEFAULT '';");
+    add_column_if_missing("alerts", "escalated_at",
+                          "ALTER TABLE alerts ADD COLUMN escalated_at INTEGER NOT NULL DEFAULT 0;");
     exec("CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(deleted_at, acknowledged_at, created_at DESC);");
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS maintenance_windows (
+            window_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id   TEXT NOT NULL DEFAULT '*',
+            start_ms   INTEGER NOT NULL,
+            end_ms     INTEGER NOT NULL,
+            reason     TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL
+        );
+    )");
+    exec("CREATE INDEX IF NOT EXISTS idx_maint_windows_time ON maintenance_windows(start_ms, end_ms);");
     exec(R"(
         CREATE TABLE IF NOT EXISTS server_settings (
             key   TEXT PRIMARY KEY,
@@ -956,7 +984,7 @@ int64_t SqliteStore::insert_alert(const AlertRecord& alert)
     Stmt st;
     check(sqlite3_prepare_v2(db_,
                              "INSERT INTO alerts(agent_id,indicator,old_status,new_status,message,created_at,"
-                             "acknowledged_by,acknowledged_at,deleted_at,note) VALUES(?,?,?,?,?,?,?,?,?,?);",
+                             "acknowledged_by,acknowledged_at,deleted_at,note,escalated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?);",
                              -1, &st.s, nullptr),
           db_, "prepare insert_alert");
     sqlite3_bind_text(st.s, 1, alert.agent_id.c_str(), -1, SQLITE_TRANSIENT);
@@ -969,6 +997,7 @@ int64_t SqliteStore::insert_alert(const AlertRecord& alert)
     sqlite3_bind_int64(st.s, 8, alert.acknowledged_at);
     sqlite3_bind_int64(st.s, 9, alert.deleted_at);
     sqlite3_bind_text(st.s, 10, alert.note.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 11, alert.escalated_at);
     check(sqlite3_step(st.s), db_, "step insert_alert");
     return sqlite3_last_insert_rowid(db_);
 }
@@ -978,9 +1007,10 @@ std::vector<AlertRecord> SqliteStore::list_alerts(bool include_deleted)
     const char* sql =
         include_deleted
             ? "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,acknowledged_by,"
-              "acknowledged_at,deleted_at,note FROM alerts ORDER BY created_at DESC,alert_id DESC;"
+              "acknowledged_at,deleted_at,note,escalated_at FROM alerts ORDER BY created_at DESC,alert_id DESC;"
             : "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,acknowledged_by,"
-              "acknowledged_at,deleted_at,note FROM alerts WHERE deleted_at=0 ORDER BY created_at DESC,alert_id DESC;";
+              "acknowledged_at,deleted_at,note,escalated_at FROM alerts WHERE deleted_at=0 ORDER BY created_at "
+              "DESC,alert_id DESC;";
     Stmt st;
     check(sqlite3_prepare_v2(db_, sql, -1, &st.s, nullptr), db_, "prepare list_alerts");
     std::vector<AlertRecord> out;
@@ -994,8 +1024,8 @@ std::vector<AlertRecord> SqliteStore::list_unacknowledged_alerts()
     Stmt st;
     check(sqlite3_prepare_v2(db_,
                              "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,"
-                             "acknowledged_by,acknowledged_at,deleted_at,note FROM alerts WHERE deleted_at=0 AND "
-                             "acknowledged_at=0 ORDER BY created_at DESC,alert_id DESC;",
+                             "acknowledged_by,acknowledged_at,deleted_at,note,escalated_at FROM alerts WHERE "
+                             "deleted_at=0 AND acknowledged_at=0 ORDER BY created_at DESC,alert_id DESC;",
                              -1, &st.s, nullptr),
           db_, "prepare list_unacknowledged_alerts");
     std::vector<AlertRecord> out;
@@ -1085,6 +1115,91 @@ void SqliteStore::archive_heartbeat_alerts_for_agent(const std::string& agent_id
     sqlite3_bind_int64(st.s, 1, deleted_at);
     sqlite3_bind_text(st.s, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step archive_heartbeat_alerts_for_agent");
+}
+
+void SqliteStore::escalate_old_alerts(int64_t cutoff_ms, int64_t now_ms)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "UPDATE alerts SET escalated_at=? WHERE deleted_at=0 AND acknowledged_at=0 AND "
+                             "escalated_at=0 AND created_at<?;",
+                             -1, &st.s, nullptr),
+          db_, "prepare escalate_old_alerts");
+    sqlite3_bind_int64(st.s, 1, now_ms);
+    sqlite3_bind_int64(st.s, 2, cutoff_ms);
+    check(sqlite3_step(st.s), db_, "step escalate_old_alerts");
+}
+
+int64_t SqliteStore::count_metrics_in_window(const std::string& agent_id, int64_t since_ms, int64_t until_ms)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT COUNT(*) FROM metrics WHERE agent_id=? AND timestamp_ms>=? AND timestamp_ms<=?;",
+                             -1, &st.s, nullptr),
+          db_, "prepare count_metrics_in_window");
+    sqlite3_bind_text(st.s, 1, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 2, since_ms);
+    sqlite3_bind_int64(st.s, 3, until_ms);
+    if (sqlite3_step(st.s) == SQLITE_ROW)
+        return sqlite3_column_int64(st.s, 0);
+    return 0;
+}
+
+int64_t SqliteStore::create_maintenance_window(const MaintenanceWindowRecord& rec)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "INSERT INTO maintenance_windows(agent_id,start_ms,end_ms,reason,created_by,created_at) "
+                             "VALUES(?,?,?,?,?,?);",
+                             -1, &st.s, nullptr),
+          db_, "prepare create_maintenance_window");
+    sqlite3_bind_text(st.s, 1, rec.agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 2, rec.start_ms);
+    sqlite3_bind_int64(st.s, 3, rec.end_ms);
+    sqlite3_bind_text(st.s, 4, rec.reason.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 5, rec.created_by.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 6, rec.created_at);
+    check(sqlite3_step(st.s), db_, "step create_maintenance_window");
+    return sqlite3_last_insert_rowid(db_);
+}
+
+std::vector<MaintenanceWindowRecord> SqliteStore::list_maintenance_windows()
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT window_id,agent_id,start_ms,end_ms,reason,created_by,created_at FROM "
+                             "maintenance_windows ORDER BY start_ms DESC;",
+                             -1, &st.s, nullptr),
+          db_, "prepare list_maintenance_windows");
+    std::vector<MaintenanceWindowRecord> out;
+    while (sqlite3_step(st.s) == SQLITE_ROW)
+        out.push_back(row_to_maintenance_window(st.s));
+    return out;
+}
+
+void SqliteStore::delete_maintenance_window(int64_t window_id)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "DELETE FROM maintenance_windows WHERE window_id=?;", -1, &st.s, nullptr), db_,
+          "prepare delete_maintenance_window");
+    sqlite3_bind_int64(st.s, 1, window_id);
+    check(sqlite3_step(st.s), db_, "step delete_maintenance_window");
+}
+
+std::vector<MaintenanceWindowRecord> SqliteStore::active_maintenance_windows(int64_t now_ms)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT window_id,agent_id,start_ms,end_ms,reason,created_by,created_at FROM "
+                             "maintenance_windows WHERE start_ms<=? AND end_ms>? ORDER BY start_ms DESC;",
+                             -1, &st.s, nullptr),
+          db_, "prepare active_maintenance_windows");
+    sqlite3_bind_int64(st.s, 1, now_ms);
+    sqlite3_bind_int64(st.s, 2, now_ms);
+    std::vector<MaintenanceWindowRecord> out;
+    while (sqlite3_step(st.s) == SQLITE_ROW)
+        out.push_back(row_to_maintenance_window(st.s));
+    return out;
 }
 
 std::string SqliteStore::get_setting(const std::string& key, const std::string& fallback)

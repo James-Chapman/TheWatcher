@@ -167,8 +167,8 @@ describe('GIVEN alerts mixed acknowledged and unacknowledged', () => {
       agent({ agent_id: 'agent-clean' }),
     ];
     const alerts: AlertRecord[] = [
-      { alert_id: 1, agent_id: 'agent-acked', indicator: 'cpu', old_status: 'green', new_status: 'red', message: '', created_at: 1, acknowledged_by: 'admin', acknowledged_at: 999, deleted_at: 0, note: '' },
-      { alert_id: 2, agent_id: 'agent-unacked', indicator: 'cpu', old_status: 'green', new_status: 'red', message: '', created_at: 2, acknowledged_by: '', acknowledged_at: 0, deleted_at: 0, note: '' },
+      { alert_id: 1, agent_id: 'agent-acked', indicator: 'cpu', old_status: 'green', new_status: 'red', message: '', created_at: 1, acknowledged_by: 'admin', acknowledged_at: 999, deleted_at: 0, note: '', escalated_at: 0 },
+      { alert_id: 2, agent_id: 'agent-unacked', indicator: 'cpu', old_status: 'green', new_status: 'red', message: '', created_at: 2, acknowledged_by: '', acknowledged_at: 0, deleted_at: 0, note: '', escalated_at: 0 },
     ];
 
     const rows = toDashboardAgents(agents, [], alerts);
@@ -194,6 +194,7 @@ describe('GIVEN alerts and known dashboard agents', () => {
         acknowledged_at: 0,
         deleted_at: 0,
         note: '',
+        escalated_at: 0,
       },
       {
         alert_id: 2,
@@ -207,6 +208,7 @@ describe('GIVEN alerts and known dashboard agents', () => {
         acknowledged_at: 0,
         deleted_at: 0,
         note: '',
+        escalated_at: 0,
       },
     ];
 

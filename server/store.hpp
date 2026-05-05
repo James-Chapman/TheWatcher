@@ -101,6 +101,18 @@ struct AlertRecord
     int64_t acknowledged_at = 0;
     int64_t deleted_at = 0;
     std::string note;
+    int64_t escalated_at = 0;
+};
+
+struct MaintenanceWindowRecord
+{
+    int64_t window_id = 0;
+    std::string agent_id; // '*' for all agents
+    int64_t start_ms = 0;
+    int64_t end_ms = 0;
+    std::string reason;
+    std::string created_by;
+    int64_t created_at = 0;
 };
 
 struct PendingStatusRecord
@@ -169,6 +181,12 @@ public:
     virtual void clear_active_alerts_for_agent(const std::string& agent_id, int64_t cleared_at) = 0;
     virtual std::vector<std::string> get_offline_unalerted_agent_ids() = 0;
     virtual void archive_heartbeat_alerts_for_agent(const std::string& agent_id, int64_t deleted_at) = 0;
+    virtual void escalate_old_alerts(int64_t cutoff_ms, int64_t now_ms) = 0;
+    virtual int64_t count_metrics_in_window(const std::string& agent_id, int64_t since_ms, int64_t until_ms) = 0;
+    virtual int64_t create_maintenance_window(const MaintenanceWindowRecord& rec) = 0;
+    virtual std::vector<MaintenanceWindowRecord> list_maintenance_windows() = 0;
+    virtual void delete_maintenance_window(int64_t window_id) = 0;
+    virtual std::vector<MaintenanceWindowRecord> active_maintenance_windows(int64_t now_ms) = 0;
     virtual std::string get_setting(const std::string& key, const std::string& fallback = "") = 0;
     virtual void set_setting(const std::string& key, const std::string& value) = 0;
 };

@@ -999,6 +999,38 @@ td {
   50% { opacity: 0.45; }
 }
 
+.sparkline-wrap {
+  margin-top: 8px;
+  opacity: 0.85;
+}
+
+.escalated-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: oklch(0.60 0.22 25 / 0.18);
+  border: 1px solid oklch(0.60 0.22 25 / 0.40);
+  color: var(--red);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  animation: pulse-escalated 2s ease-in-out infinite;
+}
+
+@keyframes pulse-escalated {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.maint-active {
+  background: oklch(0.62 0.16 240 / 0.06);
+}
+
+.maint-form {
+  grid-template-columns: minmax(140px, 1fr) minmax(100px, 1fr) 120px 80px 100px auto;
+  margin-bottom: 20px;
+}
+
 @media (max-width: 760px) {
   .topbar {
     align-items: flex-start;

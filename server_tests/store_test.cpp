@@ -1,5 +1,6 @@
 #include "../server/store_sqlite.hpp"
 
+#include <algorithm>
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 
@@ -787,6 +788,56 @@ SCENARIO("Acknowledging an alert stores the operator note alongside the ack meta
     }
 }
 
+// ── Alert escalation ──────────────────────────────────────────────────────────
+
+SCENARIO("Unacknowledged alerts older than the cutoff are escalated")
+{
+    GIVEN("a store with two unacknowledged alerts at different ages")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord rec;
+        rec.agent_id = "agent-esc";
+        rec.approved = true;
+        rec.first_seen = 1;
+        rec.last_seen = 1;
+        store.upsert_agent(rec);
+
+        AlertRecord old_alert;
+        old_alert.agent_id = "agent-esc";
+        old_alert.indicator = "cpu";
+        old_alert.old_status = "green";
+        old_alert.new_status = "red";
+        old_alert.created_at = 1000;
+        store.insert_alert(old_alert);
+
+        AlertRecord recent_alert;
+        recent_alert.agent_id = "agent-esc";
+        recent_alert.indicator = "memory";
+        recent_alert.old_status = "green";
+        recent_alert.new_status = "yellow";
+        recent_alert.created_at = 9000;
+        store.insert_alert(recent_alert);
+
+        WHEN("escalate_old_alerts is called with a cutoff that only covers the older alert")
+        {
+            store.escalate_old_alerts(5000, 10000);
+
+            THEN("the old alert has a non-zero escalated_at")
+            {
+                auto alerts = store.list_alerts(false);
+                REQUIRE(alerts.size() == 2);
+                auto it_old = std::find_if(alerts.begin(), alerts.end(), [](const AlertRecord& a) { return a.indicator == "cpu"; });
+                auto it_recent = std::find_if(alerts.begin(), alerts.end(), [](const AlertRecord& a) { return a.indicator == "memory"; });
+                REQUIRE(it_old != alerts.end());
+                REQUIRE(it_recent != alerts.end());
+                REQUIRE(it_old->escalated_at == 10000);
+                REQUIRE(it_recent->escalated_at == 0);
+            }
+        }
+    }
+}
+
 // ── Bulk alert operations ─────────────────────────────────────────────────────
 
 SCENARIO("Bulk acknowledging alerts sets ack metadata on all specified alerts")
@@ -842,6 +893,83 @@ SCENARIO("Bulk acknowledging alerts sets ack metadata on all specified alerts")
         }
     }
 }
+
+// ── Metrics window count ──────────────────────────────────────────────────────
+
+SCENARIO("count_metrics_in_window counts only rows within the time window")
+{
+    GIVEN("a store with 5 metrics rows for an agent spread over time")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord rec;
+        rec.agent_id = "agent-cnt";
+        rec.first_seen = 1;
+        rec.last_seen = 1;
+        store.upsert_agent(rec);
+
+        for (int t : {1000, 2000, 3000, 4000, 5000})
+        {
+            MetricsRow row;
+            row.agent_id = "agent-cnt";
+            row.timestamp_ms = t;
+            row.metrics_cbor = {0xA0};
+            store.insert_metrics(row);
+        }
+
+        WHEN("count_metrics_in_window is called for the middle three timestamps")
+        {
+            auto count = store.count_metrics_in_window("agent-cnt", 2000, 4000);
+
+            THEN("exactly 3 rows are counted")
+            {
+                REQUIRE(count == 3);
+            }
+        }
+    }
+}
+
+// ── Maintenance windows ───────────────────────────────────────────────────────
+
+SCENARIO("Maintenance windows can be created, listed, and deleted")
+{
+    GIVEN("an empty store")
+    {
+        SqliteStore store(":memory:");
+
+        WHEN("a maintenance window is created")
+        {
+            MaintenanceWindowRecord w;
+            w.agent_id = "*";
+            w.start_ms = 1000;
+            w.end_ms = 5000;
+            w.reason = "patching";
+            w.created_by = "admin";
+            w.created_at = 500;
+            auto window_id = store.create_maintenance_window(w);
+
+            THEN("list_maintenance_windows includes it")
+            {
+                auto windows = store.list_maintenance_windows();
+                REQUIRE(windows.size() == 1);
+                REQUIRE(windows[0].window_id == window_id);
+                REQUIRE(windows[0].agent_id == "*");
+                REQUIRE(windows[0].reason == "patching");
+            }
+
+            AND_WHEN("it is deleted")
+            {
+                store.delete_maintenance_window(window_id);
+
+                THEN("the list is empty")
+                {
+                    REQUIRE(store.list_maintenance_windows().empty());
+                }
+            }
+        }
+    }
+}
+
 
 SCENARIO("Bulk soft-deleting alerts hides all specified alerts from active queries")
 {
@@ -985,6 +1113,46 @@ SCENARIO("archive_heartbeat_alerts_for_agent removes active Heartbeat alerts for
                 for (const auto& a : all)
                     found = found || (a.agent_id == "agent-A" && a.deleted_at == 500);
                 REQUIRE(found);
+            }
+        }
+    }
+}
+
+SCENARIO("active_maintenance_windows only returns windows that span the current time")
+{
+    GIVEN("a store with windows in the past, present, and future")
+    {
+        SqliteStore store(":memory:");
+
+        MaintenanceWindowRecord past;
+        past.agent_id = "*";
+        past.start_ms = 100;
+        past.end_ms = 500;
+        past.created_at = 50;
+        store.create_maintenance_window(past);
+
+        MaintenanceWindowRecord active;
+        active.agent_id = "agent-x";
+        active.start_ms = 900;
+        active.end_ms = 2000;
+        active.created_at = 800;
+        store.create_maintenance_window(active);
+
+        MaintenanceWindowRecord future;
+        future.agent_id = "*";
+        future.start_ms = 5000;
+        future.end_ms = 9000;
+        future.created_at = 800;
+        store.create_maintenance_window(future);
+
+        WHEN("active_maintenance_windows is queried at time 1000")
+        {
+            auto windows = store.active_maintenance_windows(1000);
+
+            THEN("only the currently active window is returned")
+            {
+                REQUIRE(windows.size() == 1);
+                REQUIRE(windows[0].agent_id == "agent-x");
             }
         }
     }

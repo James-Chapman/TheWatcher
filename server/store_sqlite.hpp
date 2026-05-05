@@ -67,6 +67,12 @@ public:
     void clear_active_alerts_for_agent(const std::string& agent_id, int64_t cleared_at) override;
     std::vector<std::string> get_offline_unalerted_agent_ids() override;
     void archive_heartbeat_alerts_for_agent(const std::string& agent_id, int64_t deleted_at) override;
+    void escalate_old_alerts(int64_t cutoff_ms, int64_t now_ms) override;
+    int64_t count_metrics_in_window(const std::string& agent_id, int64_t since_ms, int64_t until_ms) override;
+    int64_t create_maintenance_window(const MaintenanceWindowRecord& rec) override;
+    std::vector<MaintenanceWindowRecord> list_maintenance_windows() override;
+    void delete_maintenance_window(int64_t window_id) override;
+    std::vector<MaintenanceWindowRecord> active_maintenance_windows(int64_t now_ms) override;
     std::string get_setting(const std::string& key, const std::string& fallback) override;
     void set_setting(const std::string& key, const std::string& value) override;
 

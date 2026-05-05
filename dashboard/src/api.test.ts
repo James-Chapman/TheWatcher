@@ -6,9 +6,14 @@ import {
   bulkAcknowledgeAlerts,
   bulkArchiveAlerts,
   createGroup,
+  createMaintenanceWindow,
   createUser,
   deleteAgent,
+  deleteMaintenanceWindow,
   fetchAlerts,
+  fetchMaintenanceWindows,
+  fetchMetricHistory,
+  fetchUptimeReport,
   pauseAgent,
   rejectAgent,
   requestAgentStatus,
@@ -220,5 +225,59 @@ describe('GIVEN agent management API actions', () => {
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
     });
+  });
+
+  it('WHEN metric history is fetched THEN the correct agent endpoint is called with a limit', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchMetricHistory('agent-1', 20);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/metrics/agent-1?limit=20', { credentials: 'include' });
+  });
+
+  it('WHEN uptime report is fetched THEN the correct endpoint is called with the days parameter', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ agent_id: 'agent-1', days: 7, uptime_percent: 99.5, actual_samples: 1000, expected_samples: 1008 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const report = await fetchUptimeReport('agent-1', 7);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/uptime/agent-1?days=7', { credentials: 'include' });
+    expect(report.uptime_percent).toBe(99.5);
+  });
+
+  it('WHEN maintenance windows are fetched THEN the windows endpoint is called', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchMaintenanceWindows();
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/maintenance-windows', { credentials: 'include' });
+  });
+
+  it('WHEN a maintenance window is created THEN the correct payload is sent', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ window_id: 1 }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createMaintenanceWindow('agent-1', 1000, 4600000, 'weekly patching');
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/maintenance-windows', {
+      body: JSON.stringify({ agent_id: 'agent-1', start_ms: 1000, end_ms: 4600000, reason: 'weekly patching' }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+  });
+
+  it('WHEN a maintenance window is deleted THEN the delete endpoint is called', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await deleteMaintenanceWindow(42);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/maintenance-windows/42', { credentials: 'include', method: 'DELETE' });
   });
 });

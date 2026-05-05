@@ -117,6 +117,25 @@ export interface AlertRecord {
   acknowledged_at: number;
   deleted_at: number;
   note: string;
+  escalated_at: number;
+}
+
+export interface MaintenanceWindowRecord {
+  window_id: number;
+  agent_id: string; // '*' for all agents
+  start_ms: number;
+  end_ms: number;
+  reason: string;
+  created_by: string;
+  created_at: number;
+}
+
+export interface UptimeReport {
+  agent_id: string;
+  days: number;
+  uptime_percent: number;
+  actual_samples: number;
+  expected_samples: number;
 }
 
 export interface CpuMetrics {
