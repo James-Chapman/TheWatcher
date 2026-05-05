@@ -16,6 +16,7 @@ function agent(overrides = {}) {
         process_limit: 25,
         first_seen: 1,
         last_seen: 1,
+        description: '',
         ...overrides,
     };
 }
@@ -30,9 +31,9 @@ describe('GIVEN dashboard health thresholds', () => {
 describe('GIVEN agents with component health', () => {
     it('WHEN summary counts are calculated THEN each agent contributes to its host state', () => {
         const agents = [
-            { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }] },
-            { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }] },
-            { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }] },
+            { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }], description: '' },
+            { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }], description: '' },
+            { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }], description: '' },
         ];
         expect(agentStatus(agents[2])).toBe('red');
         expect(summaryCounts(agents)).toMatchObject({ green: 1, yellow: 1, red: 1 });
@@ -127,6 +128,23 @@ describe('GIVEN overview agents assigned to groups', () => {
         expect(grouped[0].agents.map((row) => row.id)).toEqual(['agent-db']);
     });
 });
+describe('GIVEN alerts mixed acknowledged and unacknowledged', () => {
+    it('WHEN dashboard agents are built THEN alertColor is red only when an unacknowledged alert exists', () => {
+        const agents = [
+            agent({ agent_id: 'agent-acked' }),
+            agent({ agent_id: 'agent-unacked' }),
+            agent({ agent_id: 'agent-clean' }),
+        ];
+        const alerts = [
+            { alert_id: 1, agent_id: 'agent-acked', indicator: 'cpu', old_status: 'green', new_status: 'red', message: '', created_at: 1, acknowledged_by: 'admin', acknowledged_at: 999, deleted_at: 0, note: '', escalated_at: 0 },
+            { alert_id: 2, agent_id: 'agent-unacked', indicator: 'cpu', old_status: 'green', new_status: 'red', message: '', created_at: 2, acknowledged_by: '', acknowledged_at: 0, deleted_at: 0, note: '', escalated_at: 0 },
+        ];
+        const rows = toDashboardAgents(agents, [], alerts);
+        expect(rows.find((r) => r.id === 'agent-acked')?.alertColor).toBe('green');
+        expect(rows.find((r) => r.id === 'agent-unacked')?.alertColor).toBe('red');
+        expect(rows.find((r) => r.id === 'agent-clean')?.alertColor).toBe('green');
+    });
+});
 describe('GIVEN alerts and known dashboard agents', () => {
     it('WHEN display alerts are built THEN the hostname is primary and the agent id remains available', () => {
         const rows = toDashboardAgents([agent({ agent_id: 'agent-prod', hostname: 'prod-1' })], []);
@@ -142,6 +160,8 @@ describe('GIVEN alerts and known dashboard agents', () => {
                 acknowledged_by: '',
                 acknowledged_at: 0,
                 deleted_at: 0,
+                note: '',
+                escalated_at: 0,
             },
             {
                 alert_id: 2,
@@ -154,6 +174,8 @@ describe('GIVEN alerts and known dashboard agents', () => {
                 acknowledged_by: '',
                 acknowledged_at: 0,
                 deleted_at: 0,
+                note: '',
+                escalated_at: 0,
             },
         ];
         const displayAlerts = toDisplayAlerts(alerts, rows);

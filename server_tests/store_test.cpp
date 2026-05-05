@@ -1157,3 +1157,156 @@ SCENARIO("active_maintenance_windows only returns windows that span the current 
         }
     }
 }
+
+SCENARIO("set_agent_description stores a description against a known agent")
+{
+    GIVEN("a store with an approved agent")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord agent;
+        agent.agent_id = "desc-agent";
+        agent.hostname = "host";
+        agent.approved = true;
+        store.upsert_agent(agent);
+
+        WHEN("set_agent_description is called with a non-empty string")
+        {
+            store.set_agent_description("desc-agent", "Primary database server");
+
+            THEN("the description is returned when the agent is listed")
+            {
+                auto agents = store.list_agents();
+                auto it = std::find_if(agents.begin(), agents.end(),
+                    [](const AgentRecord& r) { return r.agent_id == "desc-agent"; });
+                REQUIRE(it != agents.end());
+                REQUIRE(it->description == "Primary database server");
+            }
+        }
+
+        WHEN("set_agent_description is called twice")
+        {
+            store.set_agent_description("desc-agent", "first");
+            store.set_agent_description("desc-agent", "second");
+
+            THEN("the latest value is stored")
+            {
+                auto agents = store.list_agents();
+                auto it = std::find_if(agents.begin(), agents.end(),
+                    [](const AgentRecord& r) { return r.agent_id == "desc-agent"; });
+                REQUIRE(it != agents.end());
+                REQUIRE(it->description == "second");
+            }
+        }
+    }
+}
+
+SCENARIO("disable_user and enable_user toggle the disabled flag")
+{
+    GIVEN("a store with a non-built-in user")
+    {
+        SqliteStore store(":memory:");
+
+        store.create_user("operator1", "hash", "operator");
+
+        auto users = store.list_users();
+        auto it = std::find_if(users.begin(), users.end(),
+            [](const UserRecord& r) { return r.username == "operator1"; });
+        REQUIRE(it != users.end());
+        int64_t uid = it->user_id;
+
+        WHEN("the user is disabled")
+        {
+            store.disable_user(uid);
+
+            THEN("list_users shows the user as disabled")
+            {
+                auto updated = store.list_users();
+                auto u = std::find_if(updated.begin(), updated.end(),
+                    [](const UserRecord& r) { return r.username == "operator1"; });
+                REQUIRE(u != updated.end());
+                REQUIRE(u->disabled == true);
+            }
+        }
+
+        WHEN("a disabled user is re-enabled")
+        {
+            store.disable_user(uid);
+            store.enable_user(uid);
+
+            THEN("list_users shows the user as active again")
+            {
+                auto updated = store.list_users();
+                auto u = std::find_if(updated.begin(), updated.end(),
+                    [](const UserRecord& r) { return r.username == "operator1"; });
+                REQUIRE(u != updated.end());
+                REQUIRE(u->disabled == false);
+            }
+        }
+    }
+}
+
+SCENARIO("delete_user removes a non-built-in user")
+{
+    GIVEN("a store with two users")
+    {
+        SqliteStore store(":memory:");
+
+        store.create_user("to-delete", "h1", "viewer");
+        store.create_user("to-keep", "h2", "viewer");
+
+        auto before = store.list_users();
+        auto it = std::find_if(before.begin(), before.end(),
+            [](const UserRecord& r) { return r.username == "to-delete"; });
+        REQUIRE(it != before.end());
+        int64_t del_uid = it->user_id;
+
+        WHEN("delete_user is called for the first user")
+        {
+            store.delete_user(del_uid);
+
+            THEN("the user no longer appears in list_users")
+            {
+                auto after = store.list_users();
+                auto gone = std::find_if(after.begin(), after.end(),
+                    [](const UserRecord& r) { return r.username == "to-delete"; });
+                REQUIRE(gone == after.end());
+
+                auto kept = std::find_if(after.begin(), after.end(),
+                    [](const UserRecord& r) { return r.username == "to-keep"; });
+                REQUIRE(kept != after.end());
+            }
+        }
+    }
+}
+
+SCENARIO("update_user_password changes the stored credential hash")
+{
+    GIVEN("a store with a user")
+    {
+        SqliteStore store(":memory:");
+
+        store.create_user("pwuser", "old-hash", "viewer");
+
+        auto users = store.list_users();
+        auto it = std::find_if(users.begin(), users.end(),
+            [](const UserRecord& r) { return r.username == "pwuser"; });
+        REQUIRE(it != users.end());
+        int64_t uid = it->user_id;
+
+        WHEN("update_user_password is called with a new hash")
+        {
+            store.update_user_password(uid, "new-hash");
+
+            THEN("the stored password_hash reflects the new value")
+            {
+                auto updated = store.list_users();
+                auto u = std::find_if(updated.begin(), updated.end(),
+                    [](const UserRecord& r) { return r.username == "pwuser"; });
+                REQUIRE(u != updated.end());
+                REQUIRE(u->password_hash == "new-hash");
+                REQUIRE(u->password_hash != "old-hash");
+            }
+        }
+    }
+}

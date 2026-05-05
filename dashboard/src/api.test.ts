@@ -5,25 +5,32 @@ import {
   approveAgent,
   bulkAcknowledgeAlerts,
   bulkArchiveAlerts,
+  changeUserPassword,
   createGroup,
   createMaintenanceWindow,
   createUser,
   deleteAgent,
   deleteMaintenanceWindow,
+  deleteUser,
+  disableUser,
+  enableUser,
   fetchAlerts,
   fetchMaintenanceWindows,
   fetchMetricHistory,
+  fetchSettings,
   fetchUptimeReport,
   pauseAgent,
   rejectAgent,
   requestAgentStatus,
   restartAgentCollectors,
   resumeAgent,
+  setAgentDescription,
   setAgentGroups,
   setAgentCollectorConfig,
   setAgentInterval,
   setAgentProcessLimit,
   setAgentThresholds,
+  updateSettings,
 } from './api';
 
 describe('GIVEN agent management API actions', () => {
@@ -279,5 +286,67 @@ describe('GIVEN agent management API actions', () => {
     await deleteMaintenanceWindow(42);
 
     expect(fetchMock).toHaveBeenCalledWith('/api/maintenance-windows/42', { credentials: 'include', method: 'DELETE' });
+  });
+
+  it('WHEN agent description is set THEN the description endpoint is called with the new value', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await setAgentDescription('agent-1', 'Production web server');
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/agents/agent-1/description', {
+      body: JSON.stringify({ description: 'Production web server' }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+  });
+
+  it('WHEN settings are fetched THEN the settings endpoint is called', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ webhook_url: 'https://hooks.example.com', offline_after_seconds: 120, escalation_timeout_seconds: 300 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const settings = await fetchSettings();
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/settings', { credentials: 'include' });
+    expect(settings.webhook_url).toBe('https://hooks.example.com');
+    expect(settings.offline_after_seconds).toBe(120);
+  });
+
+  it('WHEN settings are updated THEN the PUT endpoint is called with the new values', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await updateSettings({ webhook_url: 'https://hooks.example.com/new', offline_after_seconds: 180 });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/settings', {
+      body: JSON.stringify({ webhook_url: 'https://hooks.example.com/new', offline_after_seconds: 180 }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'PUT',
+    });
+  });
+
+  it('WHEN user management actions are performed THEN the correct endpoints are called', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await disableUser(5);
+    await enableUser(5);
+    await deleteUser(5);
+    await changeUserPassword(5, 'newpass123');
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/users/5/disable', { credentials: 'include', method: 'PUT' });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/users/5/enable', { credentials: 'include', method: 'PUT' });
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/users/5', { credentials: 'include', method: 'DELETE' });
+    expect(fetchMock).toHaveBeenNthCalledWith(4, '/api/users/5/password', {
+      body: JSON.stringify({ password: 'newpass123' }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      method: 'PUT',
+    });
   });
 });

@@ -8,15 +8,20 @@ import {
   approveAgent,
   bulkAcknowledgeAlerts,
   bulkArchiveAlerts,
+  changeUserPassword,
   createGroup,
   createMaintenanceWindow,
   createUser,
   deleteAgent,
   deleteAlert,
   deleteMaintenanceWindow,
+  deleteUser,
+  disableUser,
+  enableUser,
   fetchAlerts,
   fetchMetricHistory,
   fetchSession,
+  fetchSettings,
   fetchUptimeReport,
   loadDashboardData,
   login,
@@ -26,8 +31,10 @@ import {
   restartAgentCollectors,
   resumeAgent,
   setAgentCollectorConfig,
+  setAgentDescription,
   setAgentGroups,
   setMaintenance,
+  updateSettings,
 } from './api';
 import type {
   AgentCollectorConfigUpdate,
@@ -41,6 +48,7 @@ import type {
   MetricsSnapshot,
   NetworkInterfaceConfig,
   ProcessWatchConfig,
+  ServerSettings,
   SessionInfo,
   UserRecord,
 } from './models';
@@ -58,7 +66,7 @@ import './styles.css';
 
 const COMPONENT_LABELS = ['CPU', 'Memory', 'Disk', 'Network', 'Temp', 'Proc', 'Heartbeat'];
 
-type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users' | 'maintenance';
+type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users' | 'maintenance' | 'settings';
 
 function colorLabel(color: HealthColor): string {
   return {
@@ -163,6 +171,7 @@ function Dashboard() {
           <Tab view={view} target="alerts" setView={setView} label="Alerts" />
           {operator ? <Tab view={view} target="maintenance" setView={setView} label="Maintenance" /> : null}
           {admin ? <Tab view={view} target="users" setView={setView} label="Users" /> : null}
+          {admin ? <Tab view={view} target="settings" setView={setView} label="Settings" /> : null}
         </nav>
         <div className="topbar-meta">
           <span>
@@ -249,7 +258,8 @@ function Dashboard() {
       {view === 'maintenance' ? (
         <MaintenanceWindowsPage agents={agents} busyAction={busyAction} groups={groups} operator={operator} runAction={runAction} windows={maintenanceWindows} />
       ) : null}
-      {view === 'users' ? <UsersPage busyAction={busyAction} groups={groups} runAction={runAction} users={users} /> : null}
+      {view === 'users' ? <UsersPage busyAction={busyAction} groups={groups} runAction={runAction} session={session} users={users} /> : null}
+      {view === 'settings' ? <SettingsPage runAction={runAction} /> : null}
     </>
   );
 }
@@ -494,6 +504,8 @@ function AgentManagement({
   runAction: (key: string, action: () => Promise<void>) => Promise<void>;
   setGroupDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }) {
+  const [descDrafts, setDescDrafts] = React.useState<Record<string, string>>({});
+
   return (
     <main className="table-wrap management-wrap">
       {error ? <div className="banner error">API error: {error}</div> : null}
@@ -515,6 +527,7 @@ function AgentManagement({
           <tbody>
             {agents.map((agent) => {
               const groupValue = groupDrafts[agent.id] ?? String(agent.groupIds[0] ?? groups[0]?.group_id ?? 0);
+              const descValue = descDrafts[agent.id] ?? agent.description;
               const manageable = operator && canManageAgent(agent);
               const maintenanceCommand = maintenanceAction(agent);
               return (
@@ -529,6 +542,21 @@ function AgentManagement({
                         label="Configure"
                         onClick={() => onConfigure(agent.id)}
                       />
+                      <div className="settings-grid desc-settings">
+                        <input
+                          disabled={!operator}
+                          placeholder="Description…"
+                          value={descValue}
+                          onChange={(event) => setDescDrafts((current) => ({ ...current, [agent.id]: event.target.value }))}
+                        />
+                        <ActionButton
+                          busy={busyAction === `${agent.id}:desc`}
+                          disabled={!operator || descValue === agent.description}
+                          icon={<Check size={14} />}
+                          label="Set"
+                          onClick={() => runAction(`${agent.id}:desc`, () => setAgentDescription(agent.id, descValue))}
+                        />
+                      </div>
                     </div>
                   </td>
                   <td>{agent.platform}</td>
@@ -1185,11 +1213,13 @@ function UsersPage({
   busyAction,
   groups,
   runAction,
+  session,
   users,
 }: {
   busyAction: string | null;
   groups: GroupRecord[];
   runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  session: SessionInfo;
   users: UserRecord[];
 }) {
   const [groupName, setGroupName] = React.useState('');
@@ -1197,8 +1227,49 @@ function UsersPage({
   const [password, setPassword] = React.useState('');
   const [role, setRole] = React.useState<UserRecord['role']>('viewer');
   const [groupId, setGroupId] = React.useState<number>(groups[0]?.group_id ?? 0);
+  const [pwUserId, setPwUserId] = React.useState<number | null>(null);
+  const [pwValue, setPwValue] = React.useState('');
+
+  const admin = session.role === 'admin';
+  const currentUser = users.find((u) => u.username === session.username);
+
   return (
     <main className="table-wrap management-wrap">
+      {pwUserId !== null ? (
+        <div className="modal-backdrop" onClick={() => setPwUserId(null)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Change Password</h2>
+              <button className="icon-button" onClick={() => setPwUserId(null)}><X size={14} /></button>
+            </div>
+            <label>
+              New password
+              <input
+                type="password"
+                autoFocus
+                value={pwValue}
+                onChange={(e) => setPwValue(e.target.value)}
+              />
+            </label>
+            <div className="button-row modal-actions">
+              <button className="text-button secondary" onClick={() => setPwUserId(null)}>Cancel</button>
+              <button
+                className="text-button"
+                disabled={!pwValue}
+                onClick={() => {
+                  const id = pwUserId;
+                  const pw = pwValue;
+                  setPwUserId(null);
+                  setPwValue('');
+                  void runAction(`user:${id}:pw`, () => changeUserPassword(id, pw));
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="management-header"><h1>Users & Groups</h1></div>
       <div className="management-grid">
         <form
@@ -1241,17 +1312,125 @@ function UsersPage({
       </div>
       <div className="table-container">
         <table className="management-table">
-          <thead><tr><th>User</th><th>Role</th><th>Groups</th><th>State</th></tr></thead>
-          <tbody>{users.map((user) => (
-            <tr key={user.user_id}>
-              <td>{user.username}</td>
-              <td>{user.role}</td>
-              <td>{user.group_ids.map((id) => groups.find((group) => group.group_id === id)?.name ?? id).join(', ')}</td>
-              <td>{user.disabled ? 'Disabled' : 'Active'}</td>
-            </tr>
-          ))}</tbody>
+          <thead><tr><th>User</th><th>Role</th><th>Groups</th><th>State</th><th>Actions</th></tr></thead>
+          <tbody>{users.map((user) => {
+            const canChangePw = admin || currentUser?.user_id === user.user_id;
+            return (
+              <tr key={user.user_id} className={user.disabled ? 'row-archived' : ''}>
+                <td>{user.username}</td>
+                <td>{user.role}</td>
+                <td>{user.group_ids.map((id) => groups.find((group) => group.group_id === id)?.name ?? id).join(', ')}</td>
+                <td>{user.disabled ? 'Disabled' : 'Active'}</td>
+                <td>
+                  <div className="button-row">
+                    {canChangePw ? (
+                      <ActionButton
+                        busy={busyAction === `user:${user.user_id}:pw`}
+                        icon={<SlidersHorizontal size={14} />}
+                        label="Password"
+                        onClick={() => { setPwUserId(user.user_id); setPwValue(''); }}
+                      />
+                    ) : null}
+                    {admin && !user.built_in ? (
+                      user.disabled ? (
+                        <ActionButton
+                          busy={busyAction === `user:${user.user_id}:enable`}
+                          icon={<Play size={14} />}
+                          label="Enable"
+                          onClick={() => runAction(`user:${user.user_id}:enable`, () => enableUser(user.user_id))}
+                        />
+                      ) : (
+                        <ActionButton
+                          busy={busyAction === `user:${user.user_id}:disable`}
+                          icon={<Pause size={14} />}
+                          label="Disable"
+                          onClick={() => runAction(`user:${user.user_id}:disable`, () => disableUser(user.user_id))}
+                        />
+                      )
+                    ) : null}
+                    {admin && !user.built_in ? (
+                      <ActionButton
+                        busy={busyAction === `user:${user.user_id}:delete`}
+                        danger
+                        icon={<Trash2 size={14} />}
+                        label="Delete"
+                        onClick={() => runAction(`user:${user.user_id}:delete`, () => deleteUser(user.user_id))}
+                      />
+                    ) : null}
+                  </div>
+                </td>
+              </tr>
+            );
+          })}</tbody>
         </table>
       </div>
+    </main>
+  );
+}
+
+function SettingsPage({
+  runAction,
+}: {
+  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+}) {
+  const [draft, setDraft] = React.useState<ServerSettings>({ webhook_url: '', offline_after_seconds: 120, escalation_timeout_seconds: 300 });
+  const [loaded, setLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    void fetchSettings().then((s) => {
+      setDraft(s);
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, []);
+
+  return (
+    <main className="table-wrap management-wrap">
+      <div className="management-header"><h1>Settings</h1></div>
+      {!loaded ? <div className="banner">Loading settings...</div> : null}
+      {loaded ? (
+        <form
+          className="settings-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void runAction('settings:save', () => updateSettings(draft));
+          }}
+        >
+          <div className="form-grid">
+            <label>
+              Webhook URL
+              <input
+                placeholder="https://hooks.example.com/…"
+                type="url"
+                value={draft.webhook_url}
+                onChange={(e) => setDraft((d) => ({ ...d, webhook_url: e.target.value }))}
+              />
+            </label>
+            <label>
+              Offline after (seconds)
+              <input
+                min={10}
+                step={1}
+                type="number"
+                value={draft.offline_after_seconds}
+                onChange={(e) => setDraft((d) => ({ ...d, offline_after_seconds: Number(e.target.value) }))}
+              />
+            </label>
+            <label>
+              Escalation timeout (seconds)
+              <input
+                min={60}
+                step={1}
+                type="number"
+                value={draft.escalation_timeout_seconds}
+                onChange={(e) => setDraft((d) => ({ ...d, escalation_timeout_seconds: Number(e.target.value) }))}
+              />
+            </label>
+          </div>
+          <div className="button-row">
+            <button className="text-button" type="submit">Save Settings</button>
+          </div>
+        </form>
+      ) : null}
     </main>
   );
 }

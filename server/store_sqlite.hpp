@@ -38,6 +38,10 @@ public:
                         const std::string& role) override;
     void set_user_groups(int64_t user_id, const std::vector<int64_t>& group_ids) override;
     std::vector<int64_t> get_user_groups(int64_t user_id) override;
+    void disable_user(int64_t user_id) override;
+    void enable_user(int64_t user_id) override;
+    void delete_user(int64_t user_id) override;
+    void update_user_password(int64_t user_id, const std::string& password_hash) override;
     void create_session(const SessionRecord& session) override;
     std::optional<SessionRecord> get_session(const std::string& token, int64_t now_ms) override;
     void delete_session(const std::string& token) override;
@@ -65,6 +69,7 @@ public:
     void soft_delete_alert(int64_t alert_id, int64_t deleted_at) override;
     void bulk_soft_delete_alerts(const std::vector<int64_t>& alert_ids, int64_t deleted_at) override;
     void clear_active_alerts_for_agent(const std::string& agent_id, int64_t cleared_at) override;
+    void set_agent_description(const std::string& agent_id, const std::string& description) override;
     std::vector<std::string> get_offline_unalerted_agent_ids() override;
     void archive_heartbeat_alerts_for_agent(const std::string& agent_id, int64_t deleted_at) override;
     void escalate_old_alerts(int64_t cutoff_ms, int64_t now_ms) override;

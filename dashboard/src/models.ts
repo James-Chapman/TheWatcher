@@ -17,9 +17,16 @@ export interface AgentRecord {
   process_limit: number;
   first_seen: number;
   last_seen: number;
+  description: string;
   group_ids?: number[];
   thresholds?: AgentThresholds;
   collector_config?: CollectorConfig;
+}
+
+export interface ServerSettings {
+  webhook_url: string;
+  offline_after_seconds: number;
+  escalation_timeout_seconds: number;
 }
 
 export interface IndicatorThresholds {
@@ -236,4 +243,5 @@ export interface DashboardAgent {
   alertColor: HealthColor;
   components: ComponentHealth[];
   metrics?: SystemMetrics;
+  description: string;
 }

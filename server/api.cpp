@@ -97,6 +97,7 @@ namespace
             {"process_limit",        a.process_limit                     },
             {"first_seen",           a.first_seen                        },
             {"last_seen",            a.last_seen                         },
+            {"description",          a.description                       },
             {"collector_config",     a.collector_config                  },
             {"thresholds",
              {{"cpu",
@@ -1369,6 +1370,165 @@ void ApiServer::setup_routes()
             set_json(res, json{
                               {"error", e.what()}
             });
+        }
+    });
+
+    // POST /api/agents/:id/description — set agent description
+    http_->Post("/api/agents/:id/description", [this](const httplib::Request& req, httplib::Response& res) {
+        auto session = require_role(req, res, "operator");
+        if (!session)
+            return;
+        try
+        {
+            const auto id = req.path_params.at("id");
+            if (!require_agent_access(req, res, "operator", id))
+                return;
+            const auto body = json::parse(req.body);
+            const auto description = body.value("description", std::string(""));
+            store_.set_agent_description(id, description);
+            LOGF_INFO("Set agent description agent_id=%s by=%s", id.c_str(), session->username.c_str());
+            set_json(res, json{{"ok", true}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // GET /api/settings — return configurable server settings (admin only)
+    http_->Get("/api/settings", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "admin"))
+            return;
+        json out = json::object();
+        out["webhook_url"] = store_.get_setting("notifications.webhook_url", "");
+        out["offline_after_seconds"] = std::stoi(store_.get_setting("offline_after_seconds", "120"));
+        out["escalation_timeout_seconds"] = std::stoi(store_.get_setting("escalation_timeout_seconds", "3600"));
+        set_json(res, out);
+    });
+
+    // PUT /api/settings — update configurable server settings (admin only)
+    http_->Put("/api/settings", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "admin"))
+            return;
+        try
+        {
+            const auto body = json::parse(req.body);
+            if (body.contains("webhook_url"))
+                store_.set_setting("notifications.webhook_url", body.at("webhook_url").get<std::string>());
+            if (body.contains("offline_after_seconds"))
+            {
+                const auto v = body.at("offline_after_seconds").get<int>();
+                if (v < 10 || v > 86400)
+                    throw std::runtime_error("offline_after_seconds must be between 10 and 86400");
+                store_.set_setting("offline_after_seconds", std::to_string(v));
+            }
+            if (body.contains("escalation_timeout_seconds"))
+            {
+                const auto v = body.at("escalation_timeout_seconds").get<int>();
+                if (v < 60 || v > 604800)
+                    throw std::runtime_error("escalation_timeout_seconds must be between 60 and 604800");
+                store_.set_setting("escalation_timeout_seconds", std::to_string(v));
+            }
+            set_json(res, json{{"ok", true}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // PUT /api/users/:id/disable — disable a user account (admin only, not built-in)
+    http_->Put("/api/users/:id/disable", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "admin"))
+            return;
+        try
+        {
+            const auto user_id = std::stoll(req.path_params.at("id"));
+            store_.disable_user(user_id);
+            LOGF_INFO("Disabled user user_id=%lld", static_cast<long long>(user_id));
+            set_json(res, json{{"ok", true}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // PUT /api/users/:id/enable — re-enable a user account (admin only)
+    http_->Put("/api/users/:id/enable", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "admin"))
+            return;
+        try
+        {
+            const auto user_id = std::stoll(req.path_params.at("id"));
+            store_.enable_user(user_id);
+            LOGF_INFO("Enabled user user_id=%lld", static_cast<long long>(user_id));
+            set_json(res, json{{"ok", true}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // DELETE /api/users/:id — delete a user (admin only, not built-in)
+    http_->Delete("/api/users/:id", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "admin"))
+            return;
+        try
+        {
+            const auto user_id = std::stoll(req.path_params.at("id"));
+            store_.delete_user(user_id);
+            LOGF_INFO("Deleted user user_id=%lld", static_cast<long long>(user_id));
+            set_json(res, json{{"ok", true}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // PUT /api/users/:id/password — change a user's password (admin changes any, user changes own)
+    http_->Put("/api/users/:id/password", [this](const httplib::Request& req, httplib::Response& res) {
+        auto session = require_role(req, res, "viewer");
+        if (!session)
+            return;
+        try
+        {
+            const auto user_id = std::stoll(req.path_params.at("id"));
+            const auto target_user = [&]() -> std::optional<UserRecord> {
+                for (const auto& u : store_.list_users())
+                    if (u.user_id == user_id)
+                        return u;
+                return std::nullopt;
+            }();
+            if (!target_user)
+                throw std::runtime_error("user not found");
+            // Non-admins can only change their own password
+            if (session->role != "admin" && target_user->username != session->username)
+            {
+                res.status = 403;
+                set_json(res, json{{"error", "forbidden"}});
+                return;
+            }
+            const auto body = json::parse(req.body);
+            const auto password = body.at("password").get<std::string>();
+            if (password.empty())
+                throw std::runtime_error("password is required");
+            store_.update_user_password(user_id, hash_password(password));
+            LOGF_INFO("Changed password for user_id=%lld by=%s", static_cast<long long>(user_id),
+                      session->username.c_str());
+            set_json(res, json{{"ok", true}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
         }
     });
 }

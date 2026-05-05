@@ -29,6 +29,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     process_limit: 25,
     first_seen: 1,
     last_seen: 1,
+    description: '',
     ...overrides,
   };
 }
@@ -45,9 +46,9 @@ describe('GIVEN dashboard health thresholds', () => {
 describe('GIVEN agents with component health', () => {
   it('WHEN summary counts are calculated THEN each agent contributes to its host state', () => {
     const agents: DashboardAgent[] = [
-      { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }] },
-      { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }] },
-      { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }] },
+      { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }], description: '' },
+      { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }], description: '' },
+      { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }], description: '' },
     ];
 
     expect(agentStatus(agents[2])).toBe('red');

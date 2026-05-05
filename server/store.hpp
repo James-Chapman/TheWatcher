@@ -41,6 +41,7 @@ struct AgentRecord
     double network_degraded_pct_of_avg = 150.0;
     double network_critical_pct_of_avg = 200.0;
     CollectorConfig collector_config;
+    std::string description;
 };
 
 struct MetricsRow
@@ -152,6 +153,10 @@ public:
                                 const std::string& role) = 0;
     virtual void set_user_groups(int64_t user_id, const std::vector<int64_t>& group_ids) = 0;
     virtual std::vector<int64_t> get_user_groups(int64_t user_id) = 0;
+    virtual void disable_user(int64_t user_id) = 0;
+    virtual void enable_user(int64_t user_id) = 0;
+    virtual void delete_user(int64_t user_id) = 0;
+    virtual void update_user_password(int64_t user_id, const std::string& password_hash) = 0;
     virtual void create_session(const SessionRecord& session) = 0;
     virtual std::optional<SessionRecord> get_session(const std::string& token, int64_t now_ms) = 0;
     virtual void delete_session(const std::string& token) = 0;
@@ -179,6 +184,7 @@ public:
     virtual void soft_delete_alert(int64_t alert_id, int64_t deleted_at) = 0;
     virtual void bulk_soft_delete_alerts(const std::vector<int64_t>& alert_ids, int64_t deleted_at) = 0;
     virtual void clear_active_alerts_for_agent(const std::string& agent_id, int64_t cleared_at) = 0;
+    virtual void set_agent_description(const std::string& agent_id, const std::string& description) = 0;
     virtual std::vector<std::string> get_offline_unalerted_agent_ids() = 0;
     virtual void archive_heartbeat_alerts_for_agent(const std::string& agent_id, int64_t deleted_at) = 0;
     virtual void escalate_old_alerts(int64_t cutoff_ms, int64_t now_ms) = 0;
