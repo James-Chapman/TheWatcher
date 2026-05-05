@@ -429,6 +429,18 @@ void SqliteStore::init_schema()
             value TEXT NOT NULL
         );
     )");
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS silences (
+            silence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id   TEXT NOT NULL DEFAULT '*',
+            indicator  TEXT NOT NULL DEFAULT '*',
+            reason     TEXT NOT NULL DEFAULT '',
+            until_ms   INTEGER NOT NULL,
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL
+        );
+    )");
+    exec("CREATE INDEX IF NOT EXISTS idx_silences_until ON silences(until_ms);");
 }
 
 void SqliteStore::bootstrap_defaults()
@@ -1276,6 +1288,88 @@ void SqliteStore::set_setting(const std::string& key, const std::string& value)
     sqlite3_bind_text(st.s, 1, key.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(st.s, 2, value.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step set_setting");
+}
+
+namespace
+{
+SilenceRecord row_to_silence(sqlite3_stmt* s)
+{
+    SilenceRecord r;
+    r.silence_id = sqlite3_column_int64(s, 0);
+    r.agent_id = text_col(s, 1);
+    r.indicator = text_col(s, 2);
+    r.reason = text_col(s, 3);
+    r.until_ms = sqlite3_column_int64(s, 4);
+    r.created_by = text_col(s, 5);
+    r.created_at = sqlite3_column_int64(s, 6);
+    return r;
+}
+} // namespace
+
+int64_t SqliteStore::create_silence(const SilenceRecord& rec)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "INSERT INTO silences(agent_id,indicator,reason,until_ms,created_by,created_at) "
+                             "VALUES(?,?,?,?,?,?);",
+                             -1, &st.s, nullptr),
+          db_, "prepare create_silence");
+    sqlite3_bind_text(st.s, 1, rec.agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, rec.indicator.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 3, rec.reason.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 4, rec.until_ms);
+    sqlite3_bind_text(st.s, 5, rec.created_by.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 6, rec.created_at);
+    check(sqlite3_step(st.s), db_, "step create_silence");
+    return sqlite3_last_insert_rowid(db_);
+}
+
+std::vector<SilenceRecord> SqliteStore::list_silences()
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT silence_id,agent_id,indicator,reason,until_ms,created_by,created_at "
+                             "FROM silences ORDER BY created_at DESC;",
+                             -1, &st.s, nullptr),
+          db_, "prepare list_silences");
+    std::vector<SilenceRecord> out;
+    while (sqlite3_step(st.s) == SQLITE_ROW)
+        out.push_back(row_to_silence(st.s));
+    return out;
+}
+
+void SqliteStore::delete_silence(int64_t silence_id)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "DELETE FROM silences WHERE silence_id=?;", -1, &st.s, nullptr),
+          db_, "prepare delete_silence");
+    sqlite3_bind_int64(st.s, 1, silence_id);
+    check(sqlite3_step(st.s), db_, "step delete_silence");
+}
+
+bool SqliteStore::is_silenced(const std::string& agent_id, const std::string& indicator, int64_t now_ms)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT 1 FROM silences "
+                             "WHERE (agent_id='*' OR agent_id=?) "
+                             "  AND (indicator='*' OR indicator=?) "
+                             "  AND until_ms > ? LIMIT 1;",
+                             -1, &st.s, nullptr),
+          db_, "prepare is_silenced");
+    sqlite3_bind_text(st.s, 1, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, indicator.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 3, now_ms);
+    return sqlite3_step(st.s) == SQLITE_ROW;
+}
+
+void SqliteStore::prune_metrics_before(int64_t cutoff_ms)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "DELETE FROM metrics WHERE timestamp_ms < ?;", -1, &st.s, nullptr),
+          db_, "prepare prune_metrics_before");
+    sqlite3_bind_int64(st.s, 1, cutoff_ms);
+    check(sqlite3_step(st.s), db_, "step prune_metrics_before");
 }
 
 std::unique_ptr<Store> make_store(const std::string& db_type, const std::string& db_path_or_dsn)

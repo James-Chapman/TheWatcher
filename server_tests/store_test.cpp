@@ -1829,3 +1829,178 @@ SCENARIO("clear_active_alerts_for_agent archives only that agent's alerts")
         }
     }
 }
+
+// ── Silence rules ─────────────────────────────────────────────────────────────
+
+SCENARIO("Silence rules can be created, listed, and deleted")
+{
+    SqliteStore store(":memory:");
+    const int64_t now = 1'000'000;
+
+    GIVEN("an empty silences table")
+    {
+        THEN("list_silences returns empty")
+        {
+            REQUIRE(store.list_silences().empty());
+        }
+
+        WHEN("a global silence rule is created")
+        {
+            SilenceRecord rec;
+            rec.agent_id   = "*";
+            rec.indicator  = "*";
+            rec.reason     = "planned maintenance";
+            rec.until_ms   = now + 3'600'000;
+            rec.created_by = "admin";
+            rec.created_at = now;
+            const auto id  = store.create_silence(rec);
+
+            THEN("the rule is returned by list_silences")
+            {
+                auto list = store.list_silences();
+                REQUIRE(list.size() == 1);
+                REQUIRE(list[0].silence_id == id);
+                REQUIRE(list[0].agent_id == "*");
+                REQUIRE(list[0].indicator == "*");
+                REQUIRE(list[0].reason == "planned maintenance");
+                REQUIRE(list[0].until_ms == now + 3'600'000);
+                REQUIRE(list[0].created_by == "admin");
+            }
+
+            AND_THEN("is_silenced returns true for any agent/indicator during the window")
+            {
+                REQUIRE(store.is_silenced("agent-x", "cpu", now + 1000));
+                REQUIRE(store.is_silenced("agent-y", "memory", now + 1000));
+            }
+
+            AND_THEN("is_silenced returns false after the window expires")
+            {
+                REQUIRE_FALSE(store.is_silenced("agent-x", "cpu", now + 3'600'001));
+            }
+
+            AND_THEN("deleting the rule removes it")
+            {
+                store.delete_silence(id);
+                REQUIRE(store.list_silences().empty());
+                REQUIRE_FALSE(store.is_silenced("agent-x", "cpu", now + 1000));
+            }
+        }
+    }
+}
+
+SCENARIO("Silence rules support wildcard and specific matching")
+{
+    SqliteStore store(":memory:");
+    const int64_t now = 2'000'000;
+    const int64_t future = now + 3'600'000;
+
+    GIVEN("a silence rule scoped to a specific agent")
+    {
+        SilenceRecord rec;
+        rec.agent_id   = "agent-alpha";
+        rec.indicator  = "*";
+        rec.reason     = "agent-specific";
+        rec.until_ms   = future;
+        rec.created_by = "op";
+        rec.created_at = now;
+        store.create_silence(rec);
+
+        THEN("is_silenced is true for that agent")
+        {
+            REQUIRE(store.is_silenced("agent-alpha", "cpu", now + 1000));
+        }
+
+        AND_THEN("is_silenced is false for a different agent")
+        {
+            REQUIRE_FALSE(store.is_silenced("agent-beta", "cpu", now + 1000));
+        }
+    }
+
+    GIVEN("a silence rule scoped to a specific indicator")
+    {
+        SilenceRecord rec;
+        rec.agent_id   = "*";
+        rec.indicator  = "memory";
+        rec.reason     = "memory spike expected";
+        rec.until_ms   = future;
+        rec.created_by = "op";
+        rec.created_at = now;
+        store.create_silence(rec);
+
+        THEN("is_silenced is true for that indicator on any agent")
+        {
+            REQUIRE(store.is_silenced("agent-x", "memory", now + 1000));
+        }
+
+        AND_THEN("is_silenced is false for a different indicator")
+        {
+            REQUIRE_FALSE(store.is_silenced("agent-x", "cpu", now + 1000));
+        }
+    }
+}
+
+// ── Metrics pruning ───────────────────────────────────────────────────────────
+
+SCENARIO("prune_metrics_before removes old metrics rows")
+{
+    SqliteStore store(":memory:");
+
+    GIVEN("three metrics rows at different timestamps")
+    {
+        AgentRecord agent;
+        agent.agent_id = "agent-prune";
+        agent.hostname = "host";
+        agent.approved = true;
+        store.upsert_agent(agent);
+
+        MetricsRow r1;
+        r1.agent_id    = "agent-prune";
+        r1.timestamp_ms = 1000;
+        r1.metrics_cbor = {0x01};
+        store.insert_metrics(r1);
+
+        MetricsRow r2;
+        r2.agent_id    = "agent-prune";
+        r2.timestamp_ms = 2000;
+        r2.metrics_cbor = {0x02};
+        store.insert_metrics(r2);
+
+        MetricsRow r3;
+        r3.agent_id    = "agent-prune";
+        r3.timestamp_ms = 3000;
+        r3.metrics_cbor = {0x03};
+        store.insert_metrics(r3);
+
+        WHEN("pruning with cutoff=2500 (removes rows <=2499)")
+        {
+            store.prune_metrics_before(2500);
+
+            THEN("only the row at timestamp 3000 remains")
+            {
+                auto rows = store.get_metrics("agent-prune", 100);
+                REQUIRE(rows.size() == 1);
+                REQUIRE(rows[0].timestamp_ms == 3000);
+            }
+        }
+
+        WHEN("pruning with cutoff=0 removes nothing")
+        {
+            store.prune_metrics_before(0);
+
+            THEN("all three rows remain")
+            {
+                REQUIRE(store.get_metrics("agent-prune", 100).size() == 3);
+            }
+        }
+
+        WHEN("pruning with cutoff=4000 removes everything")
+        {
+            store.prune_metrics_before(4000);
+
+            THEN("no rows remain")
+            {
+                REQUIRE(store.get_metrics("agent-prune", 100).empty());
+            }
+        }
+    }
+}

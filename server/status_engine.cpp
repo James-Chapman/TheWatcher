@@ -203,6 +203,17 @@ StatusEngine::StatusEngine(Store& store) : store_(store)
 
 void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMetrics& metrics, int64_t timestamp_ms)
 {
+    constexpr int64_t prune_interval_ms = 3'600'000; // prune once per hour
+    if (timestamp_ms - last_prune_ms_ >= prune_interval_ms)
+    {
+        last_prune_ms_ = timestamp_ms;
+        const auto retention_days_str = store_.get_setting("metrics_retention_days", "30");
+        const int retention_days = std::max(1, std::stoi(retention_days_str));
+        const int64_t cutoff_ms = timestamp_ms - static_cast<int64_t>(retention_days) * 86'400'000LL;
+        store_.prune_metrics_before(cutoff_ms);
+        LOGF_DEBUG("Pruned metrics older than %d days", retention_days);
+    }
+
     auto agent = store_.get_agent(agent_id);
     if (agent && agent->maintenance)
     {
@@ -412,17 +423,26 @@ void StatusEngine::record_transition(const std::string& agent_id, const std::str
 
     if (previous_row && is_worse_status(previous, next))
     {
-        AlertRecord alert;
-        alert.agent_id = agent_id;
-        alert.indicator = indicator;
-        alert.old_status = status_to_string(previous);
-        alert.new_status = status_to_string(next);
-        alert.message = final_message;
-        alert.created_at = timestamp_ms;
-        const auto alert_id = store_.insert_alert(alert);
-        LOGF_WARNING("Generated alert id=%lld agent_id=%s indicator=%s old=%s new=%s", static_cast<long long>(alert_id),
-                     agent_id.c_str(), indicator.c_str(), alert.old_status.c_str(), alert.new_status.c_str());
-        send_webhook(store_, alert, alert_id);
+        if (store_.is_silenced(agent_id, indicator, timestamp_ms))
+        {
+            LOGF_DEBUG("Alert suppressed by silence rule agent_id=%s indicator=%s", agent_id.c_str(),
+                       indicator.c_str());
+        }
+        else
+        {
+            AlertRecord alert;
+            alert.agent_id = agent_id;
+            alert.indicator = indicator;
+            alert.old_status = status_to_string(previous);
+            alert.new_status = status_to_string(next);
+            alert.message = final_message;
+            alert.created_at = timestamp_ms;
+            const auto alert_id = store_.insert_alert(alert);
+            LOGF_WARNING("Generated alert id=%lld agent_id=%s indicator=%s old=%s new=%s",
+                         static_cast<long long>(alert_id), agent_id.c_str(), indicator.c_str(),
+                         alert.old_status.c_str(), alert.new_status.c_str());
+            send_webhook(store_, alert, alert_id);
+        }
     }
 }
 

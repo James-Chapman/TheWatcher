@@ -456,3 +456,95 @@ SCENARIO("exit_maintenance clears the maintenance flag on the agent")
         }
     }
 }
+
+SCENARIO("A silence rule suppresses alert generation on status degradation")
+{
+    GIVEN("an approved agent and an active global silence rule")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-silenced");
+
+        const int64_t now = 10'000;
+        SilenceRecord silence;
+        silence.agent_id   = "*";
+        silence.indicator  = "*";
+        silence.reason     = "maintenance window";
+        silence.until_ms   = now + 3'600'000;
+        silence.created_by = "admin";
+        silence.created_at = now;
+        store.create_silence(silence);
+
+        StatusEngine engine(store);
+
+        WHEN("metrics that would normally trigger a CPU alert are evaluated")
+        {
+            auto metrics = metrics_with_cpu(95.0); // above default critical threshold
+            engine.evaluate_metrics("agent-silenced", metrics, now);
+
+            THEN("no alert is generated")
+            {
+                auto alerts = store.list_unacknowledged_alerts();
+                REQUIRE(alerts.empty());
+            }
+
+            AND_THEN("the status transition is still recorded in history")
+            {
+                auto history = store.list_status_history("agent-silenced", 10);
+                REQUIRE_FALSE(history.empty());
+            }
+        }
+    }
+}
+
+SCENARIO("Metrics pruning is triggered by evaluate_metrics after one hour")
+{
+    GIVEN("an approved agent with old metrics in the store")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-prune");
+
+        // Use timestamps far enough apart that the 30-day cutoff at eval_time
+        // falls between old_row and recent_row.
+        // eval_time = ~30.0042 days; cutoff = eval_time - 30 days ≈ 364 seconds.
+        const int64_t eval_time   = 2'600'000'000LL + 3'600'001LL; // ~30 days + ~1 hour in ms
+        const int64_t recent_ts   = 2'600'000'000LL;               // within retention window
+        const int64_t old_ts      = 1'000LL;                       // well before cutoff
+
+        MetricsRow old_row;
+        old_row.agent_id     = "agent-prune";
+        old_row.timestamp_ms = old_ts;
+        old_row.metrics_cbor = {0x01};
+        store.insert_metrics(old_row);
+
+        MetricsRow recent_row;
+        recent_row.agent_id     = "agent-prune";
+        recent_row.timestamp_ms = recent_ts;
+        recent_row.metrics_cbor = {0x02};
+        store.insert_metrics(recent_row);
+
+        StatusEngine engine(store);
+
+        WHEN("evaluate_metrics is called one hour after last prune with default 30-day retention")
+        {
+            auto metrics = metrics_with_cpu(10.0);
+            engine.evaluate_metrics("agent-prune", metrics, eval_time);
+
+            THEN("the old metrics row is pruned")
+            {
+                auto rows = store.get_metrics("agent-prune", 100);
+                for (const auto& r : rows)
+                    REQUIRE(r.timestamp_ms != old_ts);
+            }
+
+            AND_THEN("the recent metrics row is retained")
+            {
+                auto rows = store.get_metrics("agent-prune", 100);
+                bool found = false;
+                for (const auto& r : rows)
+                    if (r.timestamp_ms == recent_ts)
+                        found = true;
+                REQUIRE(found);
+            }
+        }
+    }
+}

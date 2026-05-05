@@ -80,6 +80,11 @@ public:
     std::vector<MaintenanceWindowRecord> active_maintenance_windows(int64_t now_ms) override;
     std::string get_setting(const std::string& key, const std::string& fallback) override;
     void set_setting(const std::string& key, const std::string& value) override;
+    int64_t create_silence(const SilenceRecord& rec) override;
+    std::vector<SilenceRecord> list_silences() override;
+    void delete_silence(int64_t silence_id) override;
+    bool is_silenced(const std::string& agent_id, const std::string& indicator, int64_t now_ms) override;
+    void prune_metrics_before(int64_t cutoff_ms) override;
 
 private:
     void exec(const char* sql);

@@ -11,13 +11,16 @@ import {
   changeUserPassword,
   createGroup,
   createMaintenanceWindow,
+  createSilence,
   createUser,
   deleteAgent,
   deleteAlert,
   deleteMaintenanceWindow,
+  deleteSilence,
   deleteUser,
   disableUser,
   enableUser,
+  fetchAgentHistory,
   fetchAlerts,
   fetchMetricHistory,
   fetchSession,
@@ -50,6 +53,8 @@ import type {
   ProcessWatchConfig,
   ServerSettings,
   SessionInfo,
+  SilenceRecord,
+  StatusHistoryRow,
   UserRecord,
 } from './models';
 import {
@@ -66,7 +71,7 @@ import './styles.css';
 
 const COMPONENT_LABELS = ['CPU', 'Memory', 'Disk', 'Network', 'Temp', 'Proc', 'Heartbeat'];
 
-type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users' | 'maintenance' | 'settings';
+type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users' | 'maintenance' | 'silences' | 'settings';
 
 function colorLabel(color: HealthColor): string {
   return {
@@ -89,6 +94,7 @@ function Dashboard() {
   const [allAlerts, setAllAlerts] = React.useState<AlertRecord[]>([]);
   const [users, setUsers] = React.useState<UserRecord[]>([]);
   const [maintenanceWindows, setMaintenanceWindows] = React.useState<MaintenanceWindowRecord[]>([]);
+  const [silences, setSilences] = React.useState<SilenceRecord[]>([]);
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   const [loadedAt, setLoadedAt] = React.useState<Date | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -110,6 +116,7 @@ function Dashboard() {
       setAllAlerts(data.allAlerts);
       setUsers(data.users);
       setMaintenanceWindows(data.maintenanceWindows);
+      setSilences(data.silences);
       setLoadedAt(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
@@ -170,6 +177,7 @@ function Dashboard() {
           {admin ? <Tab view={view} target="pending" setView={setView} label="Pending" /> : null}
           <Tab view={view} target="alerts" setView={setView} label="Alerts" />
           {operator ? <Tab view={view} target="maintenance" setView={setView} label="Maintenance" /> : null}
+          {operator ? <Tab view={view} target="silences" setView={setView} label="Silences" /> : null}
           {admin ? <Tab view={view} target="users" setView={setView} label="Users" /> : null}
           {admin ? <Tab view={view} target="settings" setView={setView} label="Settings" /> : null}
         </nav>
@@ -258,6 +266,9 @@ function Dashboard() {
       {view === 'maintenance' ? (
         <MaintenanceWindowsPage agents={agents} busyAction={busyAction} groups={groups} operator={operator} runAction={runAction} windows={maintenanceWindows} />
       ) : null}
+      {view === 'silences' ? (
+        <SilencesPage agents={agents} busyAction={busyAction} operator={operator} runAction={runAction} silences={silences} />
+      ) : null}
       {view === 'users' ? <UsersPage busyAction={busyAction} groups={groups} runAction={runAction} session={session} users={users} /> : null}
       {view === 'settings' ? <SettingsPage runAction={runAction} /> : null}
     </>
@@ -339,6 +350,7 @@ function MonitoringTable({
 }) {
   const [agentHistory, setAgentHistory] = React.useState<Record<string, MetricsSnapshot[]>>({});
   const [agentUptime, setAgentUptime] = React.useState<Record<string, number>>({});
+  const [agentStatusHistory, setAgentStatusHistory] = React.useState<Record<string, StatusHistoryRow[]>>({});
 
   React.useEffect(() => {
     for (const id of expanded) {
@@ -348,6 +360,9 @@ function MonitoringTable({
         }).catch(() => undefined);
         void fetchUptimeReport(id, 7).then((report) => {
           setAgentUptime((prev) => ({ ...prev, [id]: report.uptime_percent }));
+        }).catch(() => undefined);
+        void fetchAgentHistory(id, 20).then((rows) => {
+          setAgentStatusHistory((prev) => ({ ...prev, [id]: rows }));
         }).catch(() => undefined);
       }
     }
@@ -465,6 +480,25 @@ function MonitoringTable({
                             </div>
                             <div className="detail-card-sub">Last 7 days</div>
                           </div>
+                          {(agentStatusHistory[agent.id]?.length ?? 0) > 0 ? (
+                            <div className="detail-card detail-card-wide">
+                              <div className="detail-card-header"><span>Status History</span></div>
+                              <table className="history-table">
+                                <tbody>
+                                  {agentStatusHistory[agent.id].slice(0, 10).map((row) => (
+                                    <tr key={row.id}>
+                                      <td className="history-ts">{new Date(row.created_at).toLocaleString()}</td>
+                                      <td>{row.indicator}</td>
+                                      <td><span className={`dot ${row.old_status} small-dot`} /></td>
+                                      <td>→</td>
+                                      <td><span className={`dot ${row.new_status} small-dot`} /></td>
+                                      <td className="history-msg">{row.message}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -1209,6 +1243,121 @@ function MaintenanceWindowsPage({
   );
 }
 
+function SilencesPage({
+  agents,
+  busyAction,
+  operator,
+  runAction,
+  silences,
+}: {
+  agents: DashboardAgent[];
+  busyAction: string | null;
+  operator: boolean;
+  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  silences: SilenceRecord[];
+}) {
+  const [agentId, setAgentId] = React.useState('*');
+  const [indicator, setIndicator] = React.useState('*');
+  const [reason, setReason] = React.useState('');
+  const [hours, setHours] = React.useState(1);
+
+  return (
+    <main className="table-wrap management-wrap">
+      <div className="management-header"><h1>Silence Rules</h1></div>
+      {operator ? (
+        <form
+          className="settings-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const untilMs = Date.now() + hours * 3_600_000;
+            void runAction('silence:create', () => createSilence(agentId, indicator, reason, untilMs)).then(() => {
+              setReason('');
+            });
+          }}
+        >
+          <div className="form-grid">
+            <label>
+              Agent
+              <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
+                <option value="*">All agents</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name || a.id}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Indicator
+              <select value={indicator} onChange={(e) => setIndicator(e.target.value)}>
+                <option value="*">All indicators</option>
+                <option value="cpu">cpu</option>
+                <option value="memory">memory</option>
+                <option value="temperature">temperature</option>
+                <option value="heartbeat">heartbeat</option>
+              </select>
+            </label>
+            <label>
+              Duration (hours)
+              <input min={1} max={168} step={1} type="number" value={hours} onChange={(e) => setHours(Number(e.target.value))} />
+            </label>
+            <label>
+              Reason
+              <input placeholder="Planned maintenance…" value={reason} onChange={(e) => setReason(e.target.value)} />
+            </label>
+          </div>
+          <div className="button-row">
+            <button className="text-button" disabled={busyAction !== null} type="submit">
+              <Plus size={14} /> Add Silence Rule
+            </button>
+          </div>
+        </form>
+      ) : null}
+      <div className="table-container">
+        <table className="management-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Indicator</th>
+              <th>Reason</th>
+              <th>Expires</th>
+              <th>Created by</th>
+              {operator ? <th>Delete</th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {silences.length === 0 ? (
+              <tr><td colSpan={operator ? 6 : 5} className="uptime">No active silence rules.</td></tr>
+            ) : null}
+            {silences.map((s) => {
+              const agent = agents.find((a) => a.id === s.agent_id);
+              const expired = s.until_ms <= Date.now();
+              return (
+                <tr key={s.silence_id} className={expired ? 'row-muted' : ''}>
+                  <td>{s.agent_id === '*' ? 'All agents' : (agent?.name || s.agent_id)}</td>
+                  <td>{s.indicator === '*' ? 'All indicators' : s.indicator}</td>
+                  <td>{s.reason}</td>
+                  <td>{new Date(s.until_ms).toLocaleString()}{expired ? ' (expired)' : ''}</td>
+                  <td>{s.created_by}</td>
+                  {operator ? (
+                    <td>
+                      <ActionButton
+                        busy={busyAction === `silence:delete:${s.silence_id}`}
+                        danger
+                        icon={<Trash2 size={14} />}
+                        label="Delete"
+                        onClick={() => runAction(`silence:delete:${s.silence_id}`, () => deleteSilence(s.silence_id))}
+                      />
+                    </td>
+                  ) : null}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </main>
+  );
+}
+
 function UsersPage({
   busyAction,
   groups,
@@ -1373,7 +1522,7 @@ function SettingsPage({
 }: {
   runAction: (key: string, action: () => Promise<void>) => Promise<void>;
 }) {
-  const [draft, setDraft] = React.useState<ServerSettings>({ webhook_url: '', offline_after_seconds: 120, escalation_timeout_seconds: 300 });
+  const [draft, setDraft] = React.useState<ServerSettings>({ webhook_url: '', offline_after_seconds: 120, escalation_timeout_seconds: 300, metrics_retention_days: 30 });
   const [loaded, setLoaded] = React.useState(false);
 
   React.useEffect(() => {
@@ -1423,6 +1572,17 @@ function SettingsPage({
                 type="number"
                 value={draft.escalation_timeout_seconds}
                 onChange={(e) => setDraft((d) => ({ ...d, escalation_timeout_seconds: Number(e.target.value) }))}
+              />
+            </label>
+            <label>
+              Metrics retention (days)
+              <input
+                min={1}
+                max={365}
+                step={1}
+                type="number"
+                value={draft.metrics_retention_days}
+                onChange={(e) => setDraft((d) => ({ ...d, metrics_retention_days: Number(e.target.value) }))}
               />
             </label>
           </div>

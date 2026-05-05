@@ -8,6 +8,8 @@ import type {
   MetricsSnapshot,
   ServerSettings,
   SessionInfo,
+  SilenceRecord,
+  StatusHistoryRow,
   UptimeReport,
   UserRecord,
 } from './models';
@@ -91,18 +93,21 @@ export async function loadDashboardData(): Promise<{
   allAlerts: AlertRecord[];
   users: UserRecord[];
   maintenanceWindows: MaintenanceWindowRecord[];
+  silences: SilenceRecord[];
 }> {
-  const [agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows] = await Promise.all([
-    fetchAgents(),
-    fetchPendingEnrollments().catch(() => []),
-    fetchLatestMetrics(),
-    fetchGroups().catch(() => []),
-    fetchUnacknowledgedAlerts().catch(() => []),
-    fetchAlerts().catch(() => []),
-    fetchUsers().catch(() => []),
-    fetchMaintenanceWindows().catch(() => []),
-  ]);
-  return { agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows };
+  const [agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows, silences] =
+    await Promise.all([
+      fetchAgents(),
+      fetchPendingEnrollments().catch(() => []),
+      fetchLatestMetrics(),
+      fetchGroups().catch(() => []),
+      fetchUnacknowledgedAlerts().catch(() => []),
+      fetchAlerts().catch(() => []),
+      fetchUsers().catch(() => []),
+      fetchMaintenanceWindows().catch(() => []),
+      fetchSilences().catch(() => []),
+    ]);
+  return { agents, pending, metrics, groups, alerts, allAlerts, users, maintenanceWindows, silences };
 }
 
 export async function approveAgent(agentId: string, groupIds: number[] = []): Promise<void> {
@@ -246,4 +251,32 @@ export async function changeUserPassword(userId: number, password: string): Prom
     headers: { 'Content-Type': 'application/json' },
     method: 'PUT',
   });
+}
+
+export async function fetchSilences(): Promise<SilenceRecord[]> {
+  return fetchJson<SilenceRecord[]>('/api/silences');
+}
+
+export async function createSilence(
+  agentId: string,
+  indicator: string,
+  reason: string,
+  untilMs: number,
+): Promise<void> {
+  await jsonPost<{ silence_id: number }>('/api/silences', {
+    agent_id: agentId,
+    indicator,
+    reason,
+    until_ms: untilMs,
+  });
+}
+
+export async function deleteSilence(silenceId: number): Promise<void> {
+  await mutateJson<{ ok: boolean }>(`/api/silences/${silenceId}`, { method: 'DELETE' });
+}
+
+export async function fetchAgentHistory(agentId: string, limit = 100): Promise<StatusHistoryRow[]> {
+  return fetchJson<StatusHistoryRow[]>(
+    `/api/agents/${encodeURIComponent(agentId)}/history?limit=${limit}`,
+  );
 }

@@ -247,6 +247,32 @@ namespace
         };
     }
 
+    json silence_to_json(const SilenceRecord& s)
+    {
+        return {
+            {"silence_id", s.silence_id},
+            {"agent_id",   s.agent_id  },
+            {"indicator",  s.indicator },
+            {"reason",     s.reason    },
+            {"until_ms",   s.until_ms  },
+            {"created_by", s.created_by},
+            {"created_at", s.created_at}
+        };
+    }
+
+    json status_history_to_json(const StatusHistoryRow& h)
+    {
+        return {
+            {"id",         h.id        },
+            {"agent_id",   h.agent_id  },
+            {"indicator",  h.indicator },
+            {"old_status", h.old_status},
+            {"new_status", h.new_status},
+            {"message",    h.message   },
+            {"created_at", h.created_at}
+        };
+    }
+
     std::string cookie_value(const httplib::Request& req, const std::string& name)
     {
         auto cookie = req.get_header_value("Cookie");
@@ -1404,6 +1430,7 @@ void ApiServer::setup_routes()
         out["webhook_url"] = store_.get_setting("notifications.webhook_url", "");
         out["offline_after_seconds"] = std::stoi(store_.get_setting("offline_after_seconds", "120"));
         out["escalation_timeout_seconds"] = std::stoi(store_.get_setting("escalation_timeout_seconds", "3600"));
+        out["metrics_retention_days"] = std::stoi(store_.get_setting("metrics_retention_days", "30"));
         set_json(res, out);
     });
 
@@ -1429,6 +1456,13 @@ void ApiServer::setup_routes()
                 if (v < 60 || v > 604800)
                     throw std::runtime_error("escalation_timeout_seconds must be between 60 and 604800");
                 store_.set_setting("escalation_timeout_seconds", std::to_string(v));
+            }
+            if (body.contains("metrics_retention_days"))
+            {
+                const auto v = body.at("metrics_retention_days").get<int>();
+                if (v < 1 || v > 365)
+                    throw std::runtime_error("metrics_retention_days must be between 1 and 365");
+                store_.set_setting("metrics_retention_days", std::to_string(v));
             }
             set_json(res, json{{"ok", true}});
         }
@@ -1524,6 +1558,87 @@ void ApiServer::setup_routes()
             LOGF_INFO("Changed password for user_id=%lld by=%s", static_cast<long long>(user_id),
                       session->username.c_str());
             set_json(res, json{{"ok", true}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // GET /api/silences — list active and future silence rules (operator+)
+    http_->Get("/api/silences", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "operator"))
+            return;
+        auto silences = store_.list_silences();
+        json arr = json::array();
+        for (const auto& s : silences)
+            arr.push_back(silence_to_json(s));
+        set_json(res, arr);
+    });
+
+    // POST /api/silences — create a silence rule (operator+)
+    http_->Post("/api/silences", [this](const httplib::Request& req, httplib::Response& res) {
+        auto session = require_role(req, res, "operator");
+        if (!session)
+            return;
+        try
+        {
+            const auto body = json::parse(req.body);
+            SilenceRecord rec;
+            rec.agent_id   = body.value("agent_id",  std::string("*"));
+            rec.indicator  = body.value("indicator", std::string("*"));
+            rec.reason     = body.value("reason",    std::string(""));
+            rec.until_ms   = body.at("until_ms").get<int64_t>();
+            rec.created_by = session->username;
+            rec.created_at = now_ms();
+            if (rec.until_ms <= rec.created_at)
+                throw std::runtime_error("until_ms must be in the future");
+            const auto silence_id = store_.create_silence(rec);
+            LOGF_INFO("Created silence silence_id=%lld agent_id=%s indicator=%s by=%s",
+                      static_cast<long long>(silence_id), rec.agent_id.c_str(),
+                      rec.indicator.c_str(), session->username.c_str());
+            set_json(res, json{{"silence_id", silence_id}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // DELETE /api/silences/:id — remove a silence rule (operator+)
+    http_->Delete("/api/silences/:id", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "operator"))
+            return;
+        try
+        {
+            const auto silence_id = std::stoll(req.path_params.at("id"));
+            store_.delete_silence(silence_id);
+            set_json(res, json{{"ok", true}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // GET /api/agents/:id/history?limit=N — status history for one agent (viewer+)
+    http_->Get("/api/agents/:id/history", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "viewer"))
+            return;
+        try
+        {
+            const auto id = req.path_params.at("id");
+            int limit = 100;
+            if (req.has_param("limit"))
+                limit = std::min(200, std::max(1, std::stoi(req.get_param_value("limit"))));
+            auto rows = store_.list_status_history(id, limit);
+            json arr = json::array();
+            for (const auto& h : rows)
+                arr.push_back(status_history_to_json(h));
+            set_json(res, arr);
         }
         catch (const std::exception& e)
         {

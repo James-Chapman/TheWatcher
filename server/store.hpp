@@ -116,6 +116,17 @@ struct MaintenanceWindowRecord
     int64_t created_at = 0;
 };
 
+struct SilenceRecord
+{
+    int64_t silence_id = 0;
+    std::string agent_id;   // '*' for all agents
+    std::string indicator;  // '*' for all indicators
+    std::string reason;
+    int64_t until_ms = 0;
+    std::string created_by;
+    int64_t created_at = 0;
+};
+
 struct PendingStatusRecord
 {
     std::string agent_id;
@@ -195,6 +206,11 @@ public:
     virtual std::vector<MaintenanceWindowRecord> active_maintenance_windows(int64_t now_ms) = 0;
     virtual std::string get_setting(const std::string& key, const std::string& fallback = "") = 0;
     virtual void set_setting(const std::string& key, const std::string& value) = 0;
+    virtual int64_t create_silence(const SilenceRecord& rec) = 0;
+    virtual std::vector<SilenceRecord> list_silences() = 0;
+    virtual void delete_silence(int64_t silence_id) = 0;
+    virtual bool is_silenced(const std::string& agent_id, const std::string& indicator, int64_t now_ms) = 0;
+    virtual void prune_metrics_before(int64_t cutoff_ms) = 0;
 };
 
 std::unique_ptr<Store> make_store(const std::string& db_type, const std::string& db_path_or_dsn);
