@@ -934,6 +934,25 @@ std::vector<MetricsRow> SqliteStore::get_metrics(const std::string& agent_id, in
     return out;
 }
 
+std::vector<MetricsRow> SqliteStore::get_metrics_in_window(const std::string& agent_id, int64_t since_ms,
+                                                              int64_t until_ms)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT agent_id,timestamp_ms,metrics_cbor FROM metrics "
+                             "WHERE agent_id=? AND timestamp_ms>=? AND timestamp_ms<=? "
+                             "ORDER BY timestamp_ms ASC LIMIT 2880;",
+                             -1, &st.s, nullptr),
+          db_, "prepare get_metrics_in_window");
+    sqlite3_bind_text(st.s, 1, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 2, since_ms);
+    sqlite3_bind_int64(st.s, 3, until_ms);
+    std::vector<MetricsRow> out;
+    while (sqlite3_step(st.s) == SQLITE_ROW)
+        out.push_back(row_to_metrics(st.s));
+    return out;
+}
+
 std::vector<MetricsRow> SqliteStore::latest_metrics()
 {
     const char* sql = R"(

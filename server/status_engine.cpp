@@ -1,6 +1,8 @@
 #include "status_engine.hpp"
 
 #include "common/SingleLog.hpp"
+#include "common/metrics.hpp"
+#include "common/protocol.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -266,7 +268,9 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         const auto raw = classify_percent(metrics.cpu.usage_percent, config.cpu);
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
-        const auto next = confirm_numeric_status(agent_id, indicator, previous, raw, config.cpu_readings);
+        const auto confirmed = confirm_numeric_status(agent_id, indicator, previous, raw, config.cpu_readings);
+        const auto next = maybe_anomaly_status(confirmed, agent_id, indicator, metrics.cpu.usage_percent,
+                                               config.cpu_anomaly, timestamp_ms);
         record_transition(agent_id, indicator, next,
                           transition_message(indicator, previous, next, metrics.cpu.usage_percent, "%"), timestamp_ms);
     }
@@ -276,7 +280,9 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         const auto raw = classify_percent(metrics.memory.usage_percent, config.memory);
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
-        const auto next = confirm_numeric_status(agent_id, indicator, previous, raw, config.memory_readings);
+        const auto confirmed = confirm_numeric_status(agent_id, indicator, previous, raw, config.memory_readings);
+        const auto next = maybe_anomaly_status(confirmed, agent_id, indicator, metrics.memory.usage_percent,
+                                               config.memory_anomaly, timestamp_ms);
         record_transition(agent_id, indicator, next,
                           transition_message(indicator, previous, next, metrics.memory.usage_percent, "%"),
                           timestamp_ms);
@@ -291,11 +297,15 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
             continue;
 
         const auto thresholds = disk_config ? disk_config->thresholds : PercentThresholds{};
+        const AnomalyConfig no_anomaly{};
+        const auto& anomaly_cfg = disk_config ? disk_config->anomaly : no_anomaly;
         const auto indicator = "disk:" + disk.mount_point;
         const auto raw = classify_percent(disk.usage_percent, thresholds);
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
-        const auto next = confirm_numeric_status(agent_id, indicator, previous, raw, config.disk_readings);
+        const auto confirmed = confirm_numeric_status(agent_id, indicator, previous, raw, config.disk_readings);
+        const auto next = maybe_anomaly_status(confirmed, agent_id, indicator, disk.usage_percent, anomaly_cfg,
+                                               timestamp_ms);
         record_transition(agent_id, indicator, next,
                           transition_message("disk " + disk_label(disk), previous, next, disk.usage_percent, "%"),
                           timestamp_ms);
@@ -312,6 +322,8 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
             continue;
 
         const auto thresholds = network_config ? network_config->thresholds : NetworkThresholds{};
+        const AnomalyConfig no_anomaly{};
+        const auto& anomaly_cfg = network_config ? network_config->anomaly : no_anomaly;
         const auto value = network_mbps(network);
         auto raw = classify_network_mbps(value, thresholds);
         if (!network.is_up)
@@ -320,7 +332,10 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         const auto indicator = "network:" + network.interface_name;
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
-        const auto next = confirm_numeric_status(agent_id, indicator, previous, raw, config.network_readings);
+        const auto confirmed = confirm_numeric_status(agent_id, indicator, previous, raw, config.network_readings);
+        const auto next = network.is_up
+                              ? maybe_anomaly_status(confirmed, agent_id, indicator, value, anomaly_cfg, timestamp_ms)
+                              : confirmed;
         record_transition(agent_id, indicator, next,
                           transition_message("network " + network.interface_name, previous, next, value, "Mbps"),
                           timestamp_ms);
@@ -339,8 +354,6 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         }
 
         const auto indicator = "process:" + watch.name;
-        const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
-        const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
         IndicatorStatus next = IndicatorStatus::Green;
         if (seen < watch.expected_count)
         {
@@ -445,6 +458,103 @@ IndicatorStatus StatusEngine::process_status_for_count(int missing_count, int re
     if (missing_count >= std::max(2, ((red_after * 2) + 2) / 3))
         return IndicatorStatus::Amber;
     return IndicatorStatus::Yellow;
+}
+
+double StatusEngine::compute_metric_mean(const std::string& agent_id, const std::string& indicator,
+                                          int baseline_hours, int64_t now_ms)
+{
+    const int64_t since_ms = now_ms - static_cast<int64_t>(baseline_hours) * 3'600'000LL;
+    const auto rows = store_.get_metrics_in_window(agent_id, since_ms, now_ms);
+
+    if (rows.size() < 10)
+        return -1.0;
+
+    const bool is_disk = indicator.rfind("disk:", 0) == 0;
+    const bool is_network = indicator.rfind("network:", 0) == 0;
+    const std::string sub = is_disk ? indicator.substr(5) : (is_network ? indicator.substr(8) : "");
+
+    double sum = 0.0;
+    int count = 0;
+    for (const auto& row : rows)
+    {
+        try
+        {
+            const auto m = thewatcher::proto::unpack<thewatcher::SystemMetrics>(row.metrics_cbor);
+            double val = -1.0;
+            if (indicator == "cpu")
+            {
+                val = m.cpu.usage_percent;
+            }
+            else if (indicator == "memory")
+            {
+                val = m.memory.usage_percent;
+            }
+            else if (is_disk)
+            {
+                for (const auto& disk : m.disks)
+                {
+                    if (disk.mount_point == sub)
+                    {
+                        val = disk.usage_percent;
+                        break;
+                    }
+                }
+            }
+            else if (is_network)
+            {
+                for (const auto& net : m.networks)
+                {
+                    if (net.interface_name == sub)
+                    {
+                        val = static_cast<double>(net.bytes_sent_per_sec + net.bytes_recv_per_sec) * 8.0 / 1'000'000.0;
+                        break;
+                    }
+                }
+            }
+            if (val >= 0.0 && std::isfinite(val))
+            {
+                sum += val;
+                ++count;
+            }
+        }
+        catch (...)
+        {
+            // Skip corrupt rows
+        }
+    }
+
+    return count >= 10 ? sum / count : -1.0;
+}
+
+IndicatorStatus StatusEngine::maybe_anomaly_status(IndicatorStatus threshold_status, const std::string& agent_id,
+                                                    const std::string& indicator, double current_value,
+                                                    const AnomalyConfig& anomaly_cfg, int64_t now_ms)
+{
+    if (anomaly_cfg.multiplier <= 0.0 || !std::isfinite(current_value) || current_value < 0.0)
+        return threshold_status;
+
+    constexpr int64_t cache_ttl_ms = 5 * 60 * 1000; // 5 minutes
+    const std::string cache_key = agent_id + ":" + indicator;
+    auto& entry = baseline_cache_[cache_key];
+    if (now_ms - entry.computed_at >= cache_ttl_ms)
+    {
+        entry.mean = compute_metric_mean(agent_id, indicator, anomaly_cfg.baseline_window_hours, now_ms);
+        entry.computed_at = now_ms;
+    }
+
+    if (entry.mean <= 0.0)
+        return threshold_status;
+
+    if (current_value >= entry.mean * anomaly_cfg.multiplier)
+    {
+        LOGF_DEBUG("Anomaly detected agent_id=%s indicator=%s value=%.2f mean=%.2f multiplier=%.2f",
+                   agent_id.c_str(), indicator.c_str(), current_value, entry.mean, anomaly_cfg.multiplier);
+        // Upgrade at least to Yellow; don't downgrade if threshold already says worse
+        if (static_cast<int>(threshold_status) < static_cast<int>(IndicatorStatus::Yellow))
+            return IndicatorStatus::Yellow;
+    }
+
+    return threshold_status;
 }
 
 void StatusEngine::record_transition(const std::string& agent_id, const std::string& indicator, IndicatorStatus next,

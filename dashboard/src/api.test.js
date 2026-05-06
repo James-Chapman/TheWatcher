@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { acknowledgeAlert, archiveAlert, approveAgent, bulkAcknowledgeAlerts, bulkArchiveAlerts, changeUserPassword, createGroup, createMaintenanceWindow, createUser, deleteAgent, deleteMaintenanceWindow, deleteUser, disableUser, enableUser, fetchAgents, fetchAlerts, fetchGroups, fetchLatestMetrics, fetchMaintenanceWindows, fetchMetricHistory, fetchPendingEnrollments, fetchSession, fetchSettings, fetchUnacknowledgedAlerts, fetchUptimeReport, fetchUsers, loadDashboardData, login, logout, pauseAgent, rejectAgent, requestAgentStatus, restartAgentCollectors, resumeAgent, setAgentDescription, setAgentGroups, setAgentCollectorConfig, setAgentInterval, setAgentProcessLimit, setAgentThresholds, setMaintenance, updateSettings, } from './api';
+import { acknowledgeAlert, archiveAlert, approveAgent, bulkAcknowledgeAlerts, bulkArchiveAlerts, changeUserPassword, createGroup, createMaintenanceWindow, createSilence, createUser, deleteAgent, deleteMaintenanceWindow, deleteSilence, deleteUser, disableUser, enableUser, fetchAgentHistory, fetchAgents, fetchAlerts, fetchGroups, fetchLatestMetrics, fetchMaintenanceWindows, fetchMetricHistory, fetchPendingEnrollments, fetchSession, fetchSettings, fetchSilences, fetchUnacknowledgedAlerts, fetchUptimeReport, fetchUsers, loadDashboardData, login, logout, pauseAgent, rejectAgent, requestAgentStatus, restartAgentCollectors, resumeAgent, setAgentDescription, setAgentGroups, setAgentCollectorConfig, setAgentInterval, setAgentProcessLimit, setAgentThresholds, setMaintenance, updateSettings, } from './api';
 describe('GIVEN agent management API actions', () => {
     afterEach(() => {
         vi.unstubAllGlobals();
@@ -373,6 +373,8 @@ describe('GIVEN loadDashboardData', () => {
                 return Promise.resolve({ ok: true, json: async () => [] });
             if (url === '/api/maintenance-windows')
                 return Promise.resolve({ ok: true, json: async () => [] });
+            if (url === '/api/silences')
+                return Promise.resolve({ ok: true, json: async () => [{ silence_id: 7 }] });
             return Promise.resolve({ ok: true, json: async () => [] });
         });
         vi.stubGlobal('fetch', fetchMock);
@@ -382,6 +384,7 @@ describe('GIVEN loadDashboardData', () => {
         expect(data.groups).toEqual([{ group_id: 1, name: 'All' }]);
         expect(Array.isArray(data.alerts)).toBe(true);
         expect(Array.isArray(data.maintenanceWindows)).toBe(true);
+        expect(data.silences).toEqual([{ silence_id: 7 }]);
     });
     it('WHEN optional endpoints fail THEN loadDashboardData still resolves with empty arrays for those fields', async () => {
         const fetchMock = vi.fn().mockImplementation((url) => {
@@ -399,5 +402,62 @@ describe('GIVEN loadDashboardData', () => {
         expect(data.alerts).toEqual([]);
         expect(data.users).toEqual([]);
         expect(data.maintenanceWindows).toEqual([]);
+        expect(data.silences).toEqual([]);
+    });
+});
+describe('GIVEN silence rule API functions', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+    it('WHEN fetchSilences is called THEN it GETs /api/silences and returns the array', async () => {
+        const silenceList = [{ silence_id: 1, agent_id: '*', indicator: '*', reason: 'planned', until_ms: 9999999, created_by: 'admin', created_at: 1000 }];
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => silenceList });
+        vi.stubGlobal('fetch', fetchMock);
+        const result = await fetchSilences();
+        expect(fetchMock).toHaveBeenCalledWith('/api/silences', expect.objectContaining({ credentials: 'include' }));
+        expect(result).toEqual(silenceList);
+    });
+    it('WHEN createSilence is called THEN it POSTs the correct payload to /api/silences', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ silence_id: 5 }) });
+        vi.stubGlobal('fetch', fetchMock);
+        await createSilence('agent-x', 'cpu', 'test silence', 9_000_000);
+        const call = fetchMock.mock.calls[0];
+        expect(call[0]).toBe('/api/silences');
+        const body = JSON.parse(call[1].body);
+        expect(body.agent_id).toBe('agent-x');
+        expect(body.indicator).toBe('cpu');
+        expect(body.reason).toBe('test silence');
+        expect(body.until_ms).toBe(9_000_000);
+    });
+    it('WHEN deleteSilence is called THEN it sends DELETE to /api/silences/:id', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+        vi.stubGlobal('fetch', fetchMock);
+        await deleteSilence(42);
+        expect(fetchMock).toHaveBeenCalledWith('/api/silences/42', expect.objectContaining({ method: 'DELETE' }));
+    });
+});
+describe('GIVEN fetchAgentHistory', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+    it('WHEN called THEN it GETs /api/agents/:id/history with default limit', async () => {
+        const historyRows = [{ id: 1, agent_id: 'a1', indicator: 'cpu', old_status: 'green', new_status: 'amber', message: 'cpu degraded', created_at: 5000 }];
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => historyRows });
+        vi.stubGlobal('fetch', fetchMock);
+        const result = await fetchAgentHistory('my-agent');
+        expect(fetchMock).toHaveBeenCalledWith('/api/agents/my-agent/history?limit=100', expect.anything());
+        expect(result).toEqual(historyRows);
+    });
+    it('WHEN called with a custom limit THEN the limit is included in the query string', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+        vi.stubGlobal('fetch', fetchMock);
+        await fetchAgentHistory('my-agent', 50);
+        expect(fetchMock).toHaveBeenCalledWith('/api/agents/my-agent/history?limit=50', expect.anything());
+    });
+    it('WHEN the agent id contains special characters THEN it is URL-encoded', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+        vi.stubGlobal('fetch', fetchMock);
+        await fetchAgentHistory('agent/with spaces', 10);
+        expect(fetchMock).toHaveBeenCalledWith('/api/agents/agent%2Fwith%20spaces/history?limit=10', expect.anything());
     });
 });
