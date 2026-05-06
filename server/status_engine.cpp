@@ -91,6 +91,39 @@ namespace
         std::string path = "/";
     };
 
+    // H-4: Reject webhook URLs whose host resolves to a private/loopback range.
+    // This is a best-effort string check covering direct IP addresses; hostnames
+    // that resolve to private IPs are not caught here.
+    bool is_private_host(const std::string& host)
+    {
+        if (host == "localhost")
+            return true;
+        // IPv6 loopback
+        if (host == "::1" || host == "[::1]")
+            return true;
+        // Dotted-decimal prefix checks
+        auto starts = [&](const char* prefix) {
+            return host.rfind(prefix, 0) == 0;
+        };
+        if (starts("127."))  return true;  // 127.0.0.0/8  loopback
+        if (starts("10."))   return true;  // 10.0.0.0/8   RFC-1918
+        if (starts("192.168.")) return true; // 192.168.0.0/16 RFC-1918
+        if (starts("169.254.")) return true; // 169.254.0.0/16 link-local
+        if (starts("0."))    return true;  // 0.0.0.0/8
+        // 172.16.0.0/12 — covers 172.16.x.x through 172.31.x.x
+        if (starts("172."))
+        {
+            const auto dot2 = host.find('.', 4);
+            if (dot2 != std::string::npos)
+            {
+                const int octet = std::stoi(host.substr(4, dot2 - 4));
+                if (octet >= 16 && octet <= 31)
+                    return true;
+            }
+        }
+        return false;
+    }
+
     std::optional<WebhookTarget> parse_http_webhook(const std::string& url)
     {
         constexpr std::string_view prefix = "http://";
@@ -114,6 +147,11 @@ namespace
         }
         if (target.host.empty())
             return std::nullopt;
+        if (is_private_host(target.host))
+        {
+            LOGF_WARNING("Webhook URL rejected: host is a private/loopback address: %s", target.host.c_str());
+            return std::nullopt;
+        }
         return target;
     }
 
@@ -203,6 +241,17 @@ StatusEngine::StatusEngine(Store& store) : store_(store)
 
 void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMetrics& metrics, int64_t timestamp_ms)
 {
+    constexpr int64_t prune_interval_ms = 3'600'000; // prune once per hour
+    if (timestamp_ms - last_prune_ms_ >= prune_interval_ms)
+    {
+        last_prune_ms_ = timestamp_ms;
+        const auto retention_days_str = store_.get_setting("metrics_retention_days", "30");
+        const int retention_days = std::max(1, std::stoi(retention_days_str));
+        const int64_t cutoff_ms = timestamp_ms - static_cast<int64_t>(retention_days) * 86'400'000LL;
+        store_.prune_metrics_before(cutoff_ms);
+        LOGF_DEBUG("Pruned metrics older than %d days", retention_days);
+    }
+
     auto agent = store_.get_agent(agent_id);
     if (agent && agent->maintenance)
     {
@@ -412,17 +461,26 @@ void StatusEngine::record_transition(const std::string& agent_id, const std::str
 
     if (previous_row && is_worse_status(previous, next))
     {
-        AlertRecord alert;
-        alert.agent_id = agent_id;
-        alert.indicator = indicator;
-        alert.old_status = status_to_string(previous);
-        alert.new_status = status_to_string(next);
-        alert.message = final_message;
-        alert.created_at = timestamp_ms;
-        const auto alert_id = store_.insert_alert(alert);
-        LOGF_WARNING("Generated alert id=%lld agent_id=%s indicator=%s old=%s new=%s", static_cast<long long>(alert_id),
-                     agent_id.c_str(), indicator.c_str(), alert.old_status.c_str(), alert.new_status.c_str());
-        send_webhook(store_, alert, alert_id);
+        if (store_.is_silenced(agent_id, indicator, timestamp_ms))
+        {
+            LOGF_DEBUG("Alert suppressed by silence rule agent_id=%s indicator=%s", agent_id.c_str(),
+                       indicator.c_str());
+        }
+        else
+        {
+            AlertRecord alert;
+            alert.agent_id = agent_id;
+            alert.indicator = indicator;
+            alert.old_status = status_to_string(previous);
+            alert.new_status = status_to_string(next);
+            alert.message = final_message;
+            alert.created_at = timestamp_ms;
+            const auto alert_id = store_.insert_alert(alert);
+            LOGF_WARNING("Generated alert id=%lld agent_id=%s indicator=%s old=%s new=%s",
+                         static_cast<long long>(alert_id), agent_id.c_str(), indicator.c_str(),
+                         alert.old_status.c_str(), alert.new_status.c_str());
+            send_webhook(store_, alert, alert_id);
+        }
     }
 }
 

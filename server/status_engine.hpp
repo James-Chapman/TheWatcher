@@ -42,6 +42,7 @@ private:
                            const std::string& message, int64_t timestamp_ms);
 
     Store& store_;
+    int64_t last_prune_ms_ = 0;
 };
 
 } // namespace thewatcher::server

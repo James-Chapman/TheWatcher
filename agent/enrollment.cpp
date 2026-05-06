@@ -35,9 +35,11 @@ std::string get_hostname()
     char buf[256] = {};
 #ifdef _WIN32
     DWORD sz = sizeof(buf);
-    ::GetComputerNameA(buf, &sz);
+    if (!::GetComputerNameA(buf, &sz))
+        return "unknown";
 #else
-    ::gethostname(buf, sizeof(buf));
+    if (::gethostname(buf, sizeof(buf)) != 0)
+        return "unknown";
 #endif
     return buf;
 }

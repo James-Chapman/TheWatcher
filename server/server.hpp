@@ -42,7 +42,10 @@ private:
     std::unique_ptr<Store> store_;
     std::unique_ptr<ZapHandler> zap_;
     std::unique_ptr<ApiServer> api_;
-    std::unordered_map<std::string, CommandType> dispatched_commands_;
+    // command_id -> (type, dispatch_time_ms); evicted on ACK or TTL expiry
+    std::unordered_map<std::string, std::pair<CommandType, int64_t>> dispatched_commands_;
+    // agent_id -> last enrollment request time (ms); used for rate limiting
+    std::unordered_map<std::string, int64_t> enrollment_last_request_ms_;
     std::atomic<bool> running_{false};
 };
 

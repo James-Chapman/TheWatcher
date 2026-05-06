@@ -10,6 +10,8 @@
 #include <queue>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <utility>
 
 namespace httplib
 {
@@ -30,6 +32,13 @@ struct PendingCommand
 // REST API server (runs on its own thread via httplib).
 // Commands posted to the API are placed in a thread-safe queue; the ZMQ
 // server thread drains that queue and forwards them to agents.
+//
+// TLS note (I-4): this server uses httplib::Server (plain HTTP). All API
+// traffic — including session cookies and login credentials — is sent
+// unencrypted unless a TLS-terminating reverse proxy (e.g. nginx, Caddy)
+// sits in front of it. For production deployments, place the API behind
+// such a proxy and set the THEWATCHER_API_HOST binding to 127.0.0.1 so
+// the plain-HTTP port is not exposed directly on the network.
 class ApiServer
 {
 public:
@@ -65,6 +74,10 @@ private:
 
     std::queue<PendingCommand> cmd_queue_;
     std::mutex cmd_mutex_;
+
+    // Login failure tracker for rate limiting (M-1): username -> (fail_count, window_start_ms)
+    std::unordered_map<std::string, std::pair<int, int64_t>> login_failures_;
+    std::mutex login_mutex_;
 };
 
 } // namespace thewatcher::server

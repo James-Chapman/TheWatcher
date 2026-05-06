@@ -24,6 +24,7 @@ export interface ServerSettings {
     webhook_url: string;
     offline_after_seconds: number;
     escalation_timeout_seconds: number;
+    metrics_retention_days: number;
 }
 export interface IndicatorThresholds {
     warning_pct_of_avg: number;
@@ -117,6 +118,24 @@ export interface MaintenanceWindowRecord {
     end_ms: number;
     reason: string;
     created_by: string;
+    created_at: number;
+}
+export interface SilenceRecord {
+    silence_id: number;
+    agent_id: string;
+    indicator: string;
+    reason: string;
+    until_ms: number;
+    created_by: string;
+    created_at: number;
+}
+export interface StatusHistoryRow {
+    id: number;
+    agent_id: string;
+    indicator: string;
+    old_status: string;
+    new_status: string;
+    message: string;
     created_at: number;
 }
 export interface UptimeReport {

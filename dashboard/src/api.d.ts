@@ -1,4 +1,4 @@
-import type { AgentCollectorConfigUpdate, AgentRecord, AgentThresholds, AlertRecord, GroupRecord, MaintenanceWindowRecord, MetricsSnapshot, ServerSettings, SessionInfo, UptimeReport, UserRecord } from './models';
+import type { AgentCollectorConfigUpdate, AgentRecord, AgentThresholds, AlertRecord, GroupRecord, MaintenanceWindowRecord, MetricsSnapshot, ServerSettings, SessionInfo, SilenceRecord, StatusHistoryRow, UptimeReport, UserRecord } from './models';
 export declare function fetchSession(): Promise<SessionInfo>;
 export declare function login(username: string, password: string): Promise<SessionInfo>;
 export declare function logout(): Promise<void>;
@@ -20,6 +20,7 @@ export declare function loadDashboardData(): Promise<{
     allAlerts: AlertRecord[];
     users: UserRecord[];
     maintenanceWindows: MaintenanceWindowRecord[];
+    silences: SilenceRecord[];
 }>;
 export declare function approveAgent(agentId: string, groupIds?: number[]): Promise<void>;
 export declare function rejectAgent(agentId: string): Promise<void>;
@@ -51,3 +52,7 @@ export declare function disableUser(userId: number): Promise<void>;
 export declare function enableUser(userId: number): Promise<void>;
 export declare function deleteUser(userId: number): Promise<void>;
 export declare function changeUserPassword(userId: number, password: string): Promise<void>;
+export declare function fetchSilences(): Promise<SilenceRecord[]>;
+export declare function createSilence(agentId: string, indicator: string, reason: string, untilMs: number): Promise<void>;
+export declare function deleteSilence(silenceId: number): Promise<void>;
+export declare function fetchAgentHistory(agentId: string, limit?: number): Promise<StatusHistoryRow[]>;
