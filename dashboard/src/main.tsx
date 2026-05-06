@@ -42,6 +42,7 @@ import {
 import type {
   AgentCollectorConfigUpdate,
   AlertRecord,
+  AnomalyConfig,
   CollectorConfig,
   DashboardAgent,
   DiskMonitorConfig,
@@ -58,6 +59,7 @@ import type {
   UserRecord,
 } from './models';
 import {
+  DEFAULT_ANOMALY_CONFIG,
   DEFAULT_NETWORK_THRESHOLDS,
   DEFAULT_PERCENT_THRESHOLDS,
   collectorConfigWithDefaults,
@@ -636,6 +638,7 @@ function buildCollectorDraft(agent: DashboardAgent): AgentCollectorConfigUpdate 
         device: disk.device,
         enabled: true,
         thresholds: { ...DEFAULT_PERCENT_THRESHOLDS },
+        anomaly: { ...DEFAULT_ANOMALY_CONFIG },
       })) ?? [];
   const networkByName = new Map(config.networks.map((network) => [network.interface_name, network]));
   const metricNetworks =
@@ -645,6 +648,7 @@ function buildCollectorDraft(agent: DashboardAgent): AgentCollectorConfigUpdate 
         interface_name: network.interface_name,
         enabled: true,
         thresholds: { ...DEFAULT_NETWORK_THRESHOLDS },
+        anomaly: { ...DEFAULT_ANOMALY_CONFIG },
       })) ?? [];
 
   return {
@@ -654,9 +658,20 @@ function buildCollectorDraft(agent: DashboardAgent): AgentCollectorConfigUpdate 
       ...config,
       cpu: { ...config.cpu },
       memory: { ...config.memory },
-      disks: [...config.disks.map((disk) => ({ ...disk, thresholds: { ...disk.thresholds } })), ...metricDisks],
+      disks: [
+        ...config.disks.map((disk) => ({
+          ...disk,
+          thresholds: { ...disk.thresholds },
+          anomaly: { ...DEFAULT_ANOMALY_CONFIG, ...(disk.anomaly ?? {}) },
+        })),
+        ...metricDisks,
+      ],
       networks: [
-        ...config.networks.map((network) => ({ ...network, thresholds: { ...network.thresholds } })),
+        ...config.networks.map((network) => ({
+          ...network,
+          thresholds: { ...network.thresholds },
+          anomaly: { ...DEFAULT_ANOMALY_CONFIG, ...(network.anomaly ?? {}) },
+        })),
         ...metricNetworks,
       ],
       processes: config.processes.map((process) => ({ ...process })),
@@ -750,7 +765,15 @@ function AgentConfigModal({
           <section>
             <h2>CPU & Memory</h2>
             <ThresholdRow label="CPU %" thresholds={draft.collector_config.cpu} onChange={(field, value) => updatePercent('cpu', field, value)} />
+            <AnomalyInputs
+              anomaly={draft.collector_config.cpu_anomaly ?? DEFAULT_ANOMALY_CONFIG}
+              onChange={(field, value) => updateConfig((config) => ({ ...config, cpu_anomaly: { ...(config.cpu_anomaly ?? DEFAULT_ANOMALY_CONFIG), [field]: value } }))}
+            />
             <ThresholdRow label="Memory %" thresholds={draft.collector_config.memory} onChange={(field, value) => updatePercent('memory', field, value)} />
+            <AnomalyInputs
+              anomaly={draft.collector_config.memory_anomaly ?? DEFAULT_ANOMALY_CONFIG}
+              onChange={(field, value) => updateConfig((config) => ({ ...config, memory_anomaly: { ...(config.memory_anomaly ?? DEFAULT_ANOMALY_CONFIG), [field]: value } }))}
+            />
           </section>
 
           <section className="wide-section">
@@ -765,6 +788,10 @@ function AgentConfigModal({
                   <ThresholdInputs
                     thresholds={disk.thresholds}
                     onChange={(field, value) => updateDisk(index, (current) => ({ ...current, thresholds: { ...current.thresholds, [field]: value } }))}
+                  />
+                  <AnomalyInputs
+                    anomaly={disk.anomaly ?? DEFAULT_ANOMALY_CONFIG}
+                    onChange={(field, value) => updateDisk(index, (current) => ({ ...current, anomaly: { ...(current.anomaly ?? DEFAULT_ANOMALY_CONFIG), [field]: value } }))}
                   />
                 </div>
               ))}
@@ -784,6 +811,10 @@ function AgentConfigModal({
                   <NetworkThresholdInputs
                     thresholds={network.thresholds}
                     onChange={(field, value) => updateNetwork(index, (current) => ({ ...current, thresholds: { ...current.thresholds, [field]: value } }))}
+                  />
+                  <AnomalyInputs
+                    anomaly={network.anomaly ?? DEFAULT_ANOMALY_CONFIG}
+                    onChange={(field, value) => updateNetwork(index, (current) => ({ ...current, anomaly: { ...(current.anomaly ?? DEFAULT_ANOMALY_CONFIG), [field]: value } }))}
                   />
                 </div>
               ))}
@@ -836,18 +867,35 @@ function NumberField({
   label,
   min,
   onChange,
+  step = 1,
   value,
 }: {
   label: string;
   min: number;
   onChange: (value: number) => void;
+  step?: number;
   value: number;
 }) {
   return (
     <label>
       {label}
-      <input min={min} step="1" type="number" value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      <input min={min} step={step} type="number" value={value} onChange={(event) => onChange(Number(event.target.value))} />
     </label>
+  );
+}
+
+function AnomalyInputs({
+  anomaly,
+  onChange,
+}: {
+  anomaly: AnomalyConfig;
+  onChange: (field: keyof AnomalyConfig, value: number) => void;
+}) {
+  return (
+    <div className="anomaly-inputs">
+      <NumberField label="Anomaly multiplier (0=off)" min={0} step={0.1} value={anomaly.multiplier} onChange={(value) => onChange('multiplier', value)} />
+      <NumberField label="Baseline hours" min={1} value={anomaly.baseline_window_hours} onChange={(value) => onChange('baseline_window_hours', value)} />
+    </div>
   );
 }
 

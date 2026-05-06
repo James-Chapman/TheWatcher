@@ -55,17 +55,24 @@ export interface NetworkThresholds {
   critical_mbps: number;
 }
 
+export interface AnomalyConfig {
+  multiplier: number;
+  baseline_window_hours: number;
+}
+
 export interface DiskMonitorConfig {
   mount_point: string;
   device: string;
   enabled: boolean;
   thresholds: PercentThresholds;
+  anomaly?: AnomalyConfig;
 }
 
 export interface NetworkInterfaceConfig {
   interface_name: string;
   enabled: boolean;
   thresholds: NetworkThresholds;
+  anomaly?: AnomalyConfig;
 }
 
 export interface ProcessWatchConfig {
@@ -85,6 +92,8 @@ export interface CollectorConfig {
   disks: DiskMonitorConfig[];
   networks: NetworkInterfaceConfig[];
   processes: ProcessWatchConfig[];
+  cpu_anomaly?: AnomalyConfig;
+  memory_anomaly?: AnomalyConfig;
 }
 
 export interface AgentCollectorConfigUpdate {

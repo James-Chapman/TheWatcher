@@ -27,12 +27,22 @@ struct NetworkThresholds
     double critical_mbps = 300.0;
 };
 
+// Anomaly detection config for one indicator.
+// When multiplier > 0 the server alerts if the current sample exceeds
+// baseline_mean * multiplier (computed over the rolling window).
+struct AnomalyConfig
+{
+    double multiplier = 0.0;        // 0 = disabled
+    int baseline_window_hours = 24;
+};
+
 struct DiskMonitorConfig
 {
     std::string mount_point;
     std::string device;
     bool enabled = true;
     PercentThresholds thresholds;
+    AnomalyConfig anomaly;
 };
 
 struct NetworkInterfaceConfig
@@ -40,6 +50,7 @@ struct NetworkInterfaceConfig
     std::string interface_name;
     bool enabled = true;
     NetworkThresholds thresholds;
+    AnomalyConfig anomaly;
 };
 
 struct ProcessWatchConfig
@@ -61,6 +72,8 @@ struct CollectorConfig
     std::vector<DiskMonitorConfig> disks;
     std::vector<NetworkInterfaceConfig> networks;
     std::vector<ProcessWatchConfig> processes;
+    AnomalyConfig cpu_anomaly;
+    AnomalyConfig memory_anomaly;
 };
 
 inline CollectorConfig default_collector_config()
@@ -71,12 +84,13 @@ inline CollectorConfig default_collector_config()
 // Keep JSON support for config files / human-readable config.
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(PercentThresholds, warning_percent, degraded_percent, critical_percent)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NetworkThresholds, warning_mbps, degraded_mbps, critical_mbps)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DiskMonitorConfig, mount_point, device, enabled, thresholds)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NetworkInterfaceConfig, interface_name, enabled, thresholds)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(AnomalyConfig, multiplier, baseline_window_hours)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DiskMonitorConfig, mount_point, device, enabled, thresholds, anomaly)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NetworkInterfaceConfig, interface_name, enabled, thresholds, anomaly)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ProcessWatchConfig, name, expected_count, enabled)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CollectorConfig, cpu, memory, cpu_readings, memory_readings,
                                                 disk_readings, network_readings, process_readings, disks, networks,
-                                                processes)
+                                                processes, cpu_anomaly, memory_anomaly)
 
 } // namespace thewatcher
 
@@ -183,9 +197,29 @@ inline thewatcher::NetworkThresholds from_cbor<thewatcher::NetworkThresholds>(cb
 }
 
 template <>
+inline CborPtr to_cbor(const thewatcher::AnomalyConfig& a)
+{
+    auto root = adopt(cbor_new_definite_array(2));
+    push(root.get(), config_make_double(a.multiplier));
+    push(root.get(), config_make_int(a.baseline_window_hours));
+    return root;
+}
+
+template <>
+inline thewatcher::AnomalyConfig from_cbor<thewatcher::AnomalyConfig>(cbor_item_t* item)
+{
+    if (!cbor_isa_array(item) || cbor_array_size(item) < 2)
+        throw std::runtime_error("Invalid AnomalyConfig CBOR payload");
+    thewatcher::AnomalyConfig a;
+    a.multiplier = config_read_double(array_get(item, 0));
+    a.baseline_window_hours = config_read_int(array_get(item, 1));
+    return a;
+}
+
+template <>
 inline CborPtr to_cbor(const thewatcher::DiskMonitorConfig& c)
 {
-    auto root = adopt(cbor_new_definite_array(4));
+    auto root = adopt(cbor_new_definite_array(5));
 
     push(root.get(), make_string(c.mount_point));
     push(root.get(), make_string(c.device));
@@ -194,13 +228,16 @@ inline CborPtr to_cbor(const thewatcher::DiskMonitorConfig& c)
     auto thresholds = to_cbor(c.thresholds);
     push(root.get(), thresholds.release());
 
+    auto anomaly = to_cbor(c.anomaly);
+    push(root.get(), anomaly.release());
+
     return root;
 }
 
 template <>
 inline thewatcher::DiskMonitorConfig from_cbor<thewatcher::DiskMonitorConfig>(cbor_item_t* item)
 {
-    if (!cbor_isa_array(item) || cbor_array_size(item) != 4)
+    if (!cbor_isa_array(item) || cbor_array_size(item) < 4)
     {
         throw std::runtime_error("Invalid DiskMonitorConfig CBOR payload");
     }
@@ -210,6 +247,8 @@ inline thewatcher::DiskMonitorConfig from_cbor<thewatcher::DiskMonitorConfig>(cb
     c.device = read_string(array_get(item, 1));
     c.enabled = read_bool(array_get(item, 2));
     c.thresholds = from_cbor<thewatcher::PercentThresholds>(array_get(item, 3));
+    if (cbor_array_size(item) >= 5)
+        c.anomaly = from_cbor<thewatcher::AnomalyConfig>(array_get(item, 4));
 
     return c;
 }
@@ -217,7 +256,7 @@ inline thewatcher::DiskMonitorConfig from_cbor<thewatcher::DiskMonitorConfig>(cb
 template <>
 inline CborPtr to_cbor(const thewatcher::NetworkInterfaceConfig& c)
 {
-    auto root = adopt(cbor_new_definite_array(3));
+    auto root = adopt(cbor_new_definite_array(4));
 
     push(root.get(), make_string(c.interface_name));
     push(root.get(), make_bool(c.enabled));
@@ -225,13 +264,16 @@ inline CborPtr to_cbor(const thewatcher::NetworkInterfaceConfig& c)
     auto thresholds = to_cbor(c.thresholds);
     push(root.get(), thresholds.release());
 
+    auto anomaly = to_cbor(c.anomaly);
+    push(root.get(), anomaly.release());
+
     return root;
 }
 
 template <>
 inline thewatcher::NetworkInterfaceConfig from_cbor<thewatcher::NetworkInterfaceConfig>(cbor_item_t* item)
 {
-    if (!cbor_isa_array(item) || cbor_array_size(item) != 3)
+    if (!cbor_isa_array(item) || cbor_array_size(item) < 3)
     {
         throw std::runtime_error("Invalid NetworkInterfaceConfig CBOR payload");
     }
@@ -240,6 +282,8 @@ inline thewatcher::NetworkInterfaceConfig from_cbor<thewatcher::NetworkInterface
     c.interface_name = read_string(array_get(item, 0));
     c.enabled = read_bool(array_get(item, 1));
     c.thresholds = from_cbor<thewatcher::NetworkThresholds>(array_get(item, 2));
+    if (cbor_array_size(item) >= 4)
+        c.anomaly = from_cbor<thewatcher::AnomalyConfig>(array_get(item, 3));
 
     return c;
 }
@@ -312,13 +356,15 @@ inline std::vector<T> config_read_vector(cbor_item_t* item)
 template <>
 inline CborPtr to_cbor(const thewatcher::CollectorConfig& c)
 {
-    auto root = adopt(cbor_new_definite_array(10));
+    auto root = adopt(cbor_new_definite_array(12));
 
     auto cpu = to_cbor(c.cpu);
     auto memory = to_cbor(c.memory);
     auto disks = config_to_cbor_vector(c.disks);
     auto networks = config_to_cbor_vector(c.networks);
     auto processes = config_to_cbor_vector(c.processes);
+    auto cpu_anomaly = to_cbor(c.cpu_anomaly);
+    auto memory_anomaly = to_cbor(c.memory_anomaly);
 
     push(root.get(), cpu.release());
     push(root.get(), memory.release());
@@ -330,6 +376,8 @@ inline CborPtr to_cbor(const thewatcher::CollectorConfig& c)
     push(root.get(), disks.release());
     push(root.get(), networks.release());
     push(root.get(), processes.release());
+    push(root.get(), cpu_anomaly.release());
+    push(root.get(), memory_anomaly.release());
 
     return root;
 }
@@ -337,7 +385,7 @@ inline CborPtr to_cbor(const thewatcher::CollectorConfig& c)
 template <>
 inline thewatcher::CollectorConfig from_cbor<thewatcher::CollectorConfig>(cbor_item_t* item)
 {
-    if (!cbor_isa_array(item) || cbor_array_size(item) != 10)
+    if (!cbor_isa_array(item) || cbor_array_size(item) < 10)
     {
         throw std::runtime_error("Invalid CollectorConfig CBOR payload");
     }
@@ -353,6 +401,11 @@ inline thewatcher::CollectorConfig from_cbor<thewatcher::CollectorConfig>(cbor_i
     c.disks = config_read_vector<thewatcher::DiskMonitorConfig>(array_get(item, 7));
     c.networks = config_read_vector<thewatcher::NetworkInterfaceConfig>(array_get(item, 8));
     c.processes = config_read_vector<thewatcher::ProcessWatchConfig>(array_get(item, 9));
+    if (cbor_array_size(item) >= 12)
+    {
+        c.cpu_anomaly = from_cbor<thewatcher::AnomalyConfig>(array_get(item, 10));
+        c.memory_anomaly = from_cbor<thewatcher::AnomalyConfig>(array_get(item, 11));
+    }
 
     return c;
 }

@@ -1,10 +1,12 @@
 #pragma once
 
+#include "common/collector_config.hpp"
 #include "common/metrics.hpp"
 #include "store.hpp"
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 
 namespace thewatcher::server
 {
@@ -33,6 +35,12 @@ public:
     void exit_maintenance(const std::string& agent_id);
 
 private:
+    struct BaselineCacheEntry
+    {
+        double mean = -1.0;
+        int64_t computed_at = 0;
+    };
+
     IndicatorStatus classify_percent(double value, const PercentThresholds& thresholds) const;
     IndicatorStatus classify_network_mbps(double value, const NetworkThresholds& thresholds) const;
     IndicatorStatus confirm_numeric_status(const std::string& agent_id, const std::string& indicator,
@@ -40,9 +48,15 @@ private:
     IndicatorStatus process_status_for_count(int missing_count, int readings_to_red) const;
     void record_transition(const std::string& agent_id, const std::string& indicator, IndicatorStatus next,
                            const std::string& message, int64_t timestamp_ms);
+    double compute_metric_mean(const std::string& agent_id, const std::string& indicator, int baseline_hours,
+                               int64_t now_ms);
+    IndicatorStatus maybe_anomaly_status(IndicatorStatus threshold_status, const std::string& agent_id,
+                                         const std::string& indicator, double current_value,
+                                         const AnomalyConfig& anomaly_cfg, int64_t now_ms);
 
     Store& store_;
     int64_t last_prune_ms_ = 0;
+    std::unordered_map<std::string, BaselineCacheEntry> baseline_cache_;
 };
 
 } // namespace thewatcher::server

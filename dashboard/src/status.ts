@@ -2,6 +2,7 @@ import type {
   AgentRecord,
   AlertRecord,
   AgentThresholds,
+  AnomalyConfig,
   ComponentHealth,
   CollectorConfig,
   DashboardAgent,
@@ -44,6 +45,11 @@ export const DEFAULT_THRESHOLDS: AgentThresholds = {
   network: { warning_pct_of_avg: 125, degraded_pct_of_avg: 150, critical_pct_of_avg: 200 },
 };
 
+export const DEFAULT_ANOMALY_CONFIG: AnomalyConfig = {
+  multiplier: 0,
+  baseline_window_hours: 24,
+};
+
 export const DEFAULT_PERCENT_THRESHOLDS: PercentThresholds = {
   warning_percent: 80,
   degraded_percent: 90,
@@ -67,6 +73,8 @@ export const DEFAULT_COLLECTOR_CONFIG: CollectorConfig = {
   disks: [],
   networks: [],
   processes: [],
+  cpu_anomaly: DEFAULT_ANOMALY_CONFIG,
+  memory_anomaly: DEFAULT_ANOMALY_CONFIG,
 };
 
 export function collectorConfigWithDefaults(config?: CollectorConfig): CollectorConfig {
@@ -78,6 +86,8 @@ export function collectorConfigWithDefaults(config?: CollectorConfig): Collector
     disks: config?.disks ?? [],
     networks: config?.networks ?? [],
     processes: config?.processes ?? [],
+    cpu_anomaly: { ...DEFAULT_ANOMALY_CONFIG, ...(config?.cpu_anomaly ?? {}) },
+    memory_anomaly: { ...DEFAULT_ANOMALY_CONFIG, ...(config?.memory_anomaly ?? {}) },
   };
 }
 
