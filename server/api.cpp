@@ -294,6 +294,25 @@ namespace
         return token.data();
     }
 
+    // Cryptographically random 16-hex-char command ID (H-3).
+    std::string random_command_id()
+    {
+        std::array<unsigned char, 8> bytes{};
+        randombytes_buf(bytes.data(), bytes.size());
+        std::array<char, 17> token{};
+        sodium_bin2hex(token.data(), token.size(), bytes.data(), bytes.size());
+        return token.data();
+    }
+
+    // Reject bodies where Content-Type is present but is not application/json (L-3).
+    bool is_json_content_type(const httplib::Request& req)
+    {
+        const auto ct = req.get_header_value("Content-Type");
+        if (ct.empty())
+            return true; // tolerate missing header for backward compatibility
+        return ct.find("application/json") != std::string::npos;
+    }
+
     std::string hash_password(const std::string& password)
     {
         char hash[crypto_pwhash_STRBYTES] = {};
@@ -390,7 +409,7 @@ std::optional<SessionRecord> ApiServer::require_agent_access(const httplib::Requ
 std::string ApiServer::enqueue_simple_command(const std::string& id, CommandType ct)
 {
     CommandMessage cmd;
-    cmd.command_id = std::to_string(static_cast<uint32_t>(now_ms() & 0xFFFFFFFF));
+    cmd.command_id = random_command_id();
     cmd.command_type = static_cast<uint8_t>(ct);
     std::lock_guard<std::mutex> lk(cmd_mutex_);
     cmd_queue_.push({id, cmd});
@@ -417,13 +436,51 @@ void ApiServer::setup_routes()
     http_->Post("/api/login", [this](const httplib::Request& req, httplib::Response& res) {
         try
         {
+            if (!is_json_content_type(req))
+            {
+                res.status = 415;
+                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                return;
+            }
             auto body = json::parse(req.body);
             const auto username = body.at("username").get<std::string>();
             const auto password = body.at("password").get<std::string>();
+
+            // M-2: Reject absurdly long credentials before hashing.
+            if (username.size() > 64 || password.size() > 256)
+            {
+                res.status = 400;
+                set_json(res, json{{"error", "username or password too long"}});
+                return;
+            }
+
+            // M-1: Rate-limit failed logins — lock after 5 failures for 15 minutes.
+            constexpr int max_failures = 5;
+            constexpr int64_t lockout_ms = 15LL * 60LL * 1000LL;
+            const auto now = now_ms();
+            {
+                std::lock_guard<std::mutex> lk(login_mutex_);
+                auto& [count, window_start] = login_failures_[username];
+                if (count >= max_failures && now - window_start < lockout_ms)
+                {
+                    res.status = 429;
+                    res.set_header("Retry-After", "900");
+                    set_json(res, json{{"error", "too many failed login attempts; try again later"}});
+                    return;
+                }
+            }
+
             auto user = store_.get_user_by_username(username);
             if (!user || user->disabled ||
                 crypto_pwhash_str_verify(user->password_hash.c_str(), password.c_str(), password.size()) != 0)
             {
+                {
+                    std::lock_guard<std::mutex> lk(login_mutex_);
+                    auto& [count, window_start] = login_failures_[username];
+                    if (count == 0)
+                        window_start = now;
+                    ++count;
+                }
                 res.status = 401;
                 set_json(res, json{
                                   {"error", "invalid credentials"}
@@ -431,7 +488,11 @@ void ApiServer::setup_routes()
                 return;
             }
 
-            const auto now = now_ms();
+            {
+                std::lock_guard<std::mutex> lk(login_mutex_);
+                login_failures_.erase(username);
+            }
+
             SessionRecord session;
             session.token = random_token();
             session.user_id = user->user_id;
@@ -441,7 +502,7 @@ void ApiServer::setup_routes()
             session.expires_at = now + (8LL * 60LL * 60LL * 1000LL);
             store_.create_session(session);
             res.set_header("Set-Cookie",
-                           "tw_session=" + session.token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800");
+                           "tw_session=" + session.token + "; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=28800");
             set_json(res, json{
                               {"username", user->username},
                               {"role",     user->role    }
@@ -460,7 +521,7 @@ void ApiServer::setup_routes()
         auto token = cookie_value(req, "tw_session");
         if (!token.empty())
             store_.delete_session(token);
-        res.set_header("Set-Cookie", "tw_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+        res.set_header("Set-Cookie", "tw_session=; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=0");
         set_json(res, json{
                           {"ok", true}
         });
@@ -499,8 +560,17 @@ void ApiServer::setup_routes()
             return;
         try
         {
+            if (!is_json_content_type(req))
+            {
+                res.status = 415;
+                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                return;
+            }
             auto body = json::parse(req.body);
-            auto group_id = store_.create_group(body.at("name").get<std::string>());
+            const auto name = body.at("name").get<std::string>();
+            if (name.empty() || name.size() > 64)
+                throw std::runtime_error("group name must be between 1 and 64 characters");
+            auto group_id = store_.create_group(name);
             set_json(res, json{
                               {"group_id", group_id}
             });
@@ -529,12 +599,22 @@ void ApiServer::setup_routes()
             return;
         try
         {
+            if (!is_json_content_type(req))
+            {
+                res.status = 415;
+                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                return;
+            }
             auto body = json::parse(req.body);
             const auto username = body.at("username").get<std::string>();
             const auto password = body.at("password").get<std::string>();
             const auto role = body.value("role", "viewer");
             if (username.empty() || password.empty())
                 throw std::runtime_error("username and password are required");
+            if (username.size() > 64)
+                throw std::runtime_error("username must be 64 characters or fewer");
+            if (password.size() > 256)
+                throw std::runtime_error("password must be 256 characters or fewer");
             if (role != "admin" && role != "operator" && role != "viewer")
                 throw std::runtime_error("role must be admin, operator, or viewer");
 
@@ -609,7 +689,11 @@ void ApiServer::setup_routes()
             {
                 const auto body = json::parse(req.body);
                 if (body.contains("note") && body["note"].is_string())
+                {
                     note = body["note"].get<std::string>();
+                    if (note.size() > 4096)
+                        note.resize(4096);
+                }
             }
             catch (...) {}
         }
@@ -637,9 +721,11 @@ void ApiServer::setup_routes()
             set_json(res, json{{"error", "alert_ids array required"}});
             return;
         }
-        const std::string note = (body.contains("note") && body["note"].is_string())
-                                     ? body["note"].get<std::string>()
-                                     : "";
+        std::string note = (body.contains("note") && body["note"].is_string())
+                              ? body["note"].get<std::string>()
+                              : "";
+        if (note.size() > 4096)
+            note.resize(4096);
         const auto all_alerts = store_.list_alerts(false);
         std::vector<int64_t> allowed_ids;
         for (const auto& id_val : body["alert_ids"])
@@ -959,6 +1045,7 @@ void ApiServer::setup_routes()
             int limit = 100;
             if (req.has_param("limit"))
                 limit = std::stoi(req.get_param_value("limit"));
+            limit = std::max(1, std::min(limit, 1000));
             auto rows = store_.get_metrics(id, limit);
             LOGF_TRACE("GET /api/metrics/%s returned %zu row(s) with limit=%d", id.c_str(), rows.size(), limit);
             json arr = json::array();
@@ -998,11 +1085,30 @@ void ApiServer::setup_routes()
             auto body = json::parse(req.body);
 
             CommandMessage cmd;
-            cmd.command_id = std::to_string(static_cast<uint32_t>(now_ms() & 0xFFFFFFFF));
+            cmd.command_id = random_command_id();
             cmd.command_type = body.at("command_type").get<uint8_t>();
+            // M-7: Validate against known CommandType values.
+            static constexpr uint8_t valid_command_types[] = {
+                static_cast<uint8_t>(CommandType::SET_INTERVAL),
+                static_cast<uint8_t>(CommandType::SET_PROCESS_LIMIT),
+                static_cast<uint8_t>(CommandType::RESTART_COLLECTORS),
+                static_cast<uint8_t>(CommandType::PAUSE),
+                static_cast<uint8_t>(CommandType::RESUME),
+                static_cast<uint8_t>(CommandType::GET_STATUS),
+                static_cast<uint8_t>(CommandType::DISCONNECT),
+            };
+            bool valid_type = false;
+            for (auto t : valid_command_types)
+                valid_type = valid_type || (t == cmd.command_type);
+            if (!valid_type)
+                throw std::runtime_error("unknown command_type");
             // args is optional raw bytes packed by caller; default empty
             if (body.contains("args"))
+            {
                 cmd.args = body["args"].get<std::vector<uint8_t>>();
+                if (cmd.args.size() > 4096)
+                    throw std::runtime_error("args payload too large (max 4096 bytes)");
+            }
 
             {
                 std::lock_guard<std::mutex> lk(cmd_mutex_);
@@ -1053,7 +1159,7 @@ void ApiServer::setup_routes()
 
             SetIntervalArgs args{secs};
             CommandMessage cmd;
-            cmd.command_id = std::to_string(static_cast<uint32_t>(now_ms() & 0xFFFFFFFF));
+            cmd.command_id = random_command_id();
             cmd.command_type = static_cast<uint8_t>(CommandType::SET_INTERVAL);
             cmd.args = proto::pack(args);
 
@@ -1105,7 +1211,7 @@ void ApiServer::setup_routes()
 
             SetProcessLimitArgs args{limit};
             CommandMessage cmd;
-            cmd.command_id = std::to_string(static_cast<uint32_t>(now_ms() & 0xFFFFFFFF));
+            cmd.command_id = random_command_id();
             cmd.command_type = static_cast<uint8_t>(CommandType::SET_PROCESS_LIMIT);
             cmd.args = proto::pack(args);
 
@@ -1354,12 +1460,20 @@ void ApiServer::setup_routes()
             return;
         try
         {
+            if (!is_json_content_type(req))
+            {
+                res.status = 415;
+                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                return;
+            }
             auto body = json::parse(req.body);
             MaintenanceWindowRecord rec;
             rec.agent_id = body.value("agent_id", std::string("*"));
             rec.start_ms = body.at("start_ms").get<int64_t>();
             rec.end_ms = body.at("end_ms").get<int64_t>();
             rec.reason = body.value("reason", std::string(""));
+            if (rec.reason.size() > 1024)
+                throw std::runtime_error("reason must be 1024 characters or fewer");
             rec.created_by = session->username;
             rec.created_at = now_ms();
             if (rec.end_ms <= rec.start_ms)
@@ -1409,8 +1523,16 @@ void ApiServer::setup_routes()
             const auto id = req.path_params.at("id");
             if (!require_agent_access(req, res, "operator", id))
                 return;
+            if (!is_json_content_type(req))
+            {
+                res.status = 415;
+                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                return;
+            }
             const auto body = json::parse(req.body);
             const auto description = body.value("description", std::string(""));
+            if (description.size() > 4096)
+                throw std::runtime_error("description must be 4096 characters or fewer");
             store_.set_agent_description(id, description);
             LOGF_INFO("Set agent description agent_id=%s by=%s", id.c_str(), session->username.c_str());
             set_json(res, json{{"ok", true}});
@@ -1550,10 +1672,18 @@ void ApiServer::setup_routes()
                 set_json(res, json{{"error", "forbidden"}});
                 return;
             }
+            if (!is_json_content_type(req))
+            {
+                res.status = 415;
+                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                return;
+            }
             const auto body = json::parse(req.body);
             const auto password = body.at("password").get<std::string>();
             if (password.empty())
                 throw std::runtime_error("password is required");
+            if (password.size() > 256)
+                throw std::runtime_error("password must be 256 characters or fewer");
             store_.update_user_password(user_id, hash_password(password));
             LOGF_INFO("Changed password for user_id=%lld by=%s", static_cast<long long>(user_id),
                       session->username.c_str());
@@ -1584,11 +1714,19 @@ void ApiServer::setup_routes()
             return;
         try
         {
+            if (!is_json_content_type(req))
+            {
+                res.status = 415;
+                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                return;
+            }
             const auto body = json::parse(req.body);
             SilenceRecord rec;
             rec.agent_id   = body.value("agent_id",  std::string("*"));
             rec.indicator  = body.value("indicator", std::string("*"));
             rec.reason     = body.value("reason",    std::string(""));
+            if (rec.reason.size() > 1024)
+                throw std::runtime_error("reason must be 1024 characters or fewer");
             rec.until_ms   = body.at("until_ms").get<int64_t>();
             rec.created_by = session->username;
             rec.created_at = now_ms();

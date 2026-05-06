@@ -207,6 +207,14 @@ void AgentConfig::save(const std::filesystem::path& path) const
     f << "AGENT_SECRET_KEY=" << agent_secret_key << '\n';
     f << "COLLECTION_INTERVAL=" << collection_interval << '\n';
     f << "PROCESS_LIMIT=" << process_limit << '\n';
+    f.close();
+
+    // M-6: Restrict config file to owner read/write only — it contains the CURVE secret key.
+#ifndef _WIN32
+    std::filesystem::permissions(path,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace);
+#endif
 }
 
 } // namespace thewatcher::agent

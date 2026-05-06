@@ -2,6 +2,7 @@
 
 #include "common/SingleLog.hpp"
 
+#include <cctype>
 #include <nlohmann/json.hpp>
 #include <sodium.h>
 #include <stdexcept>
@@ -211,6 +212,17 @@ void SqliteStore::exec(const char* sql)
 
 bool SqliteStore::column_exists(const std::string& table, const std::string& column)
 {
+    // M-5: PRAGMA table_info() does not support parameterized binding; validate
+    // that table/column are safe identifiers ([a-z_] only) before concatenating.
+    auto is_safe_identifier = [](const std::string& s) {
+        for (unsigned char c : s)
+            if (!std::islower(c) && c != '_')
+                return false;
+        return !s.empty();
+    };
+    if (!is_safe_identifier(table) || !is_safe_identifier(column))
+        throw std::runtime_error("column_exists: invalid identifier '" + table + "'/'" + column + "'");
+
     const auto sql = "PRAGMA table_info(" + table + ");";
     Stmt st;
     check(sqlite3_prepare_v2(db_, sql.c_str(), -1, &st.s, nullptr), db_, "prepare table_info");

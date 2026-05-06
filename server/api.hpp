@@ -10,6 +10,8 @@
 #include <queue>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <utility>
 
 namespace httplib
 {
@@ -65,6 +67,10 @@ private:
 
     std::queue<PendingCommand> cmd_queue_;
     std::mutex cmd_mutex_;
+
+    // Login failure tracker for rate limiting (M-1): username -> (fail_count, window_start_ms)
+    std::unordered_map<std::string, std::pair<int, int64_t>> login_failures_;
+    std::mutex login_mutex_;
 };
 
 } // namespace thewatcher::server

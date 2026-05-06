@@ -229,6 +229,21 @@ void Server::run(StartupSignal* startup)
                 }
             }
 
+            // Evict dispatched commands that never received an ACK (M-8).
+            constexpr int64_t command_ttl_ms = 5LL * 60LL * 1000LL;
+            for (auto it = dispatched_commands_.begin(); it != dispatched_commands_.end();)
+            {
+                if (now - it->second.second > command_ttl_ms)
+                {
+                    LOGF_DEBUG("Evicting stale dispatched command id=%s", it->first.c_str());
+                    it = dispatched_commands_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+
             next_offline_scan = std::chrono::steady_clock::now() + std::chrono::seconds{1};
         }
     }
@@ -367,21 +382,22 @@ void Server::handle_router_frame(zmq::socket_t& router)
             auto command = dispatched_commands_.find(ack.command_id);
             if (command != dispatched_commands_.end())
             {
-                if (ack.success && (command->second == CommandType::DISCONNECT ||
-                                    command->second == CommandType::PAUSE || command->second == CommandType::RESUME))
+                if (ack.success && (command->second.first == CommandType::DISCONNECT ||
+                                    command->second.first == CommandType::PAUSE ||
+                                    command->second.first == CommandType::RESUME))
                 {
                     auto command_agent = store_->get_agent(agent_id);
                     if (command_agent)
                     {
-                        if (command->second == CommandType::DISCONNECT)
+                        if (command->second.first == CommandType::DISCONNECT)
                             command_agent->connected = false;
-                        else if (command->second == CommandType::PAUSE)
+                        else if (command->second.first == CommandType::PAUSE)
                         {
                             command_agent->maintenance = true;
                             command_agent->maintenance_reason = "command";
                             command_agent->maintenance_until = 0;
                         }
-                        else if (command->second == CommandType::RESUME)
+                        else if (command->second.first == CommandType::RESUME)
                         {
                             command_agent->maintenance = false;
                             command_agent->maintenance_reason = "";
@@ -389,12 +405,12 @@ void Server::handle_router_frame(zmq::socket_t& router)
                         }
                         command_agent->last_seen = now_ms();
                         store_->upsert_agent(*command_agent);
-                        if (command->second == CommandType::PAUSE)
+                        if (command->second.first == CommandType::PAUSE)
                         {
                             StatusEngine status_engine(*store_);
                             status_engine.enter_maintenance(agent_id, "command", 0, command_agent->last_seen);
                         }
-                        else if (command->second == CommandType::RESUME)
+                        else if (command->second.first == CommandType::RESUME)
                         {
                             StatusEngine status_engine(*store_);
                             status_engine.exit_maintenance(agent_id);
@@ -467,6 +483,29 @@ void Server::handle_enrollment(zmq::socket_t& enroll)
     LOGF_INFO("Enrollment request agent_id=%s hostname=%s platform=%s", req.agent_id.c_str(), req.hostname.c_str(),
               req.platform.c_str());
 
+    // M-9: Validate z85 public key — must be exactly 40 chars, z85 alphabet only.
+    static constexpr std::string_view z85_alphabet =
+        "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
+    if (req.curve_public_key_z85.size() != 40 ||
+        req.curve_public_key_z85.find_first_not_of(z85_alphabet) != std::string::npos)
+    {
+        LOGF_WARNING("Enrollment rejected: invalid public key format agent_id=%s", req.agent_id.c_str());
+        send_error("invalid public key");
+        return;
+    }
+
+    // H-1: Per-agent enrollment rate limiting — at most one request per 10 seconds.
+    constexpr int64_t enroll_rate_limit_ms = 10'000;
+    const auto enroll_now = now_ms();
+    auto& last_enroll = enrollment_last_request_ms_[req.agent_id];
+    if (last_enroll != 0 && enroll_now - last_enroll < enroll_rate_limit_ms)
+    {
+        LOGF_DEBUG("Enrollment rate-limited agent_id=%s", req.agent_id.c_str());
+        send_error("rate limited");
+        return;
+    }
+    last_enroll = enroll_now;
+
     auto existing = store_->get_agent(req.agent_id);
     bool approved = false;
 
@@ -481,10 +520,12 @@ void Server::handle_enrollment(zmq::socket_t& enroll)
 
         approved = existing->approved;
         LOGF_DEBUG("Refreshing existing enrollment agent_id=%s approved=%d", req.agent_id.c_str(), approved ? 1 : 0);
-        // Refresh mutable fields in case they changed (e.g. new keypair).
+        // H-1: Refresh hostname/platform but lock the public key once approved — key
+        // replacement on an approved agent would allow identity hijacking.
         existing->hostname = req.hostname;
         existing->platform = req.platform;
-        existing->curve_public_key_z85 = req.curve_public_key_z85;
+        if (!existing->approved)
+            existing->curve_public_key_z85 = req.curve_public_key_z85;
         existing->last_seen = now_ms();
         store_->upsert_agent(*existing);
     }
@@ -552,7 +593,7 @@ void Server::dispatch_commands(zmq::socket_t& router)
             router.send(zmq::message_t(pc.agent_id.data(), pc.agent_id.size()), zmq::send_flags::sndmore);
             router.send(zmq::message_t{}, zmq::send_flags::sndmore);
             router.send(zmq::message_t(encoded.data(), encoded.size()), zmq::send_flags::none);
-            dispatched_commands_[pc.cmd.command_id] = static_cast<CommandType>(pc.cmd.command_type);
+            dispatched_commands_[pc.cmd.command_id] = {static_cast<CommandType>(pc.cmd.command_type), now_ms()};
             LOGF_DEBUG("Dispatched command agent_id=%s command_id=%s type=%u", pc.agent_id.c_str(),
                        pc.cmd.command_id.c_str(), static_cast<unsigned>(pc.cmd.command_type));
         }
