@@ -3,6 +3,60 @@
 All notable changes to TheWatcher are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.4.0] - 2026-05-06
+
+### Added
+- **Alert silencing**: operators can create silence rules scoped to an agent
+  and/or indicator with an expiry time; silenced transitions do not generate
+  alerts.
+- **Metrics retention**: configurable retention period (default 30 days) prunes
+  old metric rows automatically; configurable via the settings API.
+- **Status history viewer**: `GET /api/agents/:id/history` returns the
+  per-indicator transition log; surfaced in the dashboard alongside each agent.
+- **Bulk alert operations**: `POST /api/alerts/bulk-ack` and
+  `POST /api/alerts/bulk-archive` let operators acknowledge or archive multiple
+  alerts in a single request.
+- **Maintenance windows**: scheduled maintenance windows (with optional wildcard
+  agent matching) automatically put agents into maintenance mode and resume them
+  when the window ends; manageable via the settings panel.
+
+### Security
+- Enrollment channel: public key is now locked after first approval — subsequent
+  re-enrollments from the same agent ID cannot replace an approved key (prevents
+  identity hijacking via the unauthenticated enrollment socket).
+- Enrollment channel: per-agent-ID rate limit of one request per 10 seconds.
+- Enrollment channel: z85 public key format validated (exactly 40 chars, z85
+  alphabet) before storage; malformed keys are rejected.
+- Login endpoint: rate-limited to 5 failures per username; account locked for
+  15 minutes on breach, with `HTTP 429` + `Retry-After: 900` response.
+- Command IDs: replaced truncated 32-bit millisecond timestamps with
+  8-byte cryptographically random hex values (via libsodium) to eliminate
+  collision risk.
+- Command dispatch: `command_type` validated against the known `CommandType`
+  enum; `args` payload capped at 4096 bytes.
+- Dispatched command map: entries are evicted after a 5-minute TTL to prevent
+  unbounded memory growth when agents drop without ACKing.
+- Webhook SSRF: loopback (`127.x`, `::1`, `localhost`), RFC-1918 (`10.x`,
+  `172.16–31.x`, `192.168.x`), and link-local (`169.254.x`) hosts are blocked
+  in the webhook URL validator.
+- Session cookie: `Secure` flag added to both login and logout `Set-Cookie`
+  headers.
+- Input length caps on all user-supplied string fields stored to the database
+  (username ≤ 64, password ≤ 256, note/description ≤ 4096, reason ≤ 1024,
+  group name 1–64); over-length inputs return `HTTP 400`.
+- Metrics history `limit` query parameter capped server-side at 1000.
+- `column_exists()` validates table/column identifiers against `[a-z_]` before
+  SQL string concatenation.
+- Agent config file (`TheWatcherAgent.conf`) permissions set to `0600` on POSIX
+  after every write, protecting the embedded CURVE secret key.
+- All mutating API endpoints check `Content-Type: application/json`; requests
+  with a mismatched type return `HTTP 415`.
+- `gethostname()` / `GetComputerNameA()` return values checked; falls back to
+  `"unknown"` on failure.
+- Login form no longer pre-fills the default admin username.
+- Added code comments documenting the ZAP NULL-mechanism allowance rationale
+  and the plain-HTTP deployment requirement for the REST API.
+
 ## [0.3.3] - 2026-05-03
 
 ### Changed
