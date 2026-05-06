@@ -74,6 +74,7 @@ struct CollectorConfig
     std::vector<ProcessWatchConfig> processes;
     AnomalyConfig cpu_anomaly;
     AnomalyConfig memory_anomaly;
+    int stale_after_seconds = 0; // 0 = disabled
 };
 
 inline CollectorConfig default_collector_config()
@@ -90,7 +91,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NetworkInterfaceConfig, interfac
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ProcessWatchConfig, name, expected_count, enabled)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CollectorConfig, cpu, memory, cpu_readings, memory_readings,
                                                 disk_readings, network_readings, process_readings, disks, networks,
-                                                processes, cpu_anomaly, memory_anomaly)
+                                                processes, cpu_anomaly, memory_anomaly, stale_after_seconds)
 
 } // namespace thewatcher
 
@@ -356,7 +357,7 @@ inline std::vector<T> config_read_vector(cbor_item_t* item)
 template <>
 inline CborPtr to_cbor(const thewatcher::CollectorConfig& c)
 {
-    auto root = adopt(cbor_new_definite_array(12));
+    auto root = adopt(cbor_new_definite_array(13));
 
     auto cpu = to_cbor(c.cpu);
     auto memory = to_cbor(c.memory);
@@ -378,6 +379,7 @@ inline CborPtr to_cbor(const thewatcher::CollectorConfig& c)
     push(root.get(), processes.release());
     push(root.get(), cpu_anomaly.release());
     push(root.get(), memory_anomaly.release());
+    push(root.get(), config_make_int(c.stale_after_seconds));
 
     return root;
 }
@@ -406,6 +408,8 @@ inline thewatcher::CollectorConfig from_cbor<thewatcher::CollectorConfig>(cbor_i
         c.cpu_anomaly = from_cbor<thewatcher::AnomalyConfig>(array_get(item, 10));
         c.memory_anomaly = from_cbor<thewatcher::AnomalyConfig>(array_get(item, 11));
     }
+    if (cbor_array_size(item) >= 13)
+        c.stale_after_seconds = config_read_int(array_get(item, 12));
 
     return c;
 }

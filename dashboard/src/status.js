@@ -39,6 +39,7 @@ export const DEFAULT_COLLECTOR_CONFIG = {
     processes: [],
     cpu_anomaly: DEFAULT_ANOMALY_CONFIG,
     memory_anomaly: DEFAULT_ANOMALY_CONFIG,
+    stale_after_seconds: 0,
 };
 export function collectorConfigWithDefaults(config) {
     return {
@@ -51,6 +52,7 @@ export function collectorConfigWithDefaults(config) {
         processes: config?.processes ?? [],
         cpu_anomaly: { ...DEFAULT_ANOMALY_CONFIG, ...(config?.cpu_anomaly ?? {}) },
         memory_anomaly: { ...DEFAULT_ANOMALY_CONFIG, ...(config?.memory_anomaly ?? {}) },
+        stale_after_seconds: config?.stale_after_seconds ?? 0,
     };
 }
 export function classifyPercent(value, thresholds = DEFAULT_PERCENT_THRESHOLDS) {

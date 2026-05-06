@@ -41,6 +41,12 @@ private:
         int64_t computed_at = 0;
     };
 
+    struct StalenessEntry
+    {
+        double last_value = 0.0;
+        int64_t value_since_ms = 0; // timestamp when this value was first observed
+    };
+
     IndicatorStatus classify_percent(double value, const PercentThresholds& thresholds) const;
     IndicatorStatus classify_network_mbps(double value, const NetworkThresholds& thresholds) const;
     IndicatorStatus confirm_numeric_status(const std::string& agent_id, const std::string& indicator,
@@ -53,10 +59,14 @@ private:
     IndicatorStatus maybe_anomaly_status(IndicatorStatus threshold_status, const std::string& agent_id,
                                          const std::string& indicator, double current_value,
                                          const AnomalyConfig& anomaly_cfg, int64_t now_ms);
+    IndicatorStatus maybe_stale_status(IndicatorStatus threshold_status, const std::string& agent_id,
+                                       const std::string& indicator, double current_value,
+                                       int stale_after_seconds, int64_t now_ms);
 
     Store& store_;
     int64_t last_prune_ms_ = 0;
     std::unordered_map<std::string, BaselineCacheEntry> baseline_cache_;
+    std::unordered_map<std::string, StalenessEntry> staleness_cache_;
 };
 
 } // namespace thewatcher::server

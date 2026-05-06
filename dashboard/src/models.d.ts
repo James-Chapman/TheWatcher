@@ -87,6 +87,7 @@ export interface CollectorConfig {
     processes: ProcessWatchConfig[];
     cpu_anomaly?: AnomalyConfig;
     memory_anomaly?: AnomalyConfig;
+    stale_after_seconds?: number;
 }
 export interface AgentCollectorConfigUpdate {
     collection_interval: number;
