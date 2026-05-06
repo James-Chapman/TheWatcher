@@ -3,6 +3,7 @@
 #include "api_json.hpp"
 #include "common/SingleLog.hpp"
 #include "common/protocol.hpp"
+#include "report_generator.hpp"
 
 #include <array>
 #include <chrono>
@@ -1553,6 +1554,11 @@ void ApiServer::setup_routes()
         out["offline_after_seconds"] = std::stoi(store_.get_setting("offline_after_seconds", "120"));
         out["escalation_timeout_seconds"] = std::stoi(store_.get_setting("escalation_timeout_seconds", "3600"));
         out["metrics_retention_days"] = std::stoi(store_.get_setting("metrics_retention_days", "30"));
+        out["reports_enabled"] = store_.get_setting("reports.enabled", "false") == "true";
+        out["reports_schedule"] = store_.get_setting("reports.schedule", "daily");
+        out["reports_hour"] = std::stoi(store_.get_setting("reports.hour", "8"));
+        out["reports_day_of_week"] = std::stoi(store_.get_setting("reports.day_of_week", "1"));
+        out["reports_webhook_url"] = store_.get_setting("reports.webhook_url", "");
         set_json(res, out);
     });
 
@@ -1586,6 +1592,32 @@ void ApiServer::setup_routes()
                     throw std::runtime_error("metrics_retention_days must be between 1 and 365");
                 store_.set_setting("metrics_retention_days", std::to_string(v));
             }
+            if (body.contains("reports_enabled"))
+                store_.set_setting("reports.enabled", body.at("reports_enabled").get<bool>() ? "true" : "false");
+            if (body.contains("reports_schedule"))
+            {
+                const auto v = body.at("reports_schedule").get<std::string>();
+                if (v != "daily" && v != "weekly")
+                    throw std::runtime_error("reports_schedule must be 'daily' or 'weekly'");
+                store_.set_setting("reports.schedule", v);
+            }
+            if (body.contains("reports_hour"))
+            {
+                const auto v = body.at("reports_hour").get<int>();
+                if (v < 0 || v > 23)
+                    throw std::runtime_error("reports_hour must be between 0 and 23");
+                store_.set_setting("reports.hour", std::to_string(v));
+            }
+            if (body.contains("reports_day_of_week"))
+            {
+                const auto v = body.at("reports_day_of_week").get<int>();
+                if (v < 0 || v > 6)
+                    throw std::runtime_error("reports_day_of_week must be between 0 and 6");
+                store_.set_setting("reports.day_of_week", std::to_string(v));
+            }
+            if (body.contains("reports_webhook_url"))
+                store_.set_setting("reports.webhook_url",
+                                   body.at("reports_webhook_url").get<std::string>().substr(0, 2048));
             set_json(res, json{{"ok", true}});
         }
         catch (const std::exception& e)
@@ -1593,6 +1625,19 @@ void ApiServer::setup_routes()
             res.status = 400;
             set_json(res, json{{"error", e.what()}});
         }
+    });
+
+    // POST /api/reports/send — immediately generate and send a fleet digest (admin only)
+    http_->Post("/api/reports/send", [this](const httplib::Request& req, httplib::Response& res) {
+        if (!require_role(req, res, "admin"))
+            return;
+        const auto ts = now_ms();
+        const auto payload = build_report_json(store_, ts);
+        const bool sent = generate_and_send_report(store_, ts);
+        json out;
+        out["sent"] = sent;
+        out["report"] = payload;
+        set_json(res, out);
     });
 
     // PUT /api/users/:id/disable — disable a user account (admin only, not built-in)

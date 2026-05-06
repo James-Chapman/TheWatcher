@@ -160,6 +160,9 @@ export async function updateSettings(settings) {
         method: 'PUT',
     });
 }
+export async function sendReport() {
+    return mutateJson('/api/reports/send', { method: 'POST' });
+}
 export async function disableUser(userId) {
     await mutateJson(`/api/users/${userId}/disable`, { method: 'PUT' });
 }

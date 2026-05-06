@@ -233,6 +233,10 @@ export async function updateSettings(settings: Partial<ServerSettings>): Promise
   });
 }
 
+export async function sendReport(): Promise<{ sent: boolean; report: unknown }> {
+  return mutateJson<{ sent: boolean; report: unknown }>('/api/reports/send', { method: 'POST' });
+}
+
 export async function disableUser(userId: number): Promise<void> {
   await mutateJson<{ ok: boolean }>(`/api/users/${userId}/disable`, { method: 'PUT' });
 }

@@ -4,9 +4,11 @@
 #include "common/commands.hpp"
 #include "common/crypto.hpp"
 #include "common/metrics.hpp"
+#include "report_generator.hpp"
 #include "status_engine.hpp"
 
 #include <chrono>
+#include <ctime>
 #include <stdexcept>
 
 namespace thewatcher::server
@@ -243,6 +245,8 @@ void Server::run(StartupSignal* startup)
                     ++it;
                 }
             }
+
+            maybe_send_report(now);
 
             next_offline_scan = std::chrono::steady_clock::now() + std::chrono::seconds{1};
         }
@@ -601,6 +605,42 @@ void Server::dispatch_commands(zmq::socket_t& router)
         {
             LOGF_ERROR("Failed to dispatch command to %s: %s", pc.agent_id.c_str(), e.what());
         }
+    }
+}
+
+void Server::maybe_send_report(int64_t now_ms)
+{
+    if (store_->get_setting("reports.enabled", "false") != "true")
+        return;
+
+    const auto schedule = store_->get_setting("reports.schedule", "daily"); // "daily" or "weekly"
+    const int target_hour = std::stoi(store_->get_setting("reports.hour", "8"));
+    const int target_dow = std::stoi(store_->get_setting("reports.day_of_week", "1")); // 0=Sun
+
+    // Minimum gap: 23 h for daily, 6 days 23 h for weekly.
+    const int64_t min_gap_ms = (schedule == "weekly") ? 6LL * 86'400'000LL + 23LL * 3'600'000LL
+                                                       : 23LL * 3'600'000LL;
+    if (last_report_ms_ > 0 && now_ms - last_report_ms_ < min_gap_ms)
+        return;
+
+    // Convert now_ms to UTC calendar fields.
+    const time_t now_t = static_cast<time_t>(now_ms / 1000);
+    struct tm utc {};
+#ifdef _WIN32
+    gmtime_s(&utc, &now_t);
+#else
+    gmtime_r(&now_t, &utc);
+#endif
+    if (utc.tm_hour != target_hour)
+        return;
+    if (schedule == "weekly" && utc.tm_wday != target_dow)
+        return;
+
+    LOG_INFO("Sending scheduled fleet digest report");
+    if (generate_and_send_report(*store_, now_ms))
+    {
+        last_report_ms_ = now_ms;
+        store_->set_setting("reports.last_sent_ms", std::to_string(now_ms));
     }
 }
 
