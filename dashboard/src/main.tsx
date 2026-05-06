@@ -276,7 +276,7 @@ function Dashboard() {
 }
 
 function LoginScreen({ onLogin }: { onLogin: (session: SessionInfo) => void }) {
-  const [username, setUsername] = React.useState('thewatcher');
+  const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [error, setError] = React.useState<string | null>(null);
   return (
