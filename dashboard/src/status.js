@@ -12,6 +12,10 @@ export const DEFAULT_THRESHOLDS = {
     disk: { warning_pct_of_avg: 125, degraded_pct_of_avg: 150, critical_pct_of_avg: 200 },
     network: { warning_pct_of_avg: 125, degraded_pct_of_avg: 150, critical_pct_of_avg: 200 },
 };
+export const DEFAULT_ANOMALY_CONFIG = {
+    multiplier: 0,
+    baseline_window_hours: 24,
+};
 export const DEFAULT_PERCENT_THRESHOLDS = {
     warning_percent: 80,
     degraded_percent: 90,
@@ -33,6 +37,8 @@ export const DEFAULT_COLLECTOR_CONFIG = {
     disks: [],
     networks: [],
     processes: [],
+    cpu_anomaly: DEFAULT_ANOMALY_CONFIG,
+    memory_anomaly: DEFAULT_ANOMALY_CONFIG,
 };
 export function collectorConfigWithDefaults(config) {
     return {
@@ -43,6 +49,8 @@ export function collectorConfigWithDefaults(config) {
         disks: config?.disks ?? [],
         networks: config?.networks ?? [],
         processes: config?.processes ?? [],
+        cpu_anomaly: { ...DEFAULT_ANOMALY_CONFIG, ...(config?.cpu_anomaly ?? {}) },
+        memory_anomaly: { ...DEFAULT_ANOMALY_CONFIG, ...(config?.memory_anomaly ?? {}) },
     };
 }
 export function classifyPercent(value, thresholds = DEFAULT_PERCENT_THRESHOLDS) {

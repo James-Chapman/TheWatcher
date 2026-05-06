@@ -1,4 +1,4 @@
-import type { AgentRecord, AlertRecord, AgentThresholds, CollectorConfig, DashboardAgent, GroupRecord, HealthColor, MetricsSnapshot, NetworkThresholds, PercentThresholds } from './models';
+import type { AgentRecord, AlertRecord, AgentThresholds, AnomalyConfig, CollectorConfig, DashboardAgent, GroupRecord, HealthColor, MetricsSnapshot, NetworkThresholds, PercentThresholds } from './models';
 export type SummaryKey = 'green' | 'yellow' | 'amber' | 'red' | 'blue' | 'offline';
 export type OverviewGroupFilter = 'all' | 'ungrouped' | string;
 export interface OverviewAgentGroup {
@@ -11,6 +11,7 @@ export interface DisplayAlert extends AlertRecord {
     agentId: string;
 }
 export declare const DEFAULT_THRESHOLDS: AgentThresholds;
+export declare const DEFAULT_ANOMALY_CONFIG: AnomalyConfig;
 export declare const DEFAULT_PERCENT_THRESHOLDS: PercentThresholds;
 export declare const DEFAULT_NETWORK_THRESHOLDS: NetworkThresholds;
 export declare const DEFAULT_COLLECTOR_CONFIG: CollectorConfig;
