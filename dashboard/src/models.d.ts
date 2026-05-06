@@ -25,6 +25,11 @@ export interface ServerSettings {
     offline_after_seconds: number;
     escalation_timeout_seconds: number;
     metrics_retention_days: number;
+    reports_enabled: boolean;
+    reports_schedule: 'daily' | 'weekly';
+    reports_hour: number;
+    reports_day_of_week: number;
+    reports_webhook_url: string;
 }
 export interface IndicatorThresholds {
     warning_pct_of_avg: number;

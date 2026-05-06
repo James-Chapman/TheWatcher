@@ -37,6 +37,9 @@ private:
     // Pull commands out of the API queue and send them to agents via ROUTER.
     void dispatch_commands(zmq::socket_t& router);
 
+    // Send a scheduled digest report if one is due.
+    void maybe_send_report(int64_t now_ms);
+
     ServerConfig config_;
     zmq::context_t ctx_{2}; // 2 IO threads
     std::unique_ptr<Store> store_;
@@ -47,6 +50,7 @@ private:
     // agent_id -> last enrollment request time (ms); used for rate limiting
     std::unordered_map<std::string, int64_t> enrollment_last_request_ms_;
     std::atomic<bool> running_{false};
+    int64_t last_report_ms_ = 0;
 };
 
 } // namespace thewatcher::server

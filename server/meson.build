@@ -57,6 +57,7 @@ server_lib = static_library(
   'watcher_server_lib',
   [
     'api.cpp',
+    'report_generator.cpp',
     'server.cpp',
     'zap_handler.cpp',
   ],

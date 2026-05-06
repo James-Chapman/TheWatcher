@@ -48,6 +48,10 @@ export declare function deleteMaintenanceWindow(windowId: number): Promise<void>
 export declare function setAgentDescription(agentId: string, description: string): Promise<void>;
 export declare function fetchSettings(): Promise<ServerSettings>;
 export declare function updateSettings(settings: Partial<ServerSettings>): Promise<void>;
+export declare function sendReport(): Promise<{
+    sent: boolean;
+    report: unknown;
+}>;
 export declare function disableUser(userId: number): Promise<void>;
 export declare function enableUser(userId: number): Promise<void>;
 export declare function deleteUser(userId: number): Promise<void>;
