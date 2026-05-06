@@ -86,7 +86,11 @@ void ZapHandler::run(std::stop_token st)
             }
             else if (mechanism == "NULL")
             {
-                // Enrollment socket uses NULL; allow it (handled separately)
+                // The enrollment REP socket deliberately uses the NULL security
+                // mechanism so unenrolled agents can reach it without a key.
+                // ZMQ enforces curve_server=true on the ROUTER (data plane) socket
+                // at the transport layer before ZAP is consulted, so NULL-mechanism
+                // clients cannot reach the data plane regardless of this allow here.
                 allow = true;
                 LOG_TRACE("ZAP NULL mechanism allowed");
             }
