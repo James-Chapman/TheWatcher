@@ -118,7 +118,11 @@ void LogCollector::tail_file(const LogMonitorConfig& cfg)
         }
     }
 
-    state.offset = static_cast<int64_t>(file.tellg());
+    // After getline reaches EOF the stream sets eofbit, causing tellg() to return -1.
+    // Clear error state so we get the real file position; fall back to st_size if needed.
+    file.clear();
+    const auto pos = file.tellg();
+    state.offset = (pos >= 0) ? static_cast<int64_t>(pos) : static_cast<int64_t>(st.st_size);
 }
 
 } // namespace thewatcher::agent
