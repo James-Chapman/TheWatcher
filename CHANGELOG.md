@@ -5,36 +5,84 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [0.4.1] - 2026-05-07
 
+### Added
+- **Anomaly detection** (Issue #6): when `multiplier > 0` is set in the
+  collector config for CPU, memory, disk, or network, the status engine
+  computes a rolling baseline mean from historical metrics and flags the
+  indicator Yellow if the current sample exceeds `mean × multiplier`. A
+  5-minute in-process cache avoids recomputing on every reading. Config is
+  stored as two new CBOR fields (`cpu_anomaly`, `memory_anomaly`) on
+  `CollectorConfig` and per-disk/network entries, with backward-compatible
+  size checks so old agents receive old configs without errors. The
+  dashboard collector-config editor exposes the multiplier and baseline
+  window fields.
+- **Scheduled fleet digest reports** (Issue #7): a report scheduler sends
+  a JSON health digest to a configured webhook URL on a daily or weekly
+  cadence (UTC hour, optional day-of-week). The digest includes agent
+  totals, online/offline/maintenance counts, alert counts by severity, and
+  the top-5 agents ranked by oldest unacknowledged alert.
+  `GET/PUT /api/settings` gains `reports_enabled`, `reports_schedule`,
+  `reports_hour`, `reports_day_of_week`, and `reports_webhook_url` fields.
+  `POST /api/reports/send` triggers an immediate digest (admin only). The
+  Settings page gains a Scheduled Reports section.
+- **Stale metrics detection** (Issue #8): when `stale_after_seconds > 0`
+  in the collector config, the status engine tracks the last observed value
+  per agent/indicator; if it remains unchanged beyond the window (epsilon
+  0.01) the indicator is raised to at least Yellow. The staleness clock
+  resets automatically when the value next changes. Defaults to 0
+  (disabled). Carried as CBOR element 12 in the 13-element
+  `CollectorConfig` array with a backward-compatible decode guard.
+- **Log file tailing and alerting** (Issue #9): agents can now watch log
+  files with regex patterns and forward matched lines to the server as
+  `LOG_MATCH` frames (new frame type `0x09`). `LogMonitorConfig`
+  `{path, pattern, indicator_name, severity, enabled}` is added to
+  `CollectorConfig` (CBOR element 13). `LogCollector` polls files each
+  collection cycle, tracks file position and inode for rotation detection,
+  and matches lines with `std::regex`. The server inserts matches into a
+  `log_matches` table and raises an alert on the named indicator (silence
+  rules respected). `GET /api/agents/:id/log-matches?limit=N` returns the
+  match history. The dashboard gains a Log Watches config section and a Log
+  Matches history card in the agent detail panel.
+- **Custom dashboard views** (Issue #10): operators can create named views
+  that show a chosen subset of agents. Views can be public (visible to all
+  users) or private (owner only). `GET/POST /api/views` and
+  `GET/PUT/DELETE /api/views/:id` manage views; the dashboard adds a Views
+  tab with bookmarkable `#view-{id}` URLs so the monitoring panel can be
+  filtered to a specific view.
+
 ### Fixed
-- **LogCollector incremental tailing**: after `std::getline` exhausts a file
-  it sets `eofbit`, causing the subsequent `tellg()` to return `-1`. The
-  collector now calls `file.clear()` before `tellg()` and falls back to
+- **LogCollector incremental tailing**: after `std::getline` exhausts a
+  file it sets `eofbit`, causing the subsequent `tellg()` to return `-1`.
+  The collector now calls `file.clear()` before `tellg()` and falls back to
   `st_size` if the position is still negative. Previously every incremental
-  tick after the first would re-read from offset `-1`, effectively restarting
-  from the beginning of the file.
-- **Integration test enrollment re-check**: the agent lifecycle integration
-  test re-sent an enrollment request immediately after admin approval, which
-  was silently blocked by the 10-second per-agent rate limiter, causing a
-  consistent test failure. Replaced with an HTTP-API approval check; the
-  CURVE handshake performed by the running agent proves key exchange.
+  tick after the first silently re-read from offset `-1`, causing repeated
+  duplicate matches.
+- **Integration test enrollment re-check**: the agent lifecycle scenario
+  re-sent a ZMQ enrollment request immediately after HTTP approval, which
+  was blocked by the 10-second per-agent rate limiter. Replaced with an
+  HTTP-API approval check; the subsequent CURVE handshake proves key
+  exchange.
 
 ### Tests
-- **BDD test coverage — server store** (12 new scenarios): inclusive window
-  boundaries for `get_metrics_in_window`, session expiry edge cases, agent
-  deletion cascades, silence rule expiry at boundary, `approve_agent` clearing
-  rejection flag, and several other state-transition edge cases.
-- **BDD test coverage — status engine** (9 new scenarios): `classify_percent`
-  exact thresholds, direct green→red CPU jump, process-scope isolation,
-  `process_readings=1` immediate red, maintenance exit behaviour, NaN→grey,
-  anomaly detection firing and suppression (< 10 baseline samples), stale
-  metric detection.
+- **BDD store coverage** (12 new scenarios, 62 new assertions): inclusive
+  `get_metrics_in_window` boundaries, session expiry edge cases
+  (`expires_at > now_ms`), agent deletion cascades, silence rule expiry at
+  exact boundary, `approve_agent` clearing a rejected flag, and several
+  other state-transition edge cases.
+- **BDD status engine coverage** (9 new scenarios): `classify_percent`
+  exact thresholds (80/90/95), direct green→red CPU jump, process-scope
+  isolation, `process_readings=1` immediate red, maintenance exit
+  behaviour, NaN→grey, anomaly firing and suppression (< 10 baseline
+  samples), stale metric detection.
 - **New test suite — LogCollector** (`agent_tests/log_collector_test.cpp`,
-  11 scenarios): empty config, missing file, empty file, pattern match/no-match,
-  `take_matches` drain, incremental tailing, file-rotation detection, disabled
-  config, invalid regex, stale file-state pruning via `set_configs`.
-- **Integration tests — API coverage** (6 new scenarios, 83 new assertions):
-  user management (create/disable/enable/password/delete), group management,
-  views CRUD with public/private visibility, alert listing and bulk operations,
+  11 scenarios / 29 assertions): empty config, missing file, empty file,
+  pattern match/no-match, `take_matches` drain, incremental tailing,
+  file-rotation detection, disabled config, invalid regex, stale-state
+  pruning via `set_configs`.
+- **Integration tests — API coverage** (6 new scenarios / 83 new
+  assertions): user management (create/disable/enable/password change/
+  delete), group management (create/list/validation), views CRUD with
+  public/private visibility rules, alert listing and bulk operations,
   session and login API, enrollment rejection and per-agent config APIs
   (description, thresholds, uptime, log-matches, agent deletion).
 
