@@ -496,6 +496,95 @@ SCENARIO("A silence rule suppresses alert generation on status degradation")
     }
 }
 
+SCENARIO("Status engine raises a yellow alert when CPU crosses the warning threshold")
+{
+    GIVEN("an approved agent with default CPU thresholds (warning=80, degraded=90, critical=95)")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-yellow");
+        StatusEngine engine(store);
+
+        auto baseline = metrics_with_cpu(10.0);
+        insert_metrics(store, "agent-yellow", 1000, baseline);
+        engine.evaluate_metrics("agent-yellow", baseline, 1000);
+
+        WHEN("CPU rises to 85 percent (above warning but below degraded)")
+        {
+            auto elevated = metrics_with_cpu(85.0);
+            insert_metrics(store, "agent-yellow", 2000, elevated);
+            engine.evaluate_metrics("agent-yellow", elevated, 2000);
+
+            THEN("the alert shows a green-to-yellow transition")
+            {
+                auto alerts = store.list_unacknowledged_alerts();
+                REQUIRE(alerts.size() == 1);
+                REQUIRE(alerts[0].indicator == "cpu");
+                REQUIRE(alerts[0].old_status == "green");
+                REQUIRE(alerts[0].new_status == "yellow");
+            }
+
+            AND_WHEN("CPU then drops back below the warning threshold")
+            {
+                auto recovered = metrics_with_cpu(10.0);
+                insert_metrics(store, "agent-yellow", 3000, recovered);
+                engine.evaluate_metrics("agent-yellow", recovered, 3000);
+
+                THEN("the yellow alert is resolved and a green recovery is recorded in history")
+                {
+                    auto active = store.list_alerts(false);
+                    REQUIRE(active.size() == 1);
+
+                    auto history = store.list_status_history("agent-yellow", 10);
+                    bool saw_recovery = false;
+                    for (const auto& row : history)
+                        saw_recovery = saw_recovery || (row.indicator == "cpu" && row.old_status == "yellow"
+                                                        && row.new_status == "green");
+                    REQUIRE(saw_recovery);
+                }
+            }
+        }
+    }
+}
+
+SCENARIO("Status engine steps through yellow then amber as CPU worsens")
+{
+    GIVEN("an approved agent at steady green CPU")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-step");
+        StatusEngine engine(store);
+
+        auto baseline = metrics_with_cpu(10.0);
+        insert_metrics(store, "agent-step", 1000, baseline);
+        engine.evaluate_metrics("agent-step", baseline, 1000);
+
+        WHEN("CPU first crosses warning (85%) then degraded (92%)")
+        {
+            auto warning = metrics_with_cpu(85.0);
+            insert_metrics(store, "agent-step", 2000, warning);
+            engine.evaluate_metrics("agent-step", warning, 2000);
+
+            auto degraded = metrics_with_cpu(92.0);
+            insert_metrics(store, "agent-step", 3000, degraded);
+            engine.evaluate_metrics("agent-step", degraded, 3000);
+
+            THEN("history records green→yellow then yellow→amber transitions")
+            {
+                auto history = store.list_status_history("agent-step", 10);
+
+                bool saw_yellow = false, saw_amber = false;
+                for (const auto& row : history)
+                {
+                    if (row.indicator == "cpu" && row.old_status == "green"  && row.new_status == "yellow") saw_yellow = true;
+                    if (row.indicator == "cpu" && row.old_status == "yellow" && row.new_status == "amber")  saw_amber  = true;
+                }
+                REQUIRE(saw_yellow);
+                REQUIRE(saw_amber);
+            }
+        }
+    }
+}
+
 SCENARIO("Metrics pruning is triggered by evaluate_metrics after one hour")
 {
     GIVEN("an approved agent with old metrics in the store")
