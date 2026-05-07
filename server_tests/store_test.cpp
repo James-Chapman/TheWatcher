@@ -2331,3 +2331,449 @@ SCENARIO("get_view returns nullopt for an unknown view id")
         }
     }
 }
+
+// ── get_metrics_in_window boundaries ─────────────────────────────────────────
+
+SCENARIO("get_metrics_in_window uses inclusive boundaries and returns only rows in range")
+{
+    GIVEN("a store with four metrics rows at distinct timestamps")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord agent;
+        agent.agent_id = "win-agent";
+        agent.hostname = "win-host";
+        agent.approved = true;
+        store.upsert_agent(agent);
+
+        for (int64_t ts : {1000LL, 2000LL, 3000LL, 4000LL})
+        {
+            MetricsRow r;
+            r.agent_id     = "win-agent";
+            r.timestamp_ms = ts;
+            r.metrics_cbor = {0xA0};
+            store.insert_metrics(r);
+        }
+
+        WHEN("the window exactly covers the middle two rows [2000, 3000]")
+        {
+            auto rows = store.get_metrics_in_window("win-agent", 2000, 3000);
+
+            THEN("both boundary rows are included (>= and <=)")
+            {
+                REQUIRE(rows.size() == 2);
+                bool has_2000 = false, has_3000 = false;
+                for (const auto& r : rows)
+                {
+                    if (r.timestamp_ms == 2000) has_2000 = true;
+                    if (r.timestamp_ms == 3000) has_3000 = true;
+                }
+                REQUIRE(has_2000);
+                REQUIRE(has_3000);
+            }
+        }
+
+        WHEN("the window covers only a single timestamp [2000, 2000]")
+        {
+            auto rows = store.get_metrics_in_window("win-agent", 2000, 2000);
+
+            THEN("exactly one row is returned")
+            {
+                REQUIRE(rows.size() == 1);
+                REQUIRE(rows[0].timestamp_ms == 2000);
+            }
+        }
+
+        WHEN("the window is empty (since > until)")
+        {
+            auto rows = store.get_metrics_in_window("win-agent", 3000, 2000);
+
+            THEN("no rows are returned")
+            {
+                REQUIRE(rows.empty());
+            }
+        }
+    }
+}
+
+SCENARIO("get_metrics_in_window returns empty for an agent with no rows in the range")
+{
+    GIVEN("a store with an agent but no metrics")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord agent;
+        agent.agent_id = "no-rows";
+        agent.hostname = "host";
+        agent.approved = true;
+        store.upsert_agent(agent);
+
+        WHEN("the window is queried")
+        {
+            auto rows = store.get_metrics_in_window("no-rows", 0, 9999999);
+
+            THEN("an empty vector is returned")
+            {
+                REQUIRE(rows.empty());
+            }
+        }
+    }
+}
+
+// ── Re-acknowledging an alert ─────────────────────────────────────────────────
+
+SCENARIO("Re-acknowledging an already-acknowledged alert overwrites the note and timestamp")
+{
+    GIVEN("a store with an acknowledged alert")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord rec;
+        rec.agent_id = "agent-reack";
+        rec.approved = true;
+        rec.first_seen = 1;
+        rec.last_seen = 1;
+        store.upsert_agent(rec);
+
+        AlertRecord alert;
+        alert.agent_id = "agent-reack";
+        alert.indicator = "cpu";
+        alert.old_status = "green";
+        alert.new_status = "red";
+        alert.created_at = 100;
+        auto id = store.insert_alert(alert);
+        store.acknowledge_alert(id, "alice", 200, "first ack");
+
+        WHEN("the same alert is acknowledged again by a different operator")
+        {
+            store.acknowledge_alert(id, "bob", 500, "second ack");
+
+            THEN("the latest ack metadata replaces the previous one")
+            {
+                auto alerts = store.list_alerts(false);
+                REQUIRE(alerts.size() == 1);
+                REQUIRE(alerts[0].acknowledged_by == "bob");
+                REQUIRE(alerts[0].acknowledged_at == 500);
+                REQUIRE(alerts[0].note == "second ack");
+            }
+        }
+    }
+}
+
+// ── Session expiry ────────────────────────────────────────────────────────────
+
+SCENARIO("get_session respects the expiry timestamp and rejects disabled users")
+{
+    GIVEN("a store with a user and an active session expiring at t=5000")
+    {
+        SqliteStore store(":memory:");
+
+        // Use the bootstrapped admin user (user_id=1, username="thewatcher").
+        auto users = store.list_users();
+        auto admin_it = std::find_if(users.begin(), users.end(),
+            [](const UserRecord& u) { return u.built_in; });
+        REQUIRE(admin_it != users.end());
+
+        SessionRecord session;
+        session.token      = "tok-expiry";
+        session.user_id    = admin_it->user_id;
+        session.username   = admin_it->username;
+        session.role       = admin_it->role;
+        session.created_at = 1000;
+        session.expires_at = 5000;
+        store.create_session(session);
+
+        WHEN("get_session is called before expiry (now_ms=4999)")
+        {
+            auto result = store.get_session("tok-expiry", 4999);
+
+            THEN("the session record is returned")
+            {
+                REQUIRE(result.has_value());
+                REQUIRE(result->username == admin_it->username);
+            }
+        }
+
+        WHEN("get_session is called exactly at expiry (now_ms=5000)")
+        {
+            // expires_at > now_ms; at boundary now_ms==expires_at the condition is false
+            auto result = store.get_session("tok-expiry", 5000);
+
+            THEN("the session is expired and nullopt is returned")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+
+        WHEN("get_session is called after expiry (now_ms=6000)")
+        {
+            auto result = store.get_session("tok-expiry", 6000);
+
+            THEN("nullopt is returned")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+    }
+}
+
+SCENARIO("get_session returns nullopt when the user account is disabled")
+{
+    GIVEN("a store with a disabled user who has an active session")
+    {
+        SqliteStore store(":memory:");
+
+        const int64_t uid = store.create_user("locked-user", "hash", "operator");
+
+        SessionRecord session;
+        session.token      = "tok-disabled";
+        session.user_id    = uid;
+        session.username   = "locked-user";
+        session.role       = "operator";
+        session.created_at = 1000;
+        session.expires_at = 9999999;
+        store.create_session(session);
+
+        store.disable_user(uid);
+
+        WHEN("get_session is called with the valid token")
+        {
+            auto result = store.get_session("tok-disabled", 5000);
+
+            THEN("nullopt is returned because the user is disabled")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+    }
+}
+
+// ── Agent deletion cascade ────────────────────────────────────────────────────
+
+SCENARIO("Deleting an agent cascades to remove its metrics, alerts, and status history")
+{
+    GIVEN("a store with an agent that has metrics, an alert, and status history")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord agent;
+        agent.agent_id = "cascade-agent";
+        agent.hostname = "cascade-host";
+        agent.approved = true;
+        agent.first_seen = 1;
+        agent.last_seen  = 1;
+        store.upsert_agent(agent);
+
+        MetricsRow row;
+        row.agent_id     = "cascade-agent";
+        row.timestamp_ms = 1000;
+        row.metrics_cbor = {0xA0};
+        store.insert_metrics(row);
+
+        AlertRecord alert;
+        alert.agent_id   = "cascade-agent";
+        alert.indicator  = "cpu";
+        alert.old_status = "green";
+        alert.new_status = "red";
+        alert.created_at = 2000;
+        store.insert_alert(alert);
+
+        StatusHistoryRow history;
+        history.agent_id   = "cascade-agent";
+        history.indicator  = "cpu";
+        history.old_status = "green";
+        history.new_status = "red";
+        history.created_at = 2000;
+        store.insert_status_history(history);
+
+        WHEN("the agent is deleted")
+        {
+            store.delete_agent("cascade-agent");
+
+            THEN("the agent is gone")
+            {
+                REQUIRE_FALSE(store.get_agent("cascade-agent").has_value());
+            }
+
+            AND_THEN("its metrics are removed by cascade")
+            {
+                REQUIRE(store.get_metrics("cascade-agent", 100).empty());
+            }
+
+            AND_THEN("its alerts are removed by cascade")
+            {
+                auto all = store.list_alerts(true);
+                for (const auto& a : all)
+                    REQUIRE(a.agent_id != "cascade-agent");
+            }
+
+            AND_THEN("its status history is removed by cascade")
+            {
+                REQUIRE(store.list_status_history("cascade-agent", 100).empty());
+            }
+        }
+    }
+}
+
+// ── mark_agents_offline_before with no matches ────────────────────────────────
+
+SCENARIO("mark_agents_offline_before is a no-op when all agents are within the cutoff")
+{
+    GIVEN("a store with an agent whose last_seen is recent")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord agent;
+        agent.agent_id  = "fresh-agent";
+        agent.approved  = true;
+        agent.connected = true;
+        agent.last_seen = 9000;
+        agent.first_seen = 1;
+        store.upsert_agent(agent);
+
+        WHEN("mark_agents_offline_before is called with a cutoff before last_seen")
+        {
+            store.mark_agents_offline_before(8000);
+
+            THEN("the agent remains connected")
+            {
+                auto got = store.get_agent("fresh-agent");
+                REQUIRE(got.has_value());
+                REQUIRE(got->connected == true);
+            }
+        }
+    }
+}
+
+// ── View with empty agent list ────────────────────────────────────────────────
+
+SCENARIO("A view with an empty agent list is stored and retrieved correctly")
+{
+    GIVEN("a store with a user")
+    {
+        SqliteStore store(":memory:");
+        const int64_t uid = store.create_user("empty-view-owner", "hash", "operator");
+
+        WHEN("a view is created with no agent ids")
+        {
+            ViewRecord v;
+            v.owner_user_id  = uid;
+            v.owner_username = "empty-view-owner";
+            v.name           = "Empty View";
+            v.is_public      = false;
+            v.agent_ids      = {};
+            v.created_at     = 1000;
+            const auto view_id = store.create_view(v);
+
+            THEN("get_view returns the record with an empty agent list")
+            {
+                auto got = store.get_view(view_id);
+                REQUIRE(got.has_value());
+                REQUIRE(got->agent_ids.empty());
+                REQUIRE(got->name == "Empty View");
+            }
+        }
+    }
+}
+
+// ── Silence rule expiry boundary ─────────────────────────────────────────────
+
+SCENARIO("is_silenced uses strict less-than on until_ms so expiry is exact")
+{
+    GIVEN("a silence rule expiring at t=10000")
+    {
+        SqliteStore store(":memory:");
+
+        SilenceRecord rec;
+        rec.agent_id   = "*";
+        rec.indicator  = "*";
+        rec.reason     = "test";
+        rec.until_ms   = 10'000;
+        rec.created_by = "admin";
+        rec.created_at = 0;
+        store.create_silence(rec);
+
+        THEN("is_silenced returns true just before expiry (now=9999)")
+        {
+            REQUIRE(store.is_silenced("any-agent", "cpu", 9999));
+        }
+
+        THEN("is_silenced returns false exactly at until_ms (now=10000)")
+        {
+            // The SQL condition is until_ms > now_ms; at boundary they are equal → false
+            REQUIRE_FALSE(store.is_silenced("any-agent", "cpu", 10'000));
+        }
+
+        THEN("is_silenced returns false after expiry (now=10001)")
+        {
+            REQUIRE_FALSE(store.is_silenced("any-agent", "cpu", 10'001));
+        }
+    }
+}
+
+// ── approve_agent overrides a previous rejection ──────────────────────────────
+
+SCENARIO("approve_agent on a rejected agent clears the rejected flag and approves the agent")
+{
+    GIVEN("a store with a rejected agent")
+    {
+        SqliteStore store(":memory:");
+
+        AgentRecord agent;
+        agent.agent_id  = "rejected-agent";
+        agent.hostname  = "bad-host";
+        agent.approved  = false;
+        agent.rejected  = false;
+        agent.first_seen = 1;
+        agent.last_seen  = 1;
+        store.upsert_agent(agent);
+        store.reject_agent("rejected-agent");
+
+        auto after_reject = store.get_agent("rejected-agent");
+        REQUIRE(after_reject.has_value());
+        REQUIRE(after_reject->rejected == true);
+
+        WHEN("approve_agent is called on the rejected agent")
+        {
+            store.approve_agent("rejected-agent");
+
+            THEN("the agent is approved and the rejected flag is cleared")
+            {
+                auto got = store.get_agent("rejected-agent");
+                REQUIRE(got.has_value());
+                REQUIRE(got->approved == true);
+                REQUIRE(got->rejected == false);
+            }
+        }
+    }
+}
+
+// ── list_views for user with no views ────────────────────────────────────────
+
+SCENARIO("list_views returns empty for a user who owns no views and there are no public views")
+{
+    GIVEN("a store with two users, neither with views")
+    {
+        SqliteStore store(":memory:");
+        const int64_t uid_a = store.create_user("user-no-views-a", "ha", "operator");
+        const int64_t uid_b = store.create_user("user-no-views-b", "hb", "operator");
+
+        ViewRecord priv_b;
+        priv_b.owner_user_id  = uid_b;
+        priv_b.owner_username = "user-no-views-b";
+        priv_b.name           = "B Private";
+        priv_b.is_public      = false;
+        priv_b.created_at     = 1000;
+        store.create_view(priv_b);
+
+        WHEN("list_views is called for user-a who has no views")
+        {
+            auto views = store.list_views(uid_a);
+
+            THEN("an empty list is returned (no public views exist)")
+            {
+                REQUIRE(views.empty());
+            }
+        }
+    }
+}

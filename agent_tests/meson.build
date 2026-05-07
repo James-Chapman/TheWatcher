@@ -21,3 +21,11 @@ enrollment_test = executable(
   dependencies: [agent_dep, catch2_dep, cppzmq_dep, sodium_dep, platform_deps],
 )
 test('enrollment', enrollment_test)
+
+log_collector_test = executable(
+  'log_collector_test',
+  ['log_collector_test.cpp'],
+  include_directories: root_inc,
+  dependencies: [collectors_dep, common_dep, catch2_dep, platform_deps],
+)
+test('log_collector', log_collector_test)

@@ -787,3 +787,306 @@ SCENARIO("Stale metric detection upgrades a green CPU indicator to yellow when v
         }
     }
 }
+
+// ── classify_percent threshold boundaries ────────────────────────────────────
+
+SCENARIO("classify_percent threshold boundaries: exact values produce the correct status")
+{
+    GIVEN("an approved agent with default CPU thresholds (warning=80, degraded=90, critical=95)")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-boundary");
+        StatusEngine engine(store);
+
+        // Establish prior green state so worsening transitions create alerts.
+        auto green_baseline = metrics_with_cpu(10.0);
+        insert_metrics(store, "agent-boundary", 1000, green_baseline);
+        engine.evaluate_metrics("agent-boundary", green_baseline, 1000);
+
+        WHEN("CPU is exactly at the warning threshold (80.0%)")
+        {
+            auto at_warning = metrics_with_cpu(80.0);
+            insert_metrics(store, "agent-boundary", 2000, at_warning);
+            engine.evaluate_metrics("agent-boundary", at_warning, 2000);
+
+            THEN("the indicator transitions to yellow")
+            {
+                auto s = store.latest_status_for_indicator("agent-boundary", "cpu");
+                REQUIRE(s.has_value());
+                REQUIRE(s->new_status == "yellow");
+            }
+        }
+
+        WHEN("CPU is just below the warning threshold (79.9%)")
+        {
+            auto below_warning = metrics_with_cpu(79.9);
+            insert_metrics(store, "agent-boundary", 2000, below_warning);
+            engine.evaluate_metrics("agent-boundary", below_warning, 2000);
+
+            THEN("the indicator stays green")
+            {
+                auto s = store.latest_status_for_indicator("agent-boundary", "cpu");
+                REQUIRE(s.has_value());
+                REQUIRE(s->new_status == "green");
+            }
+        }
+
+        WHEN("CPU is exactly at the degraded threshold (90.0%)")
+        {
+            auto at_degraded = metrics_with_cpu(90.0);
+            insert_metrics(store, "agent-boundary", 2000, at_degraded);
+            engine.evaluate_metrics("agent-boundary", at_degraded, 2000);
+
+            THEN("the indicator transitions to amber")
+            {
+                auto s = store.latest_status_for_indicator("agent-boundary", "cpu");
+                REQUIRE(s.has_value());
+                REQUIRE(s->new_status == "amber");
+            }
+        }
+
+        WHEN("CPU is exactly at the critical threshold (95.0%)")
+        {
+            auto at_critical = metrics_with_cpu(95.0);
+            insert_metrics(store, "agent-boundary", 2000, at_critical);
+            engine.evaluate_metrics("agent-boundary", at_critical, 2000);
+
+            THEN("the indicator transitions to red")
+            {
+                auto s = store.latest_status_for_indicator("agent-boundary", "cpu");
+                REQUIRE(s.has_value());
+                REQUIRE(s->new_status == "red");
+            }
+        }
+    }
+}
+
+// ── Direct green → red jump ───────────────────────────────────────────────────
+
+SCENARIO("CPU jumps directly from green to red without intermediate states when readings=1")
+{
+    GIVEN("an approved agent at steady green CPU with cpu_readings=1 (default)")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-direct-red");
+        StatusEngine engine(store);
+
+        auto baseline = metrics_with_cpu(10.0);
+        insert_metrics(store, "agent-direct-red", 1000, baseline);
+        engine.evaluate_metrics("agent-direct-red", baseline, 1000);
+
+        WHEN("CPU spikes immediately to 96% (above critical=95)")
+        {
+            auto spike = metrics_with_cpu(96.0);
+            insert_metrics(store, "agent-direct-red", 2000, spike);
+            engine.evaluate_metrics("agent-direct-red", spike, 2000);
+
+            THEN("only one alert is raised and it is green-to-red")
+            {
+                auto alerts = store.list_unacknowledged_alerts();
+                auto cpu_it = std::find_if(alerts.begin(), alerts.end(),
+                    [](const AlertRecord& a) { return a.indicator == "cpu"; });
+                REQUIRE(cpu_it != alerts.end());
+                REQUIRE(cpu_it->old_status == "green");
+                REQUIRE(cpu_it->new_status == "red");
+            }
+
+            AND_THEN("no yellow or amber history entries exist for cpu")
+            {
+                auto history = store.list_status_history("agent-direct-red", 20);
+                for (const auto& row : history)
+                {
+                    if (row.indicator == "cpu")
+                    {
+                        REQUIRE(row.new_status != "yellow");
+                        REQUIRE(row.new_status != "amber");
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Process monitoring: only watched processes alert ─────────────────────────
+
+SCENARIO("Process monitoring fires alerts only for watched processes, not arbitrary missing ones")
+{
+    GIVEN("an approved agent watching exactly one process name")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-proc-scope");
+
+        auto agent = store.get_agent("agent-proc-scope");
+        REQUIRE(agent.has_value());
+        ProcessWatchConfig watch;
+        watch.name           = "monitored.exe";
+        watch.expected_count = 1;
+        agent->collector_config.processes.push_back(watch);
+        store.set_agent_collector_config(agent->agent_id, agent->collector_config);
+
+        StatusEngine engine(store);
+
+        // Establish green baseline: process is present.
+        auto with_proc = metrics_with_processes({"monitored.exe"});
+        insert_metrics(store, "agent-proc-scope", 1, with_proc);
+        engine.evaluate_metrics("agent-proc-scope", with_proc, 1);
+
+        WHEN("a metrics snapshot has no running processes at all")
+        {
+            auto no_procs = metrics_with_processes({});
+            for (int i = 1; i <= 3; ++i)
+            {
+                insert_metrics(store, "agent-proc-scope", i * 1000, no_procs);
+                engine.evaluate_metrics("agent-proc-scope", no_procs, i * 1000);
+            }
+
+            THEN("an alert fires only for the watched process indicator")
+            {
+                auto alerts = store.list_unacknowledged_alerts();
+                REQUIRE_FALSE(alerts.empty());
+                for (const auto& a : alerts)
+                    REQUIRE(a.indicator == "process:monitored.exe");
+            }
+        }
+
+        WHEN("the watched process is present but other processes are absent")
+        {
+            auto with_watched = metrics_with_processes({"monitored.exe", "other.exe"});
+            for (int i = 1; i <= 3; ++i)
+            {
+                insert_metrics(store, "agent-proc-scope", i * 1000, with_watched);
+                engine.evaluate_metrics("agent-proc-scope", with_watched, i * 1000);
+            }
+
+            THEN("no alerts fire because the watched process is present")
+            {
+                auto alerts = store.list_unacknowledged_alerts();
+                bool watched_alert = std::any_of(alerts.begin(), alerts.end(),
+                    [](const AlertRecord& a) { return a.indicator == "process:monitored.exe"; });
+                REQUIRE_FALSE(watched_alert);
+            }
+        }
+    }
+}
+
+SCENARIO("Process monitoring with process_readings=1 fires red on the very first missing observation")
+{
+    GIVEN("an approved agent with a watched process and process_readings=1")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-proc-fast");
+
+        auto agent = store.get_agent("agent-proc-fast");
+        REQUIRE(agent.has_value());
+        ProcessWatchConfig watch;
+        watch.name           = "critical.exe";
+        watch.expected_count = 1;
+        agent->collector_config.processes.push_back(watch);
+        agent->collector_config.process_readings = 1; // first miss → immediate red
+        store.set_agent_collector_config(agent->agent_id, agent->collector_config);
+
+        StatusEngine engine(store);
+
+        // Establish Green state by first evaluating with the process present.
+        auto with_proc = metrics_with_processes({"critical.exe"});
+        insert_metrics(store, "agent-proc-fast", 1000, with_proc);
+        engine.evaluate_metrics("agent-proc-fast", with_proc, 1000);
+
+        WHEN("the watched process disappears in the very next snapshot")
+        {
+            auto missing = metrics_with_processes({"something-else.exe"});
+            insert_metrics(store, "agent-proc-fast", 2000, missing);
+            engine.evaluate_metrics("agent-proc-fast", missing, 2000);
+
+            THEN("a red alert fires immediately without waiting for multiple readings")
+            {
+                auto alerts = store.list_unacknowledged_alerts();
+                auto it = std::find_if(alerts.begin(), alerts.end(),
+                    [](const AlertRecord& a) { return a.indicator == "process:critical.exe"; });
+                REQUIRE(it != alerts.end());
+                REQUIRE(it->new_status == "red");
+            }
+        }
+    }
+}
+
+// ── Exit maintenance: indicators remain blue until next evaluation ────────────
+
+SCENARIO("exit_maintenance clears the maintenance flag but does not immediately re-evaluate indicators")
+{
+    GIVEN("an approved agent in maintenance mode (indicators are blue)")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-exit-maint2");
+
+        StatusEngine engine(store);
+        engine.enter_maintenance("agent-exit-maint2", "patching", 99999, 1000);
+
+        auto cpu_blue = store.latest_status_for_indicator("agent-exit-maint2", "cpu");
+        REQUIRE(cpu_blue.has_value());
+        REQUIRE(cpu_blue->new_status == "blue");
+
+        WHEN("exit_maintenance is called")
+        {
+            engine.exit_maintenance("agent-exit-maint2");
+
+            THEN("the agent maintenance flag is cleared")
+            {
+                auto agent = store.get_agent("agent-exit-maint2");
+                REQUIRE(agent.has_value());
+                REQUIRE(agent->maintenance == false);
+            }
+
+            AND_THEN("the cpu indicator status is still blue (no re-evaluation has occurred)")
+            {
+                auto cpu_status = store.latest_status_for_indicator("agent-exit-maint2", "cpu");
+                REQUIRE(cpu_status.has_value());
+                REQUIRE(cpu_status->new_status == "blue");
+            }
+
+            AND_WHEN("a new normal metrics snapshot is evaluated after exiting maintenance")
+            {
+                auto normal = metrics_with_cpu(10.0);
+                insert_metrics(store, "agent-exit-maint2", 2000, normal);
+                engine.evaluate_metrics("agent-exit-maint2", normal, 2000);
+
+                THEN("the cpu indicator returns to green after the first post-maintenance evaluation")
+                {
+                    auto cpu_status = store.latest_status_for_indicator("agent-exit-maint2", "cpu");
+                    REQUIRE(cpu_status.has_value());
+                    REQUIRE(cpu_status->new_status == "green");
+                }
+            }
+        }
+    }
+}
+
+// ── non-finite CPU values ─────────────────────────────────────────────────────
+
+SCENARIO("classify_percent treats NaN and infinite CPU values as grey")
+{
+    GIVEN("an approved agent with an established green CPU state")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-nan");
+        StatusEngine engine(store);
+
+        auto baseline = metrics_with_cpu(10.0);
+        insert_metrics(store, "agent-nan", 1000, baseline);
+        engine.evaluate_metrics("agent-nan", baseline, 1000);
+
+        WHEN("a metrics snapshot with NaN CPU is evaluated")
+        {
+            auto nan_metrics = metrics_with_cpu(std::numeric_limits<double>::quiet_NaN());
+            insert_metrics(store, "agent-nan", 2000, nan_metrics);
+            engine.evaluate_metrics("agent-nan", nan_metrics, 2000);
+
+            THEN("the cpu indicator transitions to grey (non-finite → grey classification)")
+            {
+                auto s = store.latest_status_for_indicator("agent-nan", "cpu");
+                REQUIRE(s.has_value());
+                REQUIRE(s->new_status == "grey");
+            }
+        }
+    }
+}
