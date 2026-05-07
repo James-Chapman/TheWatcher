@@ -637,3 +637,153 @@ SCENARIO("Metrics pruning is triggered by evaluate_metrics after one hour")
         }
     }
 }
+
+// ── Anomaly detection ─────────────────────────────────────────────────────────
+
+SCENARIO("Anomaly detection upgrades a green CPU reading to yellow when it exceeds multiplier times the baseline mean")
+{
+    GIVEN("an approved agent with CPU anomaly detection enabled (multiplier=2.0, window=1h) and an established green state")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-anomaly");
+
+        auto agent = store.get_agent("agent-anomaly");
+        REQUIRE(agent.has_value());
+        agent->collector_config.cpu_anomaly.multiplier            = 2.0;
+        agent->collector_config.cpu_anomaly.baseline_window_hours = 1;
+        store.set_agent_collector_config(agent->agent_id, agent->collector_config);
+
+        StatusEngine engine(store);
+
+        // Seed 10 baseline metrics at 10% CPU (mean = 10.0).
+        auto baseline = metrics_with_cpu(10.0);
+        for (int i = 1; i <= 10; ++i)
+            store.insert_metrics({agent->agent_id, static_cast<int64_t>(i * 1000), thewatcher::proto::pack(baseline)});
+
+        // First evaluation at t=300,000 establishes the Green prior state and fills
+        // the anomaly cache (cache TTL = 5 min; 300,000 ms >= 300,000 → cold start).
+        // 10.0% < 2× mean=10.0 so no anomaly fires here.
+        insert_metrics(store, "agent-anomaly", 300'000, baseline);
+        engine.evaluate_metrics("agent-anomaly", baseline, 300'000);
+
+        WHEN("a reading of 25% CPU is evaluated at t=700,000 (above 2x mean=10, below warning=80)")
+        {
+            // t=700,000: cache age = 700,000 - 300,000 = 400,000 >= 300,000 → recomputes mean.
+            auto elevated = metrics_with_cpu(25.0);
+            engine.evaluate_metrics("agent-anomaly", elevated, 700'000);
+
+            THEN("an anomaly alert fires with yellow status even though 25% is below the warning threshold")
+            {
+                auto alerts = store.list_unacknowledged_alerts();
+                auto cpu_it = std::find_if(alerts.begin(), alerts.end(),
+                    [](const AlertRecord& a) { return a.indicator == "cpu"; });
+                REQUIRE(cpu_it != alerts.end());
+                REQUIRE(cpu_it->old_status == "green");
+                REQUIRE(cpu_it->new_status == "yellow");
+            }
+        }
+
+        WHEN("a reading of 15% CPU is evaluated at t=700,000 (below 2x mean=10)")
+        {
+            auto normal = metrics_with_cpu(15.0);
+            engine.evaluate_metrics("agent-anomaly", normal, 700'000);
+
+            THEN("no anomaly alert is raised")
+            {
+                auto alerts = store.list_unacknowledged_alerts();
+                bool cpu_yellow = std::any_of(alerts.begin(), alerts.end(),
+                    [](const AlertRecord& a) { return a.indicator == "cpu" && a.new_status == "yellow"; });
+                REQUIRE_FALSE(cpu_yellow);
+            }
+        }
+    }
+}
+
+SCENARIO("Anomaly detection does not fire when fewer than 10 baseline samples are available")
+{
+    GIVEN("an approved agent with CPU anomaly enabled but only 9 baseline samples")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-few-samples");
+
+        auto agent = store.get_agent("agent-few-samples");
+        REQUIRE(agent.has_value());
+        agent->collector_config.cpu_anomaly.multiplier            = 2.0;
+        agent->collector_config.cpu_anomaly.baseline_window_hours = 1;
+        store.set_agent_collector_config(agent->agent_id, agent->collector_config);
+
+        StatusEngine engine(store);
+
+        // Only 9 rows — below the minimum of 10 required for a baseline mean.
+        // We do NOT insert a 10th metric for the Green-establishing call so the
+        // count stays at 9 throughout the scenario.
+        auto baseline = metrics_with_cpu(10.0);
+        for (int i = 1; i <= 9; ++i)
+            store.insert_metrics({agent->agent_id, static_cast<int64_t>(i * 1000), thewatcher::proto::pack(baseline)});
+
+        // Establish Green prior state without seeding an extra row (sparse baseline → mean=-1 → no anomaly).
+        engine.evaluate_metrics("agent-few-samples", baseline, 300'000);
+
+        WHEN("a reading well above the expected anomaly multiplier is evaluated")
+        {
+            auto elevated = metrics_with_cpu(40.0);
+            engine.evaluate_metrics("agent-few-samples", elevated, 700'000);
+
+            THEN("no anomaly alert is raised because the baseline is too sparse")
+            {
+                auto alerts = store.list_unacknowledged_alerts();
+                bool cpu_yellow = std::any_of(alerts.begin(), alerts.end(),
+                    [](const AlertRecord& a) { return a.indicator == "cpu" && a.new_status == "yellow"; });
+                REQUIRE_FALSE(cpu_yellow);
+            }
+        }
+    }
+}
+
+// ── Stale metric detection ────────────────────────────────────────────────────
+
+SCENARIO("Stale metric detection upgrades a green CPU indicator to yellow when value is unchanged for too long")
+{
+    GIVEN("an approved agent with stale detection configured (stale_after_seconds=10)")
+    {
+        SqliteStore store(":memory:");
+        insert_approved_agent(store, "agent-stale");
+
+        auto agent = store.get_agent("agent-stale");
+        REQUIRE(agent.has_value());
+        agent->collector_config.stale_after_seconds = 10;
+        store.set_agent_collector_config(agent->agent_id, agent->collector_config);
+
+        StatusEngine engine(store);
+
+        // First evaluation: establishes Green state and seeds the staleness clock.
+        auto steady = metrics_with_cpu(50.0);
+        insert_metrics(store, "agent-stale", 1000, steady);
+        engine.evaluate_metrics("agent-stale", steady, 1000);
+
+        WHEN("the same CPU value is reported again after 11 seconds")
+        {
+            engine.evaluate_metrics("agent-stale", steady, 12'000);
+
+            THEN("the CPU indicator is promoted to yellow by the stale detection")
+            {
+                auto cpu_status = store.latest_status_for_indicator("agent-stale", "cpu");
+                REQUIRE(cpu_status.has_value());
+                REQUIRE(cpu_status->new_status == "yellow");
+            }
+        }
+
+        WHEN("a different CPU value is reported after 11 seconds (value changed by more than epsilon)")
+        {
+            auto changed = metrics_with_cpu(51.0); // 51 - 50 = 1.0 >> epsilon (0.01)
+            engine.evaluate_metrics("agent-stale", changed, 12'000);
+
+            THEN("the CPU indicator remains green because the value changed")
+            {
+                auto cpu_status = store.latest_status_for_indicator("agent-stale", "cpu");
+                REQUIRE(cpu_status.has_value());
+                REQUIRE(cpu_status->new_status == "green");
+            }
+        }
+    }
+}
