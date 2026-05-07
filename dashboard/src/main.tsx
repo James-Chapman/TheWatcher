@@ -22,6 +22,7 @@ import {
   enableUser,
   fetchAgentHistory,
   fetchAlerts,
+  fetchLogMatches,
   fetchMetricHistory,
   fetchSession,
   fetchSettings,
@@ -49,6 +50,8 @@ import type {
   DiskMonitorConfig,
   GroupRecord,
   HealthColor,
+  LogMatchRecord,
+  LogMonitorConfig,
   MaintenanceWindowRecord,
   MetricsSnapshot,
   NetworkInterfaceConfig,
@@ -354,6 +357,7 @@ function MonitoringTable({
   const [agentHistory, setAgentHistory] = React.useState<Record<string, MetricsSnapshot[]>>({});
   const [agentUptime, setAgentUptime] = React.useState<Record<string, number>>({});
   const [agentStatusHistory, setAgentStatusHistory] = React.useState<Record<string, StatusHistoryRow[]>>({});
+  const [agentLogMatches, setAgentLogMatches] = React.useState<Record<string, LogMatchRecord[]>>({});
 
   React.useEffect(() => {
     for (const id of expanded) {
@@ -366,6 +370,9 @@ function MonitoringTable({
         }).catch(() => undefined);
         void fetchAgentHistory(id, 20).then((rows) => {
           setAgentStatusHistory((prev) => ({ ...prev, [id]: rows }));
+        }).catch(() => undefined);
+        void fetchLogMatches(id, 20).then((rows) => {
+          setAgentLogMatches((prev) => ({ ...prev, [id]: rows }));
         }).catch(() => undefined);
       }
     }
@@ -496,6 +503,23 @@ function MonitoringTable({
                                       <td>→</td>
                                       <td><span className={`dot ${row.new_status} small-dot`} /></td>
                                       <td className="history-msg">{row.message}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : null}
+                          {(agentLogMatches[agent.id]?.length ?? 0) > 0 ? (
+                            <div className="detail-card detail-card-wide">
+                              <div className="detail-card-header"><span>Log Matches</span></div>
+                              <table className="history-table">
+                                <tbody>
+                                  {agentLogMatches[agent.id].slice(0, 10).map((row) => (
+                                    <tr key={row.match_id}>
+                                      <td className="history-ts">{new Date(row.created_at).toLocaleString()}</td>
+                                      <td>{row.indicator_name}</td>
+                                      <td><span className={`dot ${row.severity} small-dot`} /></td>
+                                      <td className="history-msg" title={row.matched_line}>{row.path}: {row.matched_line.slice(0, 80)}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -676,6 +700,7 @@ function buildCollectorDraft(agent: DashboardAgent): AgentCollectorConfigUpdate 
         ...metricNetworks,
       ],
       processes: config.processes.map((process) => ({ ...process })),
+      logs: (config.logs ?? []).map((log) => ({ ...log })),
     },
   };
 }
@@ -730,6 +755,12 @@ function AgentConfigModal({
     updateConfig((config) => ({
       ...config,
       processes: config.processes.map((process, currentIndex) => (currentIndex === index ? update(process) : process)),
+    }));
+  };
+  const updateLog = (index: number, update: (log: LogMonitorConfig) => LogMonitorConfig) => {
+    updateConfig((config) => ({
+      ...config,
+      logs: (config.logs ?? []).map((log, currentIndex) => (currentIndex === index ? update(log) : log)),
     }));
   };
 
@@ -852,6 +883,43 @@ function AgentConfigModal({
                 </div>
               ))}
               {draft.collector_config.processes.length === 0 ? <div className="empty-config">No process watches configured.</div> : null}
+            </div>
+          </section>
+
+          <section className="wide-section">
+            <div className="section-title-row">
+              <h2>Log Watches</h2>
+              <ActionButton
+                busy={false}
+                icon={<Plus size={14} />}
+                label="Log Watch"
+                onClick={() =>
+                  updateConfig((config) => ({
+                    ...config,
+                    logs: [...(config.logs ?? []), { path: '', pattern: '', indicator_name: '', severity: 'red', enabled: true }],
+                  }))
+                }
+              />
+            </div>
+            <div className="config-list">
+              {(draft.collector_config.logs ?? []).map((log, index) => (
+                <div className="process-row" key={`log:${index}`}>
+                  <label className="toggle-line">
+                    <input type="checkbox" checked={log.enabled} onChange={(event) => updateLog(index, (current) => ({ ...current, enabled: event.target.checked }))} />
+                    <span>Enabled</span>
+                  </label>
+                  <input value={log.path} placeholder="/var/log/syslog" onChange={(event) => updateLog(index, (current) => ({ ...current, path: event.target.value }))} />
+                  <input value={log.pattern} placeholder="regex pattern" onChange={(event) => updateLog(index, (current) => ({ ...current, pattern: event.target.value }))} />
+                  <input value={log.indicator_name} placeholder="indicator name" onChange={(event) => updateLog(index, (current) => ({ ...current, indicator_name: event.target.value }))} />
+                  <select value={log.severity} onChange={(event) => updateLog(index, (current) => ({ ...current, severity: event.target.value as LogMonitorConfig['severity'] }))}>
+                    <option value="yellow">Warning</option>
+                    <option value="amber">Degraded</option>
+                    <option value="red">Critical</option>
+                  </select>
+                  <ActionButton busy={false} danger icon={<Trash2 size={14} />} label="Remove" onClick={() => updateConfig((config) => ({ ...config, logs: (config.logs ?? []).filter((_, currentIndex) => currentIndex !== index) }))} />
+                </div>
+              ))}
+              {(draft.collector_config.logs ?? []).length === 0 ? <div className="empty-config">No log watches configured.</div> : null}
             </div>
           </section>
         </div>

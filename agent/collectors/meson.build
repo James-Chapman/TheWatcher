@@ -3,6 +3,7 @@ collectors_lib = static_library(
   [
     'cpu_collector.cpp',
     'disk_collector.cpp',
+    'log_collector.cpp',
     'memory_collector.cpp',
     'network_collector.cpp',
     'process_collector.cpp',

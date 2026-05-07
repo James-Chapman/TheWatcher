@@ -46,6 +46,8 @@ namespace
             return "ENROLL_RESPONSE";
         case FrameType::CONFIG_REQUEST:
             return "CONFIG_REQUEST";
+        case FrameType::LOG_MATCH:
+            return "LOG_MATCH";
         }
         return "UNKNOWN";
     }
@@ -429,6 +431,40 @@ void Server::handle_router_frame(zmq::socket_t& router)
         catch (const std::exception& e)
         {
             LOGF_WARNING("Failed to unpack command ACK from %s: %s", agent_id.c_str(), e.what());
+        }
+    }
+    else if (ftype == FrameType::LOG_MATCH)
+    {
+        try
+        {
+            auto match = unpack<LogMatch>(frame.payload);
+            LogMatchRecord rec;
+            rec.agent_id = agent_id;
+            rec.indicator_name = match.indicator_name;
+            rec.path = match.path;
+            rec.matched_line = match.matched_line;
+            rec.severity = match.severity;
+            rec.created_at = frame.timestamp_ms;
+            store_->insert_log_match(rec);
+
+            // Raise an alert on the named indicator so it shows up on the dashboard.
+            if (!store_->is_silenced(agent_id, match.indicator_name, frame.timestamp_ms))
+            {
+                AlertRecord alert;
+                alert.agent_id = agent_id;
+                alert.indicator = match.indicator_name;
+                alert.old_status = "green";
+                alert.new_status = match.severity;
+                alert.message = "Log match in " + match.path + ": " + match.matched_line.substr(0, 200);
+                alert.created_at = frame.timestamp_ms;
+                store_->insert_alert(alert);
+                LOGF_INFO("Log match alert agent_id=%s indicator=%s severity=%s path=%s", agent_id.c_str(),
+                          match.indicator_name.c_str(), match.severity.c_str(), match.path.c_str());
+            }
+        }
+        catch (const std::exception& e)
+        {
+            LOGF_WARNING("LOG_MATCH error for %s: %s", agent_id.c_str(), e.what());
         }
     }
     else

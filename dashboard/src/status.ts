@@ -76,6 +76,7 @@ export const DEFAULT_COLLECTOR_CONFIG: CollectorConfig = {
   cpu_anomaly: DEFAULT_ANOMALY_CONFIG,
   memory_anomaly: DEFAULT_ANOMALY_CONFIG,
   stale_after_seconds: 0,
+  logs: [],
 };
 
 export function collectorConfigWithDefaults(config?: CollectorConfig): CollectorConfig {
@@ -90,6 +91,7 @@ export function collectorConfigWithDefaults(config?: CollectorConfig): Collector
     cpu_anomaly: { ...DEFAULT_ANOMALY_CONFIG, ...(config?.cpu_anomaly ?? {}) },
     memory_anomaly: { ...DEFAULT_ANOMALY_CONFIG, ...(config?.memory_anomaly ?? {}) },
     stale_after_seconds: config?.stale_after_seconds ?? 0,
+    logs: config?.logs ?? [],
   };
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "collectors/collector.hpp"
+#include "collectors/log_collector.hpp"
 #include "common/commands.hpp"
 #include "common/metrics.hpp"
 #include "common/protocol.hpp"
@@ -53,6 +54,7 @@ private:
     zmq::context_t ctx_{1};
     zmq::socket_t dealer_{ctx_, ZMQ_DEALER};
     std::vector<std::unique_ptr<Collector>> collectors_;
+    LogCollector* log_collector_ = nullptr; // raw pointer into collectors_, owned by collectors_
 
     // Outbox: frames queued by collection/heartbeat threads, drained by IO thread
     std::queue<std::vector<uint8_t>> outbox_;

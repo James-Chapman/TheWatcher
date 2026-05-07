@@ -60,6 +60,15 @@ struct ProcessWatchConfig
     bool enabled = true;
 };
 
+struct LogMonitorConfig
+{
+    std::string path;
+    std::string pattern;
+    std::string indicator_name;
+    std::string severity = "red"; // "yellow", "amber", or "red"
+    bool enabled = true;
+};
+
 struct CollectorConfig
 {
     PercentThresholds cpu;
@@ -75,6 +84,7 @@ struct CollectorConfig
     AnomalyConfig cpu_anomaly;
     AnomalyConfig memory_anomaly;
     int stale_after_seconds = 0; // 0 = disabled
+    std::vector<LogMonitorConfig> logs;
 };
 
 inline CollectorConfig default_collector_config()
@@ -89,9 +99,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(AnomalyConfig, multiplier, basel
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DiskMonitorConfig, mount_point, device, enabled, thresholds, anomaly)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NetworkInterfaceConfig, interface_name, enabled, thresholds, anomaly)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ProcessWatchConfig, name, expected_count, enabled)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(LogMonitorConfig, path, pattern, indicator_name, severity, enabled)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(CollectorConfig, cpu, memory, cpu_readings, memory_readings,
                                                 disk_readings, network_readings, process_readings, disks, networks,
-                                                processes, cpu_anomaly, memory_anomaly, stale_after_seconds)
+                                                processes, cpu_anomaly, memory_anomaly, stale_after_seconds, logs)
 
 } // namespace thewatcher
 
@@ -317,6 +328,32 @@ inline thewatcher::ProcessWatchConfig from_cbor<thewatcher::ProcessWatchConfig>(
     return c;
 }
 
+template <>
+inline CborPtr to_cbor(const thewatcher::LogMonitorConfig& c)
+{
+    auto root = adopt(cbor_new_definite_array(5));
+    push(root.get(), make_string(c.path));
+    push(root.get(), make_string(c.pattern));
+    push(root.get(), make_string(c.indicator_name));
+    push(root.get(), make_string(c.severity));
+    push(root.get(), make_bool(c.enabled));
+    return root;
+}
+
+template <>
+inline thewatcher::LogMonitorConfig from_cbor<thewatcher::LogMonitorConfig>(cbor_item_t* item)
+{
+    if (!cbor_isa_array(item) || cbor_array_size(item) < 5)
+        throw std::runtime_error("Invalid LogMonitorConfig CBOR payload");
+    thewatcher::LogMonitorConfig c;
+    c.path = read_string(array_get(item, 0));
+    c.pattern = read_string(array_get(item, 1));
+    c.indicator_name = read_string(array_get(item, 2));
+    c.severity = read_string(array_get(item, 3));
+    c.enabled = read_bool(array_get(item, 4));
+    return c;
+}
+
 // ── vector helpers ───────────────────────────────────────────────────────────
 // Defined after per-struct overloads so to_cbor(value) / from_cbor<T>(item)
 // resolve to the correct specialisations at template instantiation.
@@ -357,7 +394,7 @@ inline std::vector<T> config_read_vector(cbor_item_t* item)
 template <>
 inline CborPtr to_cbor(const thewatcher::CollectorConfig& c)
 {
-    auto root = adopt(cbor_new_definite_array(13));
+    auto root = adopt(cbor_new_definite_array(14));
 
     auto cpu = to_cbor(c.cpu);
     auto memory = to_cbor(c.memory);
@@ -366,6 +403,7 @@ inline CborPtr to_cbor(const thewatcher::CollectorConfig& c)
     auto processes = config_to_cbor_vector(c.processes);
     auto cpu_anomaly = to_cbor(c.cpu_anomaly);
     auto memory_anomaly = to_cbor(c.memory_anomaly);
+    auto logs = config_to_cbor_vector(c.logs);
 
     push(root.get(), cpu.release());
     push(root.get(), memory.release());
@@ -380,6 +418,7 @@ inline CborPtr to_cbor(const thewatcher::CollectorConfig& c)
     push(root.get(), cpu_anomaly.release());
     push(root.get(), memory_anomaly.release());
     push(root.get(), config_make_int(c.stale_after_seconds));
+    push(root.get(), logs.release());
 
     return root;
 }
@@ -410,6 +449,8 @@ inline thewatcher::CollectorConfig from_cbor<thewatcher::CollectorConfig>(cbor_i
     }
     if (cbor_array_size(item) >= 13)
         c.stale_after_seconds = config_read_int(array_get(item, 12));
+    if (cbor_array_size(item) >= 14)
+        c.logs = config_read_vector<thewatcher::LogMonitorConfig>(array_get(item, 13));
 
     return c;
 }

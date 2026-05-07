@@ -2,6 +2,7 @@
 
 #include "collectors/cpu_collector.hpp"
 #include "collectors/disk_collector.hpp"
+#include "collectors/log_collector.hpp"
 #include "collectors/memory_collector.hpp"
 #include "collectors/network_collector.hpp"
 #include "collectors/process_collector.hpp"
@@ -41,6 +42,8 @@ namespace
             return "ENROLL_RESPONSE";
         case proto::FrameType::CONFIG_REQUEST:
             return "CONFIG_REQUEST";
+        case proto::FrameType::LOG_MATCH:
+            return "LOG_MATCH";
         }
         return "UNKNOWN";
     }
@@ -113,6 +116,11 @@ Agent::Agent(AgentConfig config)
     collectors_.emplace_back(std::make_unique<TemperatureCollector>());
     collectors_.emplace_back(std::make_unique<ProcessCollector>(process_limit_.load()));
     collectors_.emplace_back(std::make_unique<NetworkCollector>());
+    {
+        auto lc = std::make_unique<LogCollector>();
+        log_collector_ = lc.get();
+        collectors_.emplace_back(std::move(lc));
+    }
     LOGF_DEBUG("Registered %zu collectors", collectors_.size());
 }
 
@@ -254,6 +262,24 @@ void Agent::collection_loop(std::stop_token st)
                            encoded_metrics.size());
                 enqueue(std::move(encoded_metrics));
 
+                // Poll log files and forward any matches.
+                if (log_collector_ != nullptr)
+                {
+                    log_collector_->tick();
+                    auto matches = log_collector_->take_matches();
+                    for (const auto& m : matches)
+                    {
+                        proto::Frame lf;
+                        lf.type = static_cast<uint8_t>(proto::FrameType::LOG_MATCH);
+                        lf.agent_id = config_.agent_id;
+                        lf.timestamp_ms = f.timestamp_ms;
+                        lf.payload = proto::pack(m);
+                        enqueue(proto::encode_frame(lf));
+                        LOGF_DEBUG("Queued LOG_MATCH frame agent_id=%s indicator=%s path=%s",
+                                   lf.agent_id.c_str(), m.indicator_name.c_str(), m.path.c_str());
+                    }
+                }
+
                 proto::Frame cfg_request;
                 cfg_request.type = static_cast<uint8_t>(proto::FrameType::CONFIG_REQUEST);
                 cfg_request.agent_id = config_.agent_id;
@@ -368,6 +394,8 @@ void Agent::handle_frame(const proto::Frame& f)
                 process->set_watches(collector_config_.processes);
             }
         }
+        if (log_collector_ != nullptr)
+            log_collector_->set_configs(collector_config_.logs);
     }
 }
 
@@ -431,13 +459,21 @@ void Agent::handle_command(const CommandMessage& cmd)
     case CommandType::RESTART_COLLECTORS:
         LOG_INFO("Restarting collectors");
         collectors_.clear();
+        log_collector_ = nullptr;
         collectors_.emplace_back(std::make_unique<CpuCollector>());
         collectors_.emplace_back(std::make_unique<MemoryCollector>());
         collectors_.emplace_back(std::make_unique<DiskCollector>());
         collectors_.emplace_back(std::make_unique<TemperatureCollector>());
         collectors_.emplace_back(std::make_unique<ProcessCollector>(process_limit_.load()));
         collectors_.emplace_back(std::make_unique<NetworkCollector>());
+        {
+            auto lc = std::make_unique<LogCollector>();
+            log_collector_ = lc.get();
+            collectors_.emplace_back(std::move(lc));
+        }
         apply_process_watches(collectors_, collector_config_.processes);
+        if (log_collector_ != nullptr)
+            log_collector_->set_configs(collector_config_.logs);
         ack(true, "collectors restarted");
         break;
     case CommandType::PAUSE:

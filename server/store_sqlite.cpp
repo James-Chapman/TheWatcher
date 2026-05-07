@@ -453,6 +453,19 @@ void SqliteStore::init_schema()
         );
     )");
     exec("CREATE INDEX IF NOT EXISTS idx_silences_until ON silences(until_ms);");
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS log_matches (
+            match_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id       TEXT NOT NULL,
+            indicator_name TEXT NOT NULL,
+            path           TEXT NOT NULL DEFAULT '',
+            matched_line   TEXT NOT NULL DEFAULT '',
+            severity       TEXT NOT NULL DEFAULT 'red',
+            created_at     INTEGER NOT NULL,
+            FOREIGN KEY(agent_id) REFERENCES agents(agent_id) ON DELETE CASCADE
+        );
+    )");
+    exec("CREATE INDEX IF NOT EXISTS idx_log_matches_agent_ts ON log_matches(agent_id, created_at DESC);");
 }
 
 void SqliteStore::bootstrap_defaults()
@@ -1401,6 +1414,49 @@ void SqliteStore::prune_metrics_before(int64_t cutoff_ms)
           db_, "prepare prune_metrics_before");
     sqlite3_bind_int64(st.s, 1, cutoff_ms);
     check(sqlite3_step(st.s), db_, "step prune_metrics_before");
+}
+
+void SqliteStore::insert_log_match(const LogMatchRecord& rec)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "INSERT INTO log_matches(agent_id,indicator_name,path,matched_line,severity,created_at) "
+                             "VALUES(?,?,?,?,?,?);",
+                             -1, &st.s, nullptr),
+          db_, "prepare insert_log_match");
+    sqlite3_bind_text(st.s, 1, rec.agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, rec.indicator_name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 3, rec.path.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 4, rec.matched_line.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 5, rec.severity.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 6, rec.created_at);
+    check(sqlite3_step(st.s), db_, "step insert_log_match");
+}
+
+std::vector<LogMatchRecord> SqliteStore::list_log_matches(const std::string& agent_id, int limit)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT match_id,agent_id,indicator_name,path,matched_line,severity,created_at "
+                             "FROM log_matches WHERE agent_id=? ORDER BY created_at DESC LIMIT ?;",
+                             -1, &st.s, nullptr),
+          db_, "prepare list_log_matches");
+    sqlite3_bind_text(st.s, 1, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st.s, 2, limit);
+    std::vector<LogMatchRecord> out;
+    while (sqlite3_step(st.s) == SQLITE_ROW)
+    {
+        LogMatchRecord r;
+        r.match_id = sqlite3_column_int64(st.s, 0);
+        r.agent_id = text_col(st.s, 1);
+        r.indicator_name = text_col(st.s, 2);
+        r.path = text_col(st.s, 3);
+        r.matched_line = text_col(st.s, 4);
+        r.severity = text_col(st.s, 5);
+        r.created_at = sqlite3_column_int64(st.s, 6);
+        out.push_back(std::move(r));
+    }
+    return out;
 }
 
 std::unique_ptr<Store> make_store(const std::string& db_type, const std::string& db_path_or_dsn)

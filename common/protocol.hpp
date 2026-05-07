@@ -23,6 +23,7 @@ enum class FrameType : uint8_t
     ENROLL_REQUEST = 0x06,
     ENROLL_RESPONSE = 0x07,
     CONFIG_REQUEST = 0x08,
+    LOG_MATCH = 0x09,
 };
 
 // Wire frame sent over every ZMQ message (CBOR-encoded).
@@ -49,6 +50,15 @@ struct EnrollResponse
     std::string message;
     std::string server_public_key_z85;
     std::string server_public_key_fingerprint;
+};
+
+// Sent by the agent when a log file line matches a configured pattern.
+struct LogMatch
+{
+    std::string indicator_name; // user-chosen indicator label
+    std::string path;           // file that was tailed
+    std::string matched_line;
+    std::string severity; // "yellow", "amber", or "red"
 };
 
 // ── libcbor helpers ───────────────────────────────────────────────────────────
@@ -342,6 +352,30 @@ inline EnrollResponse from_cbor<EnrollResponse>(cbor_item_t* item)
     r.server_public_key_fingerprint = read_string(array_get(item, 3));
 
     return r;
+}
+
+template <>
+inline CborPtr to_cbor(const LogMatch& m)
+{
+    auto root = adopt(cbor_new_definite_array(4));
+    push(root.get(), make_string(m.indicator_name));
+    push(root.get(), make_string(m.path));
+    push(root.get(), make_string(m.matched_line));
+    push(root.get(), make_string(m.severity));
+    return root;
+}
+
+template <>
+inline LogMatch from_cbor<LogMatch>(cbor_item_t* item)
+{
+    if (!cbor_isa_array(item) || cbor_array_size(item) < 4)
+        throw std::runtime_error("Invalid LogMatch CBOR payload");
+    LogMatch m;
+    m.indicator_name = read_string(array_get(item, 0));
+    m.path = read_string(array_get(item, 1));
+    m.matched_line = read_string(array_get(item, 2));
+    m.severity = read_string(array_get(item, 3));
+    return m;
 }
 
 } // namespace detail

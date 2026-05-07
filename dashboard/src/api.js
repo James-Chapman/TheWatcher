@@ -196,3 +196,6 @@ export async function deleteSilence(silenceId) {
 export async function fetchAgentHistory(agentId, limit = 100) {
     return fetchJson(`/api/agents/${encodeURIComponent(agentId)}/history?limit=${limit}`);
 }
+export async function fetchLogMatches(agentId, limit = 200) {
+    return fetchJson(`/api/agents/${encodeURIComponent(agentId)}/log-matches?limit=${limit}`);
+}

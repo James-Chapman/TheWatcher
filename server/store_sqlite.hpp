@@ -87,6 +87,8 @@ public:
     void delete_silence(int64_t silence_id) override;
     bool is_silenced(const std::string& agent_id, const std::string& indicator, int64_t now_ms) override;
     void prune_metrics_before(int64_t cutoff_ms) override;
+    void insert_log_match(const LogMatchRecord& rec) override;
+    std::vector<LogMatchRecord> list_log_matches(const std::string& agent_id, int limit) override;
 
 private:
     void exec(const char* sql);
