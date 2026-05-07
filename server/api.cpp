@@ -1401,6 +1401,44 @@ void ApiServer::setup_routes()
     http_->Post("/api/agents/:id/disconnect", simple_cmd(CommandType::DISCONNECT));
     http_->Post("/api/agents/:id/get_status", simple_cmd(CommandType::GET_STATUS));
 
+    // GET /api/agents/:id/log-matches?limit=N
+    http_->Get("/api/agents/:id/log-matches", [this](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto id = req.path_params.at("id");
+            if (!require_agent_access(req, res, "viewer", id))
+                return;
+            int limit = 200;
+            if (req.has_param("limit"))
+            {
+                const auto val = std::stoi(req.get_param_value("limit"));
+                if (val > 0 && val <= 1000)
+                    limit = val;
+            }
+            auto rows = store_.list_log_matches(id, limit);
+            json arr = json::array();
+            for (const auto& r : rows)
+            {
+                arr.push_back({
+                    {"match_id", r.match_id},
+                    {"agent_id", r.agent_id},
+                    {"indicator_name", r.indicator_name},
+                    {"path", r.path},
+                    {"matched_line", r.matched_line},
+                    {"severity", r.severity},
+                    {"created_at", r.created_at},
+                });
+            }
+            res.set_content(arr.dump(), "application/json");
+        }
+        catch (const std::exception& e)
+        {
+            LOGF_WARNING("GET /api/agents/:id/log-matches failed: %s", e.what());
+            res.status = 500;
+            res.set_content(R"({"error":"internal error"})", "application/json");
+        }
+    });
+
     // GET /api/uptime/:id?days=N — uptime percentage for one agent
     http_->Get("/api/uptime/:id", [this](const httplib::Request& req, httplib::Response& res) {
         try

@@ -74,6 +74,22 @@ export interface ProcessWatchConfig {
     expected_count: number;
     enabled: boolean;
 }
+export interface LogMonitorConfig {
+    path: string;
+    pattern: string;
+    indicator_name: string;
+    severity: 'yellow' | 'amber' | 'red';
+    enabled: boolean;
+}
+export interface LogMatchRecord {
+    match_id: number;
+    agent_id: string;
+    indicator_name: string;
+    path: string;
+    matched_line: string;
+    severity: string;
+    created_at: number;
+}
 export interface CollectorConfig {
     cpu: PercentThresholds;
     memory: PercentThresholds;
@@ -88,6 +104,7 @@ export interface CollectorConfig {
     cpu_anomaly?: AnomalyConfig;
     memory_anomaly?: AnomalyConfig;
     stale_after_seconds?: number;
+    logs?: LogMonitorConfig[];
 }
 export interface AgentCollectorConfigUpdate {
     collection_interval: number;

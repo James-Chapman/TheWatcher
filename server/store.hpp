@@ -135,6 +135,17 @@ struct PendingStatusRecord
     int count = 0;
 };
 
+struct LogMatchRecord
+{
+    int64_t match_id = 0;
+    std::string agent_id;
+    std::string indicator_name;
+    std::string path;
+    std::string matched_line;
+    std::string severity;
+    int64_t created_at = 0;
+};
+
 class Store
 {
 public:
@@ -213,6 +224,8 @@ public:
     virtual void delete_silence(int64_t silence_id) = 0;
     virtual bool is_silenced(const std::string& agent_id, const std::string& indicator, int64_t now_ms) = 0;
     virtual void prune_metrics_before(int64_t cutoff_ms) = 0;
+    virtual void insert_log_match(const LogMatchRecord& rec) = 0;
+    virtual std::vector<LogMatchRecord> list_log_matches(const std::string& agent_id, int limit = 200) = 0;
 };
 
 std::unique_ptr<Store> make_store(const std::string& db_type, const std::string& db_path_or_dsn);

@@ -4,6 +4,7 @@ import type {
   AgentThresholds,
   AlertRecord,
   GroupRecord,
+  LogMatchRecord,
   MaintenanceWindowRecord,
   MetricsSnapshot,
   ServerSettings,
@@ -282,5 +283,11 @@ export async function deleteSilence(silenceId: number): Promise<void> {
 export async function fetchAgentHistory(agentId: string, limit = 100): Promise<StatusHistoryRow[]> {
   return fetchJson<StatusHistoryRow[]>(
     `/api/agents/${encodeURIComponent(agentId)}/history?limit=${limit}`,
+  );
+}
+
+export async function fetchLogMatches(agentId: string, limit = 200): Promise<LogMatchRecord[]> {
+  return fetchJson<LogMatchRecord[]>(
+    `/api/agents/${encodeURIComponent(agentId)}/log-matches?limit=${limit}`,
   );
 }
