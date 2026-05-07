@@ -269,8 +269,10 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
         const auto confirmed = confirm_numeric_status(agent_id, indicator, previous, raw, config.cpu_readings);
-        const auto next = maybe_anomaly_status(confirmed, agent_id, indicator, metrics.cpu.usage_percent,
-                                               config.cpu_anomaly, timestamp_ms);
+        const auto anomaly = maybe_anomaly_status(confirmed, agent_id, indicator, metrics.cpu.usage_percent,
+                                                  config.cpu_anomaly, timestamp_ms);
+        const auto next = maybe_stale_status(anomaly, agent_id, indicator, metrics.cpu.usage_percent,
+                                             config.stale_after_seconds, timestamp_ms);
         record_transition(agent_id, indicator, next,
                           transition_message(indicator, previous, next, metrics.cpu.usage_percent, "%"), timestamp_ms);
     }
@@ -281,8 +283,10 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
         const auto confirmed = confirm_numeric_status(agent_id, indicator, previous, raw, config.memory_readings);
-        const auto next = maybe_anomaly_status(confirmed, agent_id, indicator, metrics.memory.usage_percent,
-                                               config.memory_anomaly, timestamp_ms);
+        const auto anomaly = maybe_anomaly_status(confirmed, agent_id, indicator, metrics.memory.usage_percent,
+                                                  config.memory_anomaly, timestamp_ms);
+        const auto next = maybe_stale_status(anomaly, agent_id, indicator, metrics.memory.usage_percent,
+                                             config.stale_after_seconds, timestamp_ms);
         record_transition(agent_id, indicator, next,
                           transition_message(indicator, previous, next, metrics.memory.usage_percent, "%"),
                           timestamp_ms);
@@ -304,8 +308,10 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
         const auto confirmed = confirm_numeric_status(agent_id, indicator, previous, raw, config.disk_readings);
-        const auto next = maybe_anomaly_status(confirmed, agent_id, indicator, disk.usage_percent, anomaly_cfg,
-                                               timestamp_ms);
+        const auto anomaly = maybe_anomaly_status(confirmed, agent_id, indicator, disk.usage_percent, anomaly_cfg,
+                                                  timestamp_ms);
+        const auto next = maybe_stale_status(anomaly, agent_id, indicator, disk.usage_percent,
+                                             config.stale_after_seconds, timestamp_ms);
         record_transition(agent_id, indicator, next,
                           transition_message("disk " + disk_label(disk), previous, next, disk.usage_percent, "%"),
                           timestamp_ms);
@@ -333,9 +339,13 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
         const auto confirmed = confirm_numeric_status(agent_id, indicator, previous, raw, config.network_readings);
+        const auto anomaly = network.is_up
+                                 ? maybe_anomaly_status(confirmed, agent_id, indicator, value, anomaly_cfg, timestamp_ms)
+                                 : confirmed;
         const auto next = network.is_up
-                              ? maybe_anomaly_status(confirmed, agent_id, indicator, value, anomaly_cfg, timestamp_ms)
-                              : confirmed;
+                              ? maybe_stale_status(anomaly, agent_id, indicator, value,
+                                                   config.stale_after_seconds, timestamp_ms)
+                              : anomaly;
         record_transition(agent_id, indicator, next,
                           transition_message("network " + network.interface_name, previous, next, value, "Mbps"),
                           timestamp_ms);
@@ -550,6 +560,36 @@ IndicatorStatus StatusEngine::maybe_anomaly_status(IndicatorStatus threshold_sta
         LOGF_DEBUG("Anomaly detected agent_id=%s indicator=%s value=%.2f mean=%.2f multiplier=%.2f",
                    agent_id.c_str(), indicator.c_str(), current_value, entry.mean, anomaly_cfg.multiplier);
         // Upgrade at least to Yellow; don't downgrade if threshold already says worse
+        if (static_cast<int>(threshold_status) < static_cast<int>(IndicatorStatus::Yellow))
+            return IndicatorStatus::Yellow;
+    }
+
+    return threshold_status;
+}
+
+IndicatorStatus StatusEngine::maybe_stale_status(IndicatorStatus threshold_status, const std::string& agent_id,
+                                                  const std::string& indicator, double current_value,
+                                                  int stale_after_seconds, int64_t now_ms)
+{
+    if (stale_after_seconds <= 0 || !std::isfinite(current_value))
+        return threshold_status;
+
+    const std::string key = agent_id + ":" + indicator;
+    auto& entry = staleness_cache_[key];
+
+    constexpr double epsilon = 0.01;
+    if (entry.value_since_ms == 0 || std::abs(current_value - entry.last_value) > epsilon)
+    {
+        entry.last_value = current_value;
+        entry.value_since_ms = now_ms;
+        return threshold_status;
+    }
+
+    const int64_t stale_ms = now_ms - entry.value_since_ms;
+    if (stale_ms >= static_cast<int64_t>(stale_after_seconds) * 1000LL)
+    {
+        LOGF_DEBUG("Stale metric agent_id=%s indicator=%s unchanged_seconds=%lld", agent_id.c_str(),
+                   indicator.c_str(), static_cast<long long>(stale_ms / 1000));
         if (static_cast<int>(threshold_status) < static_cast<int>(IndicatorStatus::Yellow))
             return IndicatorStatus::Yellow;
     }

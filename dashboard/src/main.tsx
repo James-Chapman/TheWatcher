@@ -760,6 +760,7 @@ function AgentConfigModal({
               <NumberField label="Disk readings" min={1} value={draft.collector_config.disk_readings} onChange={(value) => updateReading('disk_readings', value)} />
               <NumberField label="Network readings" min={1} value={draft.collector_config.network_readings} onChange={(value) => updateReading('network_readings', value)} />
               <NumberField label="Process readings" min={1} value={draft.collector_config.process_readings} onChange={(value) => updateReading('process_readings', value)} />
+              <NumberField label="Stale metric after (seconds, 0=off)" min={0} value={draft.collector_config.stale_after_seconds ?? 0} onChange={(value) => updateConfig((config) => ({ ...config, stale_after_seconds: value }))} />
             </div>
           </section>
 
