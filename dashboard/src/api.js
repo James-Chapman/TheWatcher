@@ -199,3 +199,19 @@ export async function fetchAgentHistory(agentId, limit = 100) {
 export async function fetchLogMatches(agentId, limit = 200) {
     return fetchJson(`/api/agents/${encodeURIComponent(agentId)}/log-matches?limit=${limit}`);
 }
+export async function fetchViews() {
+    return fetchJson('/api/views');
+}
+export async function createView(name, agentIds, isPublic) {
+    return jsonPost('/api/views', { name, agent_ids: agentIds, is_public: isPublic });
+}
+export async function updateView(viewId, name, agentIds, isPublic) {
+    return mutateJson(`/api/views/${viewId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name, agent_ids: agentIds, is_public: isPublic }),
+        headers: { 'Content-Type': 'application/json' },
+    });
+}
+export async function deleteView(viewId) {
+    await mutateJson(`/api/views/${viewId}`, { method: 'DELETE' });
+}
