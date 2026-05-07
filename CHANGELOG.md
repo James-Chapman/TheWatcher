@@ -3,6 +3,41 @@
 All notable changes to TheWatcher are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.4.1] - 2026-05-07
+
+### Fixed
+- **LogCollector incremental tailing**: after `std::getline` exhausts a file
+  it sets `eofbit`, causing the subsequent `tellg()` to return `-1`. The
+  collector now calls `file.clear()` before `tellg()` and falls back to
+  `st_size` if the position is still negative. Previously every incremental
+  tick after the first would re-read from offset `-1`, effectively restarting
+  from the beginning of the file.
+- **Integration test enrollment re-check**: the agent lifecycle integration
+  test re-sent an enrollment request immediately after admin approval, which
+  was silently blocked by the 10-second per-agent rate limiter, causing a
+  consistent test failure. Replaced with an HTTP-API approval check; the
+  CURVE handshake performed by the running agent proves key exchange.
+
+### Tests
+- **BDD test coverage — server store** (12 new scenarios): inclusive window
+  boundaries for `get_metrics_in_window`, session expiry edge cases, agent
+  deletion cascades, silence rule expiry at boundary, `approve_agent` clearing
+  rejection flag, and several other state-transition edge cases.
+- **BDD test coverage — status engine** (9 new scenarios): `classify_percent`
+  exact thresholds, direct green→red CPU jump, process-scope isolation,
+  `process_readings=1` immediate red, maintenance exit behaviour, NaN→grey,
+  anomaly detection firing and suppression (< 10 baseline samples), stale
+  metric detection.
+- **New test suite — LogCollector** (`agent_tests/log_collector_test.cpp`,
+  11 scenarios): empty config, missing file, empty file, pattern match/no-match,
+  `take_matches` drain, incremental tailing, file-rotation detection, disabled
+  config, invalid regex, stale file-state pruning via `set_configs`.
+- **Integration tests — API coverage** (6 new scenarios, 83 new assertions):
+  user management (create/disable/enable/password/delete), group management,
+  views CRUD with public/private visibility, alert listing and bulk operations,
+  session and login API, enrollment rejection and per-agent config APIs
+  (description, thresholds, uptime, log-matches, agent deletion).
+
 ## [0.4.0] - 2026-05-06
 
 ### Added
