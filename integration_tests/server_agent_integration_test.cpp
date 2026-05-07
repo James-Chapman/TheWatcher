@@ -295,13 +295,8 @@ SCENARIO("A real agent enrolls, sends metrics, disconnects, and the server recor
                 5s));
 
             REQUIRE(post_ok(client, "/api/agents/" + agent_id + "/approve"));
-            const auto approved_response = send_enrollment_request(agent_config);
-            REQUIRE(approved_response.approved);
-            REQUIRE(approved_response.message == "approved");
-            REQUIRE(approved_response.server_public_key_z85 == server_config.server_public_key);
-            REQUIRE(approved_response.server_public_key_fingerprint ==
-                    thewatcher::crypto::server_public_key_fingerprint(server_config.server_public_key));
-
+            // A second enrollment request within 10 s is rate-limited; verify approval
+            // via the HTTP API instead and let the CURVE handshake prove key exchange.
             REQUIRE(eventually(
                 [&] {
                     const auto approved = find_agent(client, agent_id);
@@ -472,6 +467,30 @@ private:
         return cfg;
     }
 };
+
+bool login_as(httplib::Client& client, const std::string& username, const std::string& password)
+{
+    auto res = client.Post("/api/login",
+        json{{"username", username}, {"password", password}}.dump(),
+        "application/json");
+    if (!res || res->status != 200)
+        return false;
+    const auto set_cookie = res->get_header_value("Set-Cookie");
+    const auto end = set_cookie.find(';');
+    if (set_cookie.empty() || end == std::string::npos)
+        return false;
+    client.set_default_headers({{"Cookie", set_cookie.substr(0, end)}});
+    return true;
+}
+
+// POST expecting HTTP 201 Created (used by the views endpoint).
+std::optional<json> post_json_created(httplib::Client& client, const std::string& path, const json& body)
+{
+    auto res = client.Post(path, body.dump(), "application/json");
+    if (!res || res->status != 201)
+        return std::nullopt;
+    return json::parse(res->body);
+}
 
 } // namespace
 
@@ -729,6 +748,696 @@ SCENARIO("Maintenance windows can be scheduled and cancelled via the HTTP API")
             THEN("the server rejects it with a 400 response")
             {
                 REQUIRE_FALSE(result.has_value());
+            }
+        }
+    }
+}
+
+// ── User management API ───────────────────────────────────────────────────────
+
+SCENARIO("User management API supports create, list, disable, enable, password change, and delete")
+{
+    GIVEN("a running server with an authenticated admin")
+    {
+        ServerFixture fx;
+        REQUIRE(fx.startup.wait().started);
+        REQUIRE(fx.login());
+
+        WHEN("the admin creates a new viewer user 'alice'")
+        {
+            const auto result = post_json(fx.client, "/api/users", {
+                {"username", "alice"},
+                {"password", "s3cure!pw"},
+                {"role",     "viewer"},
+            });
+
+            THEN("the server returns a positive user_id")
+            {
+                REQUIRE(result.has_value());
+                REQUIRE(result->contains("user_id"));
+                const auto user_id = (*result)["user_id"].get<int64_t>();
+                REQUIRE(user_id > 0);
+
+                AND_THEN("alice appears in GET /api/users")
+                {
+                    const auto users = get_json(fx.client, "/api/users");
+                    REQUIRE(users.has_value());
+                    bool found = false;
+                    for (const auto& u : *users)
+                        if (u.value("username", "") == "alice")
+                            found = true;
+                    REQUIRE(found);
+                }
+
+                AND_THEN("alice can login with her initial password")
+                {
+                    httplib::Client alice("http://127.0.0.1:" + std::to_string(fx.config.api_port));
+                    alice.set_connection_timeout(2, 0);
+                    alice.set_read_timeout(2, 0);
+                    REQUIRE(login_as(alice, "alice", "s3cure!pw"));
+
+                    AND_THEN("a viewer is denied access to the admin-only GET /api/users")
+                    {
+                        const auto res = alice.Get("/api/users");
+                        REQUIRE(res);
+                        REQUIRE(res->status == 403);
+                    }
+                }
+
+                AND_THEN("the admin can change alice's password and the old password stops working")
+                {
+                    REQUIRE(put_json_ok(fx.client,
+                                        "/api/users/" + std::to_string(user_id) + "/password",
+                                        {{"password", "n3wpassword!"}}));
+
+                    httplib::Client alice("http://127.0.0.1:" + std::to_string(fx.config.api_port));
+                    alice.set_connection_timeout(2, 0);
+                    alice.set_read_timeout(2, 0);
+                    REQUIRE_FALSE(login_as(alice, "alice", "s3cure!pw"));
+                    REQUIRE(login_as(alice, "alice", "n3wpassword!"));
+                }
+
+                AND_THEN("disabling alice prevents login and re-enabling restores it")
+                {
+                    const auto dis = fx.client.Put(
+                        "/api/users/" + std::to_string(user_id) + "/disable", "", "application/json");
+                    REQUIRE(dis);
+                    REQUIRE(dis->status == 200);
+
+                    httplib::Client alice("http://127.0.0.1:" + std::to_string(fx.config.api_port));
+                    alice.set_connection_timeout(2, 0);
+                    alice.set_read_timeout(2, 0);
+                    REQUIRE_FALSE(login_as(alice, "alice", "s3cure!pw"));
+
+                    const auto en = fx.client.Put(
+                        "/api/users/" + std::to_string(user_id) + "/enable", "", "application/json");
+                    REQUIRE(en);
+                    REQUIRE(en->status == 200);
+
+                    REQUIRE(login_as(alice, "alice", "s3cure!pw"));
+                }
+
+                AND_THEN("the admin can delete alice and she no longer appears in the user list")
+                {
+                    REQUIRE(delete_ok(fx.client, "/api/users/" + std::to_string(user_id)));
+
+                    const auto users = get_json(fx.client, "/api/users");
+                    REQUIRE(users.has_value());
+                    bool found = false;
+                    for (const auto& u : *users)
+                        if (u.value("username", "") == "alice")
+                            found = true;
+                    REQUIRE_FALSE(found);
+                }
+            }
+        }
+
+        WHEN("the admin submits a user creation request with an invalid role")
+        {
+            const auto result = post_json(fx.client, "/api/users", {
+                {"username", "baduser"},
+                {"password", "pw123"},
+                {"role",     "superadmin"},
+            });
+
+            THEN("the server rejects it with 400")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+
+        WHEN("the admin submits a user creation request with an empty username")
+        {
+            const auto result = post_json(fx.client, "/api/users", {
+                {"username", ""},
+                {"password", "pw123"},
+            });
+
+            THEN("the server rejects it with 400")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+    }
+}
+
+// ── Group management API ──────────────────────────────────────────────────────
+
+SCENARIO("Group management API supports create and list with name validation")
+{
+    GIVEN("a running server with an authenticated admin")
+    {
+        ServerFixture fx;
+        REQUIRE(fx.startup.wait().started);
+        REQUIRE(fx.login());
+
+        WHEN("the admin lists groups on a fresh server")
+        {
+            const auto list = get_json(fx.client, "/api/groups");
+
+            THEN("the response is an array (built-in groups may already exist)")
+            {
+                REQUIRE(list.has_value());
+                REQUIRE(list->is_array());
+            }
+        }
+
+        WHEN("the admin creates a group named 'ops-team'")
+        {
+            const auto result = post_json(fx.client, "/api/groups", {{"name", "ops-team"}});
+
+            THEN("the server returns a positive group_id")
+            {
+                REQUIRE(result.has_value());
+                REQUIRE(result->contains("group_id"));
+                const auto group_id = (*result)["group_id"].get<int64_t>();
+                REQUIRE(group_id > 0);
+
+                AND_THEN("GET /api/groups lists the new group with its name and group_id")
+                {
+                    const auto list = get_json(fx.client, "/api/groups");
+                    REQUIRE(list.has_value());
+                    bool found = false;
+                    for (const auto& g : *list)
+                        if (g.value("group_id", int64_t{0}) == group_id &&
+                            g.value("name", "") == "ops-team")
+                            found = true;
+                    REQUIRE(found);
+                }
+            }
+        }
+
+        WHEN("the admin submits an empty group name")
+        {
+            const auto result = post_json(fx.client, "/api/groups", {{"name", ""}});
+
+            THEN("the server rejects it with 400")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+
+        WHEN("the admin submits a group name that exceeds 64 characters")
+        {
+            const auto result = post_json(fx.client, "/api/groups", {{"name", std::string(65, 'x')}});
+
+            THEN("the server rejects it with 400")
+            {
+                REQUIRE_FALSE(result.has_value());
+            }
+        }
+    }
+}
+
+// ── Views API ─────────────────────────────────────────────────────────────────
+
+SCENARIO("Views API supports full CRUD and enforces public/private visibility between users")
+{
+    GIVEN("a running server with an authenticated admin")
+    {
+        ServerFixture fx;
+        REQUIRE(fx.startup.wait().started);
+        REQUIRE(fx.login());
+
+        WHEN("the admin lists views on a fresh server")
+        {
+            const auto list = get_json(fx.client, "/api/views");
+
+            THEN("the response is an empty array")
+            {
+                REQUIRE(list.has_value());
+                REQUIRE(list->is_array());
+                REQUIRE(list->empty());
+            }
+        }
+
+        WHEN("the admin creates a private view with two agent IDs")
+        {
+            const auto created = post_json_created(fx.client, "/api/views", {
+                {"name",      "Production"},
+                {"is_public", false},
+                {"agent_ids", json::array({"agent-a", "agent-b"})},
+            });
+
+            THEN("the server responds 201 with the full view record")
+            {
+                REQUIRE(created.has_value());
+                REQUIRE(created->contains("view_id"));
+                const auto view_id = (*created)["view_id"].get<int64_t>();
+                REQUIRE(view_id > 0);
+                REQUIRE((*created)["name"].get<std::string>() == "Production");
+                REQUIRE((*created)["is_public"].get<bool>() == false);
+                REQUIRE((*created)["agent_ids"].size() == 2);
+
+                AND_THEN("GET /api/views lists the created view")
+                {
+                    const auto list = get_json(fx.client, "/api/views");
+                    REQUIRE(list.has_value());
+                    REQUIRE(list->size() == 1);
+                    REQUIRE(list->at(0)["view_id"].get<int64_t>() == view_id);
+                }
+
+                AND_THEN("GET /api/views/:id returns the correct record")
+                {
+                    const auto v = get_json(fx.client, "/api/views/" + std::to_string(view_id));
+                    REQUIRE(v.has_value());
+                    REQUIRE((*v)["name"].get<std::string>() == "Production");
+                    REQUIRE((*v)["agent_ids"].size() == 2);
+                }
+
+                AND_THEN("PUT /api/views/:id updates the name and agent list")
+                {
+                    REQUIRE(put_json_ok(fx.client, "/api/views/" + std::to_string(view_id), {
+                        {"name",      "Production (updated)"},
+                        {"agent_ids", json::array({"agent-a", "agent-b", "agent-c"})},
+                    }));
+
+                    const auto v = get_json(fx.client, "/api/views/" + std::to_string(view_id));
+                    REQUIRE(v.has_value());
+                    REQUIRE((*v)["name"].get<std::string>() == "Production (updated)");
+                    REQUIRE((*v)["agent_ids"].size() == 3);
+                }
+
+                AND_THEN("DELETE /api/views/:id removes the view from the list")
+                {
+                    REQUIRE(delete_ok(fx.client, "/api/views/" + std::to_string(view_id)));
+
+                    const auto list = get_json(fx.client, "/api/views");
+                    REQUIRE(list.has_value());
+                    REQUIRE(list->empty());
+                }
+            }
+        }
+
+        WHEN("a private view is created and a different viewer user tries to access it")
+        {
+            const auto alice_result = post_json(fx.client, "/api/users", {
+                {"username", "alice_view"},
+                {"password", "alicepw!"},
+                {"role",     "viewer"},
+            });
+            REQUIRE(alice_result.has_value());
+
+            const auto created = post_json_created(fx.client, "/api/views", {
+                {"name",      "Private"},
+                {"is_public", false},
+            });
+            REQUIRE(created.has_value());
+            const auto view_id = (*created)["view_id"].get<int64_t>();
+
+            httplib::Client alice("http://127.0.0.1:" + std::to_string(fx.config.api_port));
+            alice.set_connection_timeout(2, 0);
+            alice.set_read_timeout(2, 0);
+            REQUIRE(login_as(alice, "alice_view", "alicepw!"));
+
+            THEN("alice receives 403 on GET /api/views/:id")
+            {
+                const auto res = alice.Get("/api/views/" + std::to_string(view_id));
+                REQUIRE(res);
+                REQUIRE(res->status == 403);
+            }
+
+            AND_THEN("the private view is absent from alice's GET /api/views list")
+            {
+                const auto list = get_json(alice, "/api/views");
+                REQUIRE(list.has_value());
+                REQUIRE(list->empty());
+            }
+
+            AND_THEN("alice cannot delete the private view owned by admin (403)")
+            {
+                const auto res = alice.Delete("/api/views/" + std::to_string(view_id));
+                REQUIRE(res);
+                REQUIRE(res->status == 403);
+            }
+        }
+
+        WHEN("a public view is created another user can read it")
+        {
+            const auto bob_result = post_json(fx.client, "/api/users", {
+                {"username", "bob_view"},
+                {"password", "bobpw!"},
+                {"role",     "viewer"},
+            });
+            REQUIRE(bob_result.has_value());
+
+            const auto created = post_json_created(fx.client, "/api/views", {
+                {"name",      "Public Fleet"},
+                {"is_public", true},
+            });
+            REQUIRE(created.has_value());
+            const auto view_id = (*created)["view_id"].get<int64_t>();
+
+            httplib::Client bob("http://127.0.0.1:" + std::to_string(fx.config.api_port));
+            bob.set_connection_timeout(2, 0);
+            bob.set_read_timeout(2, 0);
+            REQUIRE(login_as(bob, "bob_view", "bobpw!"));
+
+            THEN("bob can GET the public view directly")
+            {
+                const auto v = get_json(bob, "/api/views/" + std::to_string(view_id));
+                REQUIRE(v.has_value());
+                REQUIRE((*v)["name"].get<std::string>() == "Public Fleet");
+            }
+
+            AND_THEN("the public view appears in bob's GET /api/views list")
+            {
+                const auto list = get_json(bob, "/api/views");
+                REQUIRE(list.has_value());
+                REQUIRE(list->size() == 1);
+                REQUIRE(list->at(0)["view_id"].get<int64_t>() == view_id);
+            }
+        }
+
+        WHEN("a view is created with an empty name")
+        {
+            const auto res = fx.client.Post("/api/views",
+                json{{"name", ""}}.dump(), "application/json");
+
+            THEN("the server rejects it with 400")
+            {
+                REQUIRE(res);
+                REQUIRE(res->status == 400);
+            }
+        }
+    }
+}
+
+// ── Alert listing API ─────────────────────────────────────────────────────────
+
+SCENARIO("Alert API returns well-formed responses and enforces authentication on a server with no agents")
+{
+    GIVEN("a running server with no agents enrolled")
+    {
+        ServerFixture fx;
+        REQUIRE(fx.startup.wait().started);
+        REQUIRE(fx.login());
+
+        WHEN("GET /api/alerts is called")
+        {
+            const auto alerts = get_json(fx.client, "/api/alerts");
+
+            THEN("the response is an empty JSON array")
+            {
+                REQUIRE(alerts.has_value());
+                REQUIRE(alerts->is_array());
+                REQUIRE(alerts->empty());
+            }
+        }
+
+        WHEN("GET /api/alerts?include_archived=1 is called")
+        {
+            const auto alerts = get_json(fx.client, "/api/alerts?include_archived=1");
+
+            THEN("the response is an empty JSON array")
+            {
+                REQUIRE(alerts.has_value());
+                REQUIRE(alerts->is_array());
+                REQUIRE(alerts->empty());
+            }
+        }
+
+        WHEN("GET /api/alerts/unacknowledged is called")
+        {
+            const auto alerts = get_json(fx.client, "/api/alerts/unacknowledged");
+
+            THEN("the response is an empty JSON array")
+            {
+                REQUIRE(alerts.has_value());
+                REQUIRE(alerts->is_array());
+                REQUIRE(alerts->empty());
+            }
+        }
+
+        WHEN("bulk-ack is called with an empty alert_ids array")
+        {
+            const auto result = post_json(fx.client, "/api/alerts/bulk-ack", {
+                {"alert_ids", json::array()},
+                {"note",      "integration test"},
+            });
+
+            THEN("the server responds ok with count 0")
+            {
+                REQUIRE(result.has_value());
+                REQUIRE((*result)["ok"].get<bool>() == true);
+                REQUIRE((*result)["count"].get<int>() == 0);
+            }
+        }
+
+        WHEN("bulk-archive is called with an empty alert_ids array")
+        {
+            const auto result = post_json(fx.client, "/api/alerts/bulk-archive", {
+                {"alert_ids", json::array()},
+            });
+
+            THEN("the server responds ok with count 0")
+            {
+                REQUIRE(result.has_value());
+                REQUIRE((*result)["ok"].get<bool>() == true);
+                REQUIRE((*result)["count"].get<int>() == 0);
+            }
+        }
+
+        WHEN("an unauthenticated client calls GET /api/alerts")
+        {
+            httplib::Client unauth("http://127.0.0.1:" + std::to_string(fx.config.api_port));
+            unauth.set_connection_timeout(2, 0);
+            unauth.set_read_timeout(2, 0);
+            const auto res = unauth.Get("/api/alerts");
+
+            THEN("the server returns 401")
+            {
+                REQUIRE(res);
+                REQUIRE(res->status == 401);
+            }
+        }
+    }
+}
+
+// ── Session and login API ─────────────────────────────────────────────────────
+
+SCENARIO("Session and login API enforces authentication and provides accurate session information")
+{
+    GIVEN("a running server")
+    {
+        ServerFixture fx;
+        REQUIRE(fx.startup.wait().started);
+
+        WHEN("an unauthenticated client calls GET /api/session")
+        {
+            httplib::Client unauth("http://127.0.0.1:" + std::to_string(fx.config.api_port));
+            unauth.set_connection_timeout(2, 0);
+            unauth.set_read_timeout(2, 0);
+            const auto res = unauth.Get("/api/session");
+
+            THEN("the server returns 401")
+            {
+                REQUIRE(res);
+                REQUIRE(res->status == 401);
+            }
+        }
+
+        WHEN("the admin logs in with correct credentials")
+        {
+            REQUIRE(fx.login());
+
+            THEN("GET /api/session returns username and role")
+            {
+                const auto session = get_json(fx.client, "/api/session");
+                REQUIRE(session.has_value());
+                REQUIRE((*session)["username"].get<std::string>() == "thewatcher");
+                REQUIRE((*session)["role"].get<std::string>() == "admin");
+            }
+
+            AND_WHEN("the admin logs out")
+            {
+                REQUIRE(post_ok(fx.client, "/api/logout"));
+
+                THEN("GET /api/session returns 401")
+                {
+                    const auto res = fx.client.Get("/api/session");
+                    REQUIRE(res);
+                    REQUIRE(res->status == 401);
+                }
+            }
+        }
+
+        WHEN("login is attempted with the wrong password")
+        {
+            httplib::Client bad("http://127.0.0.1:" + std::to_string(fx.config.api_port));
+            bad.set_connection_timeout(2, 0);
+            bad.set_read_timeout(2, 0);
+            const auto res = bad.Post("/api/login",
+                json{{"username", "thewatcher"}, {"password", "wrongpassword"}}.dump(),
+                "application/json");
+
+            THEN("the server returns 401")
+            {
+                REQUIRE(res);
+                REQUIRE(res->status == 401);
+            }
+        }
+
+        WHEN("login is attempted with a non-existent username")
+        {
+            httplib::Client bad("http://127.0.0.1:" + std::to_string(fx.config.api_port));
+            bad.set_connection_timeout(2, 0);
+            bad.set_read_timeout(2, 0);
+            const auto res = bad.Post("/api/login",
+                json{{"username", "nobody"}, {"password", "pw"}}.dump(),
+                "application/json");
+
+            THEN("the server returns 401")
+            {
+                REQUIRE(res);
+                REQUIRE(res->status == 401);
+            }
+        }
+    }
+}
+
+// ── Enrollment rejection + agent config APIs ──────────────────────────────────
+
+SCENARIO("Pending enrollment rejection removes the agent from the queue and approved-agent config APIs function correctly")
+{
+    GIVEN("a running server with an authenticated admin")
+    {
+        ServerFixture fx;
+        REQUIRE(fx.startup.wait().started);
+        REQUIRE(fx.login());
+
+        thewatcher::crypto::init();
+        const auto agent_keys = thewatcher::crypto::generate_curve_keypair();
+        const std::string agent_id = "cfg-agent-" + std::to_string(now_ms());
+
+        thewatcher::agent::AgentConfig agent_cfg;
+        agent_cfg.agent_id           = agent_id;
+        agent_cfg.enrollment_address = fx.config.enrollment_address;
+        agent_cfg.agent_public_key   = agent_keys.public_key_z85;
+        agent_cfg.agent_secret_key   = agent_keys.secret_key_z85;
+        agent_cfg.collection_interval = 30;
+        agent_cfg.process_limit       = 5;
+
+        WHEN("the agent sends an enrollment request")
+        {
+            const auto pending_resp = send_enrollment_request(agent_cfg);
+            REQUIRE_FALSE(pending_resp.approved);
+            REQUIRE(pending_resp.message == "pending approval");
+
+            THEN("the agent appears in GET /api/pending-enrollments with the correct fields")
+            {
+                REQUIRE(eventually(
+                    [&] { return find_pending_agent(fx.client, agent_id).has_value(); }, 5s));
+
+                const auto pending = find_pending_agent(fx.client, agent_id);
+                REQUIRE(pending.has_value());
+                REQUIRE((*pending)["agent_id"].get<std::string>() == agent_id);
+                REQUIRE((*pending)["approved"].get<bool>() == false);
+                REQUIRE((*pending)["rejected"].get<bool>() == false);
+                REQUIRE((*pending)["hostname"].get<std::string>() == "integration-host");
+            }
+
+            AND_WHEN("the admin rejects the enrollment")
+            {
+                REQUIRE(eventually(
+                    [&] { return find_pending_agent(fx.client, agent_id).has_value(); }, 5s));
+
+                REQUIRE(post_ok(fx.client, "/api/agents/" + agent_id + "/reject"));
+
+                THEN("the agent no longer appears in the pending-enrollments list")
+                {
+                    REQUIRE_FALSE(find_pending_agent(fx.client, agent_id).has_value());
+                }
+            }
+        }
+
+        WHEN("a second agent is enrolled, approved, and its configuration is updated via the API")
+        {
+            const auto agent_keys2 = thewatcher::crypto::generate_curve_keypair();
+            const std::string agent_id2 = "cfg-agent-b-" + std::to_string(now_ms() + 1);
+
+            thewatcher::agent::AgentConfig agent_cfg2;
+            agent_cfg2.agent_id           = agent_id2;
+            agent_cfg2.enrollment_address = fx.config.enrollment_address;
+            agent_cfg2.agent_public_key   = agent_keys2.public_key_z85;
+            agent_cfg2.agent_secret_key   = agent_keys2.secret_key_z85;
+            agent_cfg2.collection_interval = 30;
+            agent_cfg2.process_limit       = 5;
+
+            send_enrollment_request(agent_cfg2);
+            REQUIRE(eventually([&] { return find_pending_agent(fx.client, agent_id2).has_value(); }, 5s));
+            REQUIRE(post_ok(fx.client, "/api/agents/" + agent_id2 + "/approve"));
+            REQUIRE(eventually([&] { return find_agent(fx.client, agent_id2).has_value(); }, 5s));
+
+            THEN("the admin can set the agent's description and it is reflected in GET /api/agents")
+            {
+                const auto res = post_json(fx.client, "/api/agents/" + agent_id2 + "/description",
+                                           {{"description", "Primary integration-test agent"}});
+                REQUIRE(res.has_value());
+                REQUIRE((*res)["ok"].get<bool>() == true);
+
+                const auto a = find_agent(fx.client, agent_id2);
+                REQUIRE(a.has_value());
+                REQUIRE((*a)["description"].get<std::string>() == "Primary integration-test agent");
+            }
+
+            AND_THEN("the admin can update per-agent thresholds and the server acknowledges ok")
+            {
+                const auto res = post_json(fx.client, "/api/agents/" + agent_id2 + "/thresholds", {
+                    {"thresholds", {
+                        {"cpu",     {{"warning_pct_of_avg", 110.0}, {"degraded_pct_of_avg", 130.0}, {"critical_pct_of_avg", 150.0}}},
+                        {"memory",  {{"warning_pct_of_avg", 110.0}, {"degraded_pct_of_avg", 130.0}, {"critical_pct_of_avg", 150.0}}},
+                        {"disk",    {{"warning_pct_of_avg", 110.0}, {"degraded_pct_of_avg", 130.0}, {"critical_pct_of_avg", 150.0}}},
+                        {"network", {{"warning_pct_of_avg", 110.0}, {"degraded_pct_of_avg", 130.0}, {"critical_pct_of_avg", 150.0}}},
+                    }},
+                });
+                REQUIRE(res.has_value());
+                REQUIRE((*res)["ok"].get<bool>() == true);
+            }
+
+            AND_THEN("submitting invalid thresholds (warning >= degraded) returns 400")
+            {
+                const auto res = post_json(fx.client, "/api/agents/" + agent_id2 + "/thresholds", {
+                    {"thresholds", {
+                        {"cpu",     {{"warning_pct_of_avg", 150.0}, {"degraded_pct_of_avg", 110.0}, {"critical_pct_of_avg", 200.0}}},
+                        {"memory",  {{"warning_pct_of_avg", 110.0}, {"degraded_pct_of_avg", 130.0}, {"critical_pct_of_avg", 150.0}}},
+                        {"disk",    {{"warning_pct_of_avg", 110.0}, {"degraded_pct_of_avg", 130.0}, {"critical_pct_of_avg", 150.0}}},
+                        {"network", {{"warning_pct_of_avg", 110.0}, {"degraded_pct_of_avg", 130.0}, {"critical_pct_of_avg", 150.0}}},
+                    }},
+                });
+                REQUIRE_FALSE(res.has_value());
+            }
+
+            AND_THEN("GET /api/uptime/:id returns a well-formed response with zero samples")
+            {
+                const auto uptime = get_json(fx.client, "/api/uptime/" + agent_id2);
+                REQUIRE(uptime.has_value());
+                REQUIRE((*uptime)["agent_id"].get<std::string>() == agent_id2);
+                REQUIRE(uptime->contains("uptime_percent"));
+                REQUIRE(uptime->contains("actual_samples"));
+                REQUIRE(uptime->contains("expected_samples"));
+                REQUIRE((*uptime)["actual_samples"].get<int64_t>() == 0);
+            }
+
+            AND_THEN("GET /api/uptime for a non-existent agent returns 404")
+            {
+                const auto res = fx.client.Get("/api/uptime/does-not-exist");
+                REQUIRE(res);
+                REQUIRE(res->status == 404);
+            }
+
+            AND_THEN("GET /api/agents/:id/log-matches returns an empty array for an agent with no log data")
+            {
+                const auto matches = get_json(fx.client, "/api/agents/" + agent_id2 + "/log-matches");
+                REQUIRE(matches.has_value());
+                REQUIRE(matches->is_array());
+                REQUIRE(matches->empty());
+            }
+
+            AND_THEN("DELETE /api/agents/:id removes the agent from GET /api/agents")
+            {
+                REQUIRE(delete_ok(fx.client, "/api/agents/" + agent_id2));
+                REQUIRE_FALSE(find_agent(fx.client, agent_id2).has_value());
             }
         }
     }
