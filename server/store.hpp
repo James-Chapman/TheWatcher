@@ -146,6 +146,17 @@ struct LogMatchRecord
     int64_t created_at = 0;
 };
 
+struct ViewRecord
+{
+    int64_t view_id = 0;
+    std::string name;
+    int64_t owner_user_id = 0;
+    std::string owner_username; // populated on read
+    bool is_public = false;
+    std::vector<std::string> agent_ids; // stored as JSON in config_json
+    int64_t created_at = 0;
+};
+
 class Store
 {
 public:
@@ -226,6 +237,11 @@ public:
     virtual void prune_metrics_before(int64_t cutoff_ms) = 0;
     virtual void insert_log_match(const LogMatchRecord& rec) = 0;
     virtual std::vector<LogMatchRecord> list_log_matches(const std::string& agent_id, int limit = 200) = 0;
+    virtual int64_t create_view(const ViewRecord& rec) = 0;
+    virtual std::optional<ViewRecord> get_view(int64_t view_id) = 0;
+    virtual std::vector<ViewRecord> list_views(int64_t user_id) = 0; // own + public
+    virtual void update_view(const ViewRecord& rec) = 0;
+    virtual void delete_view(int64_t view_id) = 0;
 };
 
 std::unique_ptr<Store> make_store(const std::string& db_type, const std::string& db_path_or_dsn);

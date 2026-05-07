@@ -192,6 +192,16 @@ export interface StatusHistoryRow {
   created_at: number;
 }
 
+export interface ViewRecord {
+  view_id: number;
+  name: string;
+  owner_user_id: number;
+  owner_username: string;
+  is_public: boolean;
+  agent_ids: string[];
+  created_at: number;
+}
+
 export interface UptimeReport {
   agent_id: string;
   days: number;

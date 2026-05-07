@@ -1,4 +1,4 @@
-import type { AgentCollectorConfigUpdate, AgentRecord, AgentThresholds, AlertRecord, GroupRecord, LogMatchRecord, MaintenanceWindowRecord, MetricsSnapshot, ServerSettings, SessionInfo, SilenceRecord, StatusHistoryRow, UptimeReport, UserRecord } from './models';
+import type { AgentCollectorConfigUpdate, AgentRecord, AgentThresholds, AlertRecord, GroupRecord, LogMatchRecord, MaintenanceWindowRecord, MetricsSnapshot, ServerSettings, SessionInfo, SilenceRecord, StatusHistoryRow, UptimeReport, UserRecord, ViewRecord } from './models';
 export declare function fetchSession(): Promise<SessionInfo>;
 export declare function login(username: string, password: string): Promise<SessionInfo>;
 export declare function logout(): Promise<void>;
@@ -61,3 +61,7 @@ export declare function createSilence(agentId: string, indicator: string, reason
 export declare function deleteSilence(silenceId: number): Promise<void>;
 export declare function fetchAgentHistory(agentId: string, limit?: number): Promise<StatusHistoryRow[]>;
 export declare function fetchLogMatches(agentId: string, limit?: number): Promise<LogMatchRecord[]>;
+export declare function fetchViews(): Promise<ViewRecord[]>;
+export declare function createView(name: string, agentIds: string[], isPublic: boolean): Promise<ViewRecord>;
+export declare function updateView(viewId: number, name: string, agentIds: string[], isPublic: boolean): Promise<ViewRecord>;
+export declare function deleteView(viewId: number): Promise<void>;

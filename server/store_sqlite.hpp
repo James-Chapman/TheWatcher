@@ -89,6 +89,11 @@ public:
     void prune_metrics_before(int64_t cutoff_ms) override;
     void insert_log_match(const LogMatchRecord& rec) override;
     std::vector<LogMatchRecord> list_log_matches(const std::string& agent_id, int limit) override;
+    int64_t create_view(const ViewRecord& rec) override;
+    std::optional<ViewRecord> get_view(int64_t view_id) override;
+    std::vector<ViewRecord> list_views(int64_t user_id) override;
+    void update_view(const ViewRecord& rec) override;
+    void delete_view(int64_t view_id) override;
 
 private:
     void exec(const char* sql);

@@ -466,6 +466,16 @@ void SqliteStore::init_schema()
         );
     )");
     exec("CREATE INDEX IF NOT EXISTS idx_log_matches_agent_ts ON log_matches(agent_id, created_at DESC);");
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS views (
+            view_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           TEXT NOT NULL,
+            owner_user_id  INTEGER NOT NULL DEFAULT 0,
+            is_public      INTEGER NOT NULL DEFAULT 0,
+            config_json    TEXT NOT NULL DEFAULT '{}',
+            created_at     INTEGER NOT NULL
+        );
+    )");
 }
 
 void SqliteStore::bootstrap_defaults()
@@ -1457,6 +1467,113 @@ std::vector<LogMatchRecord> SqliteStore::list_log_matches(const std::string& age
         out.push_back(std::move(r));
     }
     return out;
+}
+
+// ── Views ─────────────────────────────────────────────────────────────────────
+
+namespace
+{
+    nlohmann::json view_to_config_json(const ViewRecord& rec)
+    {
+        nlohmann::json j;
+        j["agent_ids"] = rec.agent_ids;
+        return j;
+    }
+
+    ViewRecord row_to_view(sqlite3_stmt* s)
+    {
+        ViewRecord r;
+        r.view_id = sqlite3_column_int64(s, 0);
+        r.name = text_col(s, 1);
+        r.owner_user_id = sqlite3_column_int64(s, 2);
+        r.owner_username = text_col(s, 3);
+        r.is_public = sqlite3_column_int(s, 4) != 0;
+        r.created_at = sqlite3_column_int64(s, 5);
+        try
+        {
+            const auto cfg = nlohmann::json::parse(text_col(s, 6));
+            if (cfg.contains("agent_ids") && cfg["agent_ids"].is_array())
+                r.agent_ids = cfg["agent_ids"].get<std::vector<std::string>>();
+        }
+        catch (...) {}
+        return r;
+    }
+} // namespace
+
+int64_t SqliteStore::create_view(const ViewRecord& rec)
+{
+    const auto cfg = view_to_config_json(rec).dump();
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "INSERT INTO views(name,owner_user_id,is_public,config_json,created_at) "
+                             "VALUES(?,?,?,?,?);",
+                             -1, &st.s, nullptr),
+          db_, "prepare create_view");
+    sqlite3_bind_text(st.s, 1, rec.name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 2, rec.owner_user_id);
+    sqlite3_bind_int(st.s, 3, rec.is_public ? 1 : 0);
+    sqlite3_bind_text(st.s, 4, cfg.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 5, rec.created_at);
+    check(sqlite3_step(st.s), db_, "step create_view");
+    return sqlite3_last_insert_rowid(db_);
+}
+
+std::optional<ViewRecord> SqliteStore::get_view(int64_t view_id)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT v.view_id,v.name,v.owner_user_id,COALESCE(u.username,''),v.is_public,"
+                             "v.created_at,v.config_json "
+                             "FROM views v LEFT JOIN users u ON u.user_id=v.owner_user_id "
+                             "WHERE v.view_id=?;",
+                             -1, &st.s, nullptr),
+          db_, "prepare get_view");
+    sqlite3_bind_int64(st.s, 1, view_id);
+    if (sqlite3_step(st.s) != SQLITE_ROW)
+        return std::nullopt;
+    return row_to_view(st.s);
+}
+
+std::vector<ViewRecord> SqliteStore::list_views(int64_t user_id)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT v.view_id,v.name,v.owner_user_id,COALESCE(u.username,''),v.is_public,"
+                             "v.created_at,v.config_json "
+                             "FROM views v LEFT JOIN users u ON u.user_id=v.owner_user_id "
+                             "WHERE v.owner_user_id=? OR v.is_public=1 "
+                             "ORDER BY v.created_at ASC;",
+                             -1, &st.s, nullptr),
+          db_, "prepare list_views");
+    sqlite3_bind_int64(st.s, 1, user_id);
+    std::vector<ViewRecord> out;
+    while (sqlite3_step(st.s) == SQLITE_ROW)
+        out.push_back(row_to_view(st.s));
+    return out;
+}
+
+void SqliteStore::update_view(const ViewRecord& rec)
+{
+    const auto cfg = view_to_config_json(rec).dump();
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "UPDATE views SET name=?,is_public=?,config_json=? WHERE view_id=?;",
+                             -1, &st.s, nullptr),
+          db_, "prepare update_view");
+    sqlite3_bind_text(st.s, 1, rec.name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st.s, 2, rec.is_public ? 1 : 0);
+    sqlite3_bind_text(st.s, 3, cfg.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 4, rec.view_id);
+    check(sqlite3_step(st.s), db_, "step update_view");
+}
+
+void SqliteStore::delete_view(int64_t view_id)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "DELETE FROM views WHERE view_id=?;", -1, &st.s, nullptr),
+          db_, "prepare delete_view");
+    sqlite3_bind_int64(st.s, 1, view_id);
+    check(sqlite3_step(st.s), db_, "step delete_view");
 }
 
 std::unique_ptr<Store> make_store(const std::string& db_type, const std::string& db_path_or_dsn)
