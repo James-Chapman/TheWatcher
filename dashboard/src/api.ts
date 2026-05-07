@@ -13,6 +13,7 @@ import type {
   StatusHistoryRow,
   UptimeReport,
   UserRecord,
+  ViewRecord,
 } from './models';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -290,4 +291,24 @@ export async function fetchLogMatches(agentId: string, limit = 200): Promise<Log
   return fetchJson<LogMatchRecord[]>(
     `/api/agents/${encodeURIComponent(agentId)}/log-matches?limit=${limit}`,
   );
+}
+
+export async function fetchViews(): Promise<ViewRecord[]> {
+  return fetchJson<ViewRecord[]>('/api/views');
+}
+
+export async function createView(name: string, agentIds: string[], isPublic: boolean): Promise<ViewRecord> {
+  return jsonPost<ViewRecord>('/api/views', { name, agent_ids: agentIds, is_public: isPublic });
+}
+
+export async function updateView(viewId: number, name: string, agentIds: string[], isPublic: boolean): Promise<ViewRecord> {
+  return mutateJson<ViewRecord>(`/api/views/${viewId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name, agent_ids: agentIds, is_public: isPublic }),
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export async function deleteView(viewId: number): Promise<void> {
+  await mutateJson<{ ok: boolean }>(`/api/views/${viewId}`, { method: 'DELETE' });
 }

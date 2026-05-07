@@ -13,11 +13,13 @@ import {
   createMaintenanceWindow,
   createSilence,
   createUser,
+  createView,
   deleteAgent,
   deleteAlert,
   deleteMaintenanceWindow,
   deleteSilence,
   deleteUser,
+  deleteView,
   disableUser,
   enableUser,
   fetchAgentHistory,
@@ -27,6 +29,7 @@ import {
   fetchSession,
   fetchSettings,
   fetchUptimeReport,
+  fetchViews,
   loadDashboardData,
   login,
   logout,
@@ -40,6 +43,7 @@ import {
   setAgentGroups,
   setMaintenance,
   updateSettings,
+  updateView,
 } from './api';
 import type {
   AgentCollectorConfigUpdate,
@@ -61,6 +65,7 @@ import type {
   SilenceRecord,
   StatusHistoryRow,
   UserRecord,
+  ViewRecord,
 } from './models';
 import {
   DEFAULT_ANOMALY_CONFIG,
@@ -77,7 +82,7 @@ import './styles.css';
 
 const COMPONENT_LABELS = ['CPU', 'Memory', 'Disk', 'Network', 'Temp', 'Proc', 'Heartbeat'];
 
-type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users' | 'maintenance' | 'silences' | 'settings';
+type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users' | 'maintenance' | 'silences' | 'settings' | 'views';
 
 function colorLabel(color: HealthColor): string {
   return {
@@ -101,6 +106,12 @@ function Dashboard() {
   const [users, setUsers] = React.useState<UserRecord[]>([]);
   const [maintenanceWindows, setMaintenanceWindows] = React.useState<MaintenanceWindowRecord[]>([]);
   const [silences, setSilences] = React.useState<SilenceRecord[]>([]);
+  const [customViews, setCustomViews] = React.useState<ViewRecord[]>([]);
+  const [activeViewId, setActiveViewId] = React.useState<number | null>(() => {
+    const hash = window.location.hash;
+    const m = hash.match(/^#view-(\d+)$/);
+    return m ? parseInt(m[1], 10) : null;
+  });
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   const [loadedAt, setLoadedAt] = React.useState<Date | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -114,7 +125,7 @@ function Dashboard() {
     if (!session) return;
     try {
       setError(null);
-      const data = await loadDashboardData();
+      const [data, views] = await Promise.all([loadDashboardData(), fetchViews().catch(() => [] as ViewRecord[])]);
       setAgents(toDashboardAgents(data.agents, data.metrics, data.alerts));
       setPending(toDashboardAgents(data.pending, [], []));
       setGroups(data.groups);
@@ -123,6 +134,7 @@ function Dashboard() {
       setUsers(data.users);
       setMaintenanceWindows(data.maintenanceWindows);
       setSilences(data.silences);
+      setCustomViews(views);
       setLoadedAt(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
@@ -143,6 +155,15 @@ function Dashboard() {
     const timer = window.setInterval(() => void refresh(), 5000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  // Sync activeViewId to URL hash so views are bookmarkable.
+  React.useEffect(() => {
+    if (activeViewId != null) {
+      window.location.hash = `view-${activeViewId}`;
+    } else if (window.location.hash.startsWith('#view-')) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, [activeViewId]);
 
   const runAction = React.useCallback(
     async (key: string, action: () => Promise<void>) => {
@@ -179,6 +200,7 @@ function Dashboard() {
         </div>
         <nav className="nav-tabs" aria-label="Dashboard views">
           <Tab view={view} target="monitoring" setView={setView} label="Monitoring" />
+          <Tab view={view} target="views" setView={setView} label={`Views${customViews.length > 0 ? ` (${customViews.length})` : ''}`} />
           <Tab view={view} target="agents" setView={setView} label="Agents" />
           {admin ? <Tab view={view} target="pending" setView={setView} label="Pending" /> : null}
           <Tab view={view} target="alerts" setView={setView} label="Alerts" />
@@ -228,15 +250,36 @@ function Dashboard() {
       ) : null}
 
       {view === 'monitoring' ? (
-        <MonitoringTable
+        <>
+          {activeViewId != null ? (
+            <div className="banner">
+              Filtered to view: <strong>{customViews.find((v) => v.view_id === activeViewId)?.name ?? 'Unknown'}</strong>
+              <button className="text-button" style={{ marginLeft: '1rem' }} onClick={() => setActiveViewId(null)}>Clear</button>
+            </div>
+          ) : null}
+          <MonitoringTable
+            agents={activeViewId != null
+              ? agents.filter((a) => customViews.find((v) => v.view_id === activeViewId)?.agent_ids.includes(a.id) ?? false)
+              : agents}
+            error={error}
+            expanded={expanded}
+            groupFilter={overviewGroupFilter}
+            groups={groups}
+            loading={loading}
+            setExpanded={setExpanded}
+            setGroupFilter={setOverviewGroupFilter}
+          />
+        </>
+      ) : null}
+      {view === 'views' ? (
+        <ViewsPage
           agents={agents}
-          error={error}
-          expanded={expanded}
-          groupFilter={overviewGroupFilter}
-          groups={groups}
-          loading={loading}
-          setExpanded={setExpanded}
-          setGroupFilter={setOverviewGroupFilter}
+          busyAction={busyAction}
+          operator={operator}
+          runAction={runAction}
+          session={session}
+          views={customViews}
+          onOpenView={(viewId) => { setActiveViewId(viewId); setView('monitoring'); }}
         />
       ) : null}
       {view === 'agents' ? (
@@ -1809,6 +1852,140 @@ function SummaryCard({ label, value, color }: { label: string; value: number; co
       <div className="summary-label">{label}</div>
       <div className={`summary-value ${color}`}>{value}</div>
     </div>
+  );
+}
+
+function ViewsPage({
+  agents,
+  busyAction,
+  operator,
+  runAction,
+  session,
+  views,
+  onOpenView,
+}: {
+  agents: DashboardAgent[];
+  busyAction: string | null;
+  operator: boolean;
+  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  session: SessionInfo;
+  views: ViewRecord[];
+  onOpenView: (viewId: number) => void;
+}) {
+  const [newName, setNewName] = React.useState('');
+  const [newPublic, setNewPublic] = React.useState(false);
+  const [newAgentIds, setNewAgentIds] = React.useState<string[]>([]);
+  const [editId, setEditId] = React.useState<number | null>(null);
+  const [editName, setEditName] = React.useState('');
+  const [editPublic, setEditPublic] = React.useState(false);
+  const [editAgentIds, setEditAgentIds] = React.useState<string[]>([]);
+
+  const startEdit = (v: ViewRecord) => {
+    setEditId(v.view_id);
+    setEditName(v.name);
+    setEditPublic(v.is_public);
+    setEditAgentIds([...v.agent_ids]);
+  };
+
+  const canEdit = (v: ViewRecord) => operator && (v.owner_username === session.username || session.role === 'admin');
+
+  return (
+    <main className="table-wrap">
+      <div className="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Owner</th>
+              <th>Agents</th>
+              <th>Visibility</th>
+              <th>Created</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {views.map((v) => (
+              <tr key={v.view_id}>
+                {editId === v.view_id ? (
+                  <>
+                    <td colSpan={4}>
+                      <div className="form-grid" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <input value={editName} placeholder="View name" onChange={(e) => setEditName(e.target.value)} />
+                        <label style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                          <input type="checkbox" checked={editPublic} onChange={(e) => setEditPublic(e.target.checked)} />
+                          Public
+                        </label>
+                        <select multiple size={Math.min(agents.length, 6)} style={{ minWidth: '14rem' }}
+                          value={editAgentIds}
+                          onChange={(e) => setEditAgentIds(Array.from(e.target.selectedOptions, (o) => o.value))}>
+                          {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                        </select>
+                      </div>
+                    </td>
+                    <td>{new Date(v.created_at).toLocaleDateString()}</td>
+                    <td>
+                      <ActionButton busy={busyAction === `view:save:${v.view_id}`} label="Save" icon={<Check size={14} />}
+                        onClick={() => void runAction(`view:save:${v.view_id}`, () => updateView(v.view_id, editName, editAgentIds, editPublic).then(() => {})).then(() => setEditId(null))} />
+                      <ActionButton busy={false} label="Cancel" icon={<X size={14} />} onClick={() => setEditId(null)} />
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td><strong>{v.name}</strong></td>
+                    <td>{v.owner_username}</td>
+                    <td>{v.agent_ids.length} agent{v.agent_ids.length !== 1 ? 's' : ''}</td>
+                    <td>{v.is_public ? 'Public' : 'Private'}</td>
+                    <td>{new Date(v.created_at).toLocaleDateString()}</td>
+                    <td>
+                      <ActionButton busy={false} label="Open" icon={<Search size={14} />} onClick={() => onOpenView(v.view_id)} />
+                      {canEdit(v) ? <ActionButton busy={false} label="Edit" icon={<SlidersHorizontal size={14} />} onClick={() => startEdit(v)} /> : null}
+                      {canEdit(v) ? (
+                        <ActionButton busy={busyAction === `view:delete:${v.view_id}`} danger label="Delete"
+                          icon={<Trash2 size={14} />}
+                          onClick={() => void runAction(`view:delete:${v.view_id}`, () => deleteView(v.view_id))} />
+                      ) : null}
+                    </td>
+                  </>
+                )}
+              </tr>
+            ))}
+            {views.length === 0 ? (
+              <tr><td colSpan={6} style={{ textAlign: 'center', padding: '1rem' }}>No views yet. Create one below.</td></tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      {operator ? (
+        <div className="table-container" style={{ marginTop: '1rem' }}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void runAction('view:create', () => createView(newName, newAgentIds, newPublic).then(() => {})).then(() => {
+                setNewName('');
+                setNewPublic(false);
+                setNewAgentIds([]);
+              });
+            }}
+            style={{ padding: '1rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'flex-start' }}
+          >
+            <input required value={newName} placeholder="New view name" onChange={(e) => setNewName(e.target.value)} style={{ minWidth: '12rem' }} />
+            <label style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+              <input type="checkbox" checked={newPublic} onChange={(e) => setNewPublic(e.target.checked)} />
+              Public
+            </label>
+            <select multiple size={Math.min(agents.length, 6)} style={{ minWidth: '14rem' }}
+              value={newAgentIds}
+              onChange={(e) => setNewAgentIds(Array.from(e.target.selectedOptions, (o) => o.value))}>
+              {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <button className="text-button" type="submit" disabled={busyAction === 'view:create' || !newName}>
+              {busyAction === 'view:create' ? '...' : 'Create View'}
+            </button>
+          </form>
+        </div>
+      ) : null}
+    </main>
   );
 }
 

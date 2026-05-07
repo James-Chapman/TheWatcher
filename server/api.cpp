@@ -1867,6 +1867,167 @@ void ApiServer::setup_routes()
             set_json(res, json{{"error", e.what()}});
         }
     });
+
+    // ── Views ─────────────────────────────────────────────────────────────────
+
+    auto view_to_json = [](const ViewRecord& v) -> json {
+        return {
+            {"view_id",        v.view_id       },
+            {"name",           v.name          },
+            {"owner_user_id",  v.owner_user_id },
+            {"owner_username", v.owner_username},
+            {"is_public",      v.is_public     },
+            {"agent_ids",      v.agent_ids     },
+            {"created_at",     v.created_at    },
+        };
+    };
+
+    // GET /api/views — list views accessible to current user (own + public)
+    http_->Get("/api/views", [this, view_to_json](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto session = require_role(req, res, "viewer");
+            if (!session) return;
+            auto rows = store_.list_views(session->user_id);
+            json arr = json::array();
+            for (const auto& v : rows)
+                arr.push_back(view_to_json(v));
+            set_json(res, arr);
+        }
+        catch (const std::exception& e)
+        {
+            LOGF_WARNING("GET /api/views failed: %s", e.what());
+            res.status = 500;
+            set_json(res, json{{"error", "internal error"}});
+        }
+    });
+
+    // POST /api/views — create a view (operator+)
+    http_->Post("/api/views", [this, view_to_json](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto session = require_role(req, res, "operator");
+            if (!session) return;
+            auto body = json::parse(req.body);
+            ViewRecord rec;
+            rec.name = body.at("name").get<std::string>();
+            if (rec.name.empty())
+                throw std::runtime_error("name is required");
+            rec.owner_user_id = session->user_id;
+            rec.is_public = body.value("is_public", false);
+            if (body.contains("agent_ids") && body["agent_ids"].is_array())
+                rec.agent_ids = body["agent_ids"].get<std::vector<std::string>>();
+            rec.created_at = now_ms();
+            const auto id = store_.create_view(rec);
+            rec.view_id = id;
+            rec.owner_username = session->username;
+            res.status = 201;
+            set_json(res, view_to_json(rec));
+        }
+        catch (const std::exception& e)
+        {
+            LOGF_WARNING("POST /api/views failed: %s", e.what());
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // GET /api/views/:id
+    http_->Get("/api/views/:id", [this, view_to_json](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto session = require_role(req, res, "viewer");
+            if (!session) return;
+            const auto id = std::stoll(req.path_params.at("id"));
+            auto v = store_.get_view(id);
+            if (!v)
+            {
+                res.status = 404;
+                set_json(res, json{{"error", "not found"}});
+                return;
+            }
+            if (!v->is_public && v->owner_user_id != session->user_id && session->role != "admin")
+            {
+                res.status = 403;
+                set_json(res, json{{"error", "forbidden"}});
+                return;
+            }
+            set_json(res, view_to_json(*v));
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // PUT /api/views/:id — update (owner or admin)
+    http_->Put("/api/views/:id", [this, view_to_json](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto session = require_role(req, res, "operator");
+            if (!session) return;
+            const auto id = std::stoll(req.path_params.at("id"));
+            auto existing = store_.get_view(id);
+            if (!existing)
+            {
+                res.status = 404;
+                set_json(res, json{{"error", "not found"}});
+                return;
+            }
+            if (existing->owner_user_id != session->user_id && session->role != "admin")
+            {
+                res.status = 403;
+                set_json(res, json{{"error", "forbidden"}});
+                return;
+            }
+            auto body = json::parse(req.body);
+            existing->name = body.value("name", existing->name);
+            if (existing->name.empty())
+                throw std::runtime_error("name is required");
+            existing->is_public = body.value("is_public", existing->is_public);
+            if (body.contains("agent_ids") && body["agent_ids"].is_array())
+                existing->agent_ids = body["agent_ids"].get<std::vector<std::string>>();
+            store_.update_view(*existing);
+            set_json(res, view_to_json(*existing));
+        }
+        catch (const std::exception& e)
+        {
+            LOGF_WARNING("PUT /api/views/:id failed: %s", e.what());
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // DELETE /api/views/:id — owner or admin
+    http_->Delete("/api/views/:id", [this](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto session = require_role(req, res, "operator");
+            if (!session) return;
+            const auto id = std::stoll(req.path_params.at("id"));
+            auto existing = store_.get_view(id);
+            if (!existing)
+            {
+                res.status = 404;
+                set_json(res, json{{"error", "not found"}});
+                return;
+            }
+            if (existing->owner_user_id != session->user_id && session->role != "admin")
+            {
+                res.status = 403;
+                set_json(res, json{{"error", "forbidden"}});
+                return;
+            }
+            store_.delete_view(id);
+            set_json(res, json{{"ok", true}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
 }
 
 } // namespace thewatcher::server
