@@ -1663,7 +1663,7 @@ std::optional<RunbookRecord> SqliteStore::get_runbook(const std::string& indicat
                              "SELECT runbook_id,indicator,status,url,notes,created_by,created_at "
                              "FROM runbooks "
                              "WHERE (indicator=? OR indicator='*') AND status=? "
-                             "ORDER BY CASE WHEN indicator='*' THEN 1 ELSE 0 END "
+                             "ORDER BY CASE WHEN indicator='*' THEN 1 ELSE 0 END, runbook_id DESC "
                              "LIMIT 1;",
                              -1, &st.s, nullptr),
           db_, "prepare get_runbook");

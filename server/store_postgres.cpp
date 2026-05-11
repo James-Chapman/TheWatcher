@@ -32,9 +32,11 @@ namespace
         const auto status = PQresultStatus(res);
         if (status != PGRES_COMMAND_OK && status != PGRES_TUPLES_OK)
         {
-            const std::string msg = PQresultErrorMessage(res);
-            PQclear(res);
-            throw std::runtime_error(std::string(ctx) + ": " + msg);
+            // Do NOT call PQclear here — the caller wraps res in a Res RAII
+            // guard whose destructor will free it during stack unwinding.
+            // Calling PQclear here would cause a double-free.
+            throw std::runtime_error(std::string(ctx) + ": " +
+                                     PQresultErrorMessage(res));
         }
     }
 
@@ -125,6 +127,24 @@ namespace
     }
     std::string s(bool v)     { return v ? "true" : "false"; }
 
+    // Strip the password value from a libpq connection string so it is safe
+    // to include in log output.
+    std::string redact_dsn(const std::string& dsn)
+    {
+        std::string out = dsn;
+        const auto kw = out.find("password=");
+        if (kw != std::string::npos)
+        {
+            const auto val_start = kw + 9;
+            const auto val_end   = out.find(' ', val_start);
+            out.replace(val_start,
+                        val_end == std::string::npos ? std::string::npos
+                                                      : val_end - val_start,
+                        "***");
+        }
+        return out;
+    }
+
     AgentRecord row_to_agent(PGresult* r, int row)
     {
         AgentRecord a;
@@ -200,7 +220,7 @@ PostgresStore::PostgresStore(const std::string& dsn)
     LOG_FUNCTION_TRACE
     if (sodium_init() < 0)
         throw std::runtime_error("libsodium initialization failed");
-    LOGF_DEBUG("Opening PostgreSQL store dsn=%s", dsn.c_str());
+    LOGF_DEBUG("Opening PostgreSQL store dsn=%s", redact_dsn(dsn).c_str());
     conn_ = PQconnectdb(dsn.c_str());
     if (!conn_ || PQstatus(conn_) != CONNECTION_OK)
     {
@@ -491,34 +511,56 @@ void PostgresStore::bootstrap_defaults()
 
 void PostgresStore::upsert_agent(const AgentRecord& rec)
 {
-    const auto cfg_json = nlohmann::json(rec.collector_config).dump();
+    const auto cfg_json    = nlohmann::json(rec.collector_config).dump();
+    // All s() conversions must outlive the params[] array; store them first.
+    const auto p_approved  = s(rec.approved);
+    const auto p_rejected  = s(rec.rejected);
+    const auto p_connected = s(rec.connected);
+    const auto p_maint     = s(rec.maintenance);
+    const auto p_munt      = s(rec.maintenance_until);
+    const auto p_ci        = s(rec.collection_interval);
+    const auto p_pl        = s(rec.process_limit);
+    const auto p_fs        = s(rec.first_seen);
+    const auto p_ls        = s(rec.last_seen);
+    const auto p_cw        = s(rec.cpu_warning_pct_of_avg);
+    const auto p_cd        = s(rec.cpu_degraded_pct_of_avg);
+    const auto p_cc        = s(rec.cpu_critical_pct_of_avg);
+    const auto p_mw        = s(rec.memory_warning_pct_of_avg);
+    const auto p_md        = s(rec.memory_degraded_pct_of_avg);
+    const auto p_mc        = s(rec.memory_critical_pct_of_avg);
+    const auto p_dw        = s(rec.disk_warning_pct_of_avg);
+    const auto p_dd        = s(rec.disk_degraded_pct_of_avg);
+    const auto p_dc        = s(rec.disk_critical_pct_of_avg);
+    const auto p_nw        = s(rec.network_warning_pct_of_avg);
+    const auto p_nd        = s(rec.network_degraded_pct_of_avg);
+    const auto p_nc        = s(rec.network_critical_pct_of_avg);
     const char* params[] = {
         rec.agent_id.c_str(),
         rec.hostname.c_str(),
         rec.platform.c_str(),
         rec.curve_public_key_z85.c_str(),
-        s(rec.approved).c_str(),
-        s(rec.rejected).c_str(),
-        s(rec.connected).c_str(),
-        s(rec.maintenance).c_str(),
+        p_approved.c_str(),
+        p_rejected.c_str(),
+        p_connected.c_str(),
+        p_maint.c_str(),
         rec.maintenance_reason.c_str(),
-        s(rec.maintenance_until).c_str(),
-        s(rec.collection_interval).c_str(),
-        s(rec.process_limit).c_str(),
-        s(rec.first_seen).c_str(),
-        s(rec.last_seen).c_str(),
-        s(rec.cpu_warning_pct_of_avg).c_str(),
-        s(rec.cpu_degraded_pct_of_avg).c_str(),
-        s(rec.cpu_critical_pct_of_avg).c_str(),
-        s(rec.memory_warning_pct_of_avg).c_str(),
-        s(rec.memory_degraded_pct_of_avg).c_str(),
-        s(rec.memory_critical_pct_of_avg).c_str(),
-        s(rec.disk_warning_pct_of_avg).c_str(),
-        s(rec.disk_degraded_pct_of_avg).c_str(),
-        s(rec.disk_critical_pct_of_avg).c_str(),
-        s(rec.network_warning_pct_of_avg).c_str(),
-        s(rec.network_degraded_pct_of_avg).c_str(),
-        s(rec.network_critical_pct_of_avg).c_str(),
+        p_munt.c_str(),
+        p_ci.c_str(),
+        p_pl.c_str(),
+        p_fs.c_str(),
+        p_ls.c_str(),
+        p_cw.c_str(),
+        p_cd.c_str(),
+        p_cc.c_str(),
+        p_mw.c_str(),
+        p_md.c_str(),
+        p_mc.c_str(),
+        p_dw.c_str(),
+        p_dd.c_str(),
+        p_dc.c_str(),
+        p_nw.c_str(),
+        p_nd.c_str(),
+        p_nc.c_str(),
         cfg_json.c_str(),
         rec.description.c_str(),
     };
@@ -1549,7 +1591,7 @@ std::optional<RunbookRecord> PostgresStore::get_runbook(const std::string& indic
         SELECT runbook_id,indicator,status,url,notes,created_by,created_at
         FROM runbooks
         WHERE (indicator=$1 OR indicator='*') AND status=$2
-        ORDER BY CASE WHEN indicator='*' THEN 1 ELSE 0 END
+        ORDER BY CASE WHEN indicator='*' THEN 1 ELSE 0 END, runbook_id DESC
         LIMIT 1;
     )", 2, nullptr, params, nullptr, nullptr, 0));
     check_res(res.r, "get_runbook");

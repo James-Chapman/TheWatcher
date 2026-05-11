@@ -2086,6 +2086,8 @@ void ApiServer::setup_routes()
             rec.created_at = now_ms();
             if (rec.url.empty())
                 throw std::runtime_error("url is required");
+            if (rec.url.rfind("https://", 0) != 0 && rec.url.rfind("http://", 0) != 0)
+                throw std::runtime_error("url must start with https:// or http://");
             if (rec.status != "yellow" && rec.status != "amber" && rec.status != "red")
                 throw std::runtime_error("status must be yellow, amber, or red");
             const auto id = store_.create_runbook(rec);

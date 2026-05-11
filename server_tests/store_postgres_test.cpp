@@ -23,6 +23,22 @@ const char* test_dsn()
     return "host=localhost dbname=thewatcher_test user=thewatcher_test password=thewatcher_test";
 }
 
+// Returns true if a PostgreSQL server is reachable at the test DSN.
+// Result is cached after the first probe so subsequent calls are free.
+bool postgres_is_available()
+{
+    static bool checked   = false;
+    static bool available = false;
+    if (!checked) {
+        checked = true;
+        try {
+            PostgresStore store(test_dsn());
+            available = true;
+        } catch (...) {}
+    }
+    return available;
+}
+
 AgentRecord make_agent(const std::string& id)
 {
     AgentRecord r;
@@ -47,6 +63,7 @@ AgentRecord make_agent(const std::string& id)
 
 SCENARIO("[postgres] A freshly opened PostgresStore bootstraps the default admin user")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a connected PostgresStore")
     {
         PostgresStore store(test_dsn());
@@ -73,6 +90,7 @@ SCENARIO("[postgres] A freshly opened PostgresStore bootstraps the default admin
 
 SCENARIO("[postgres] Agents can be upserted and retrieved")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a PostgresStore and a new agent record")
     {
         PostgresStore store(test_dsn());
@@ -139,6 +157,7 @@ SCENARIO("[postgres] Agents can be upserted and retrieved")
 
 SCENARIO("[postgres] get_agent returns nullopt for an unknown id")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a PostgresStore")
     {
         PostgresStore store(test_dsn());
@@ -153,6 +172,7 @@ SCENARIO("[postgres] get_agent returns nullopt for an unknown id")
 
 SCENARIO("[postgres] Metrics can be inserted and retrieved")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a PostgresStore with a registered agent")
     {
         PostgresStore store(test_dsn());
@@ -200,6 +220,7 @@ SCENARIO("[postgres] Metrics can be inserted and retrieved")
 
 SCENARIO("[postgres] Alerts can be inserted, listed, acknowledged, and soft-deleted")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a PostgresStore with a registered agent")
     {
         PostgresStore store(test_dsn());
@@ -282,6 +303,7 @@ SCENARIO("[postgres] Alerts can be inserted, listed, acknowledged, and soft-dele
 
 SCENARIO("[postgres] Runbooks can be created, listed, and deleted")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a PostgresStore")
     {
         PostgresStore store(test_dsn());
@@ -344,6 +366,7 @@ SCENARIO("[postgres] Runbooks can be created, listed, and deleted")
 
 SCENARIO("[postgres] get_runbook returns exact indicator match before wildcard")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a PostgresStore with a wildcard and an exact runbook for the same status")
     {
         PostgresStore store(test_dsn());
@@ -389,6 +412,7 @@ SCENARIO("[postgres] get_runbook returns exact indicator match before wildcard")
 
 SCENARIO("[postgres] Settings key-value store persists values with fallback")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a PostgresStore")
     {
         PostgresStore store(test_dsn());
@@ -423,6 +447,7 @@ SCENARIO("[postgres] Settings key-value store persists values with fallback")
 
 SCENARIO("[postgres] Session lifecycle: create, retrieve, and expire")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a PostgresStore")
     {
         PostgresStore store(test_dsn());
@@ -458,6 +483,7 @@ SCENARIO("[postgres] Session lifecycle: create, retrieve, and expire")
 
 SCENARIO("[postgres] Maintenance windows can be created, listed, and deleted")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a PostgresStore")
     {
         PostgresStore store(test_dsn());
@@ -516,6 +542,7 @@ SCENARIO("[postgres] Maintenance windows can be created, listed, and deleted")
 
 SCENARIO("[postgres] Silence rules can be created, listed, deleted, and matched")
 {
+    if (!postgres_is_available()) SKIP("PostgreSQL not available");
     GIVEN("a PostgresStore")
     {
         PostgresStore store(test_dsn());
