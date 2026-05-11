@@ -2777,3 +2777,135 @@ SCENARIO("list_views returns empty for a user who owns no views and there are no
         }
     }
 }
+
+// ── Runbook CRUD ──────────────────────────────────────────────────────────────
+
+SCENARIO("Runbooks can be created, listed, and deleted")
+{
+    GIVEN("an empty store")
+    {
+        SqliteStore store(unique_store_path("runbook-crud.db").string());
+
+        WHEN("no runbooks have been created")
+        {
+            THEN("list_runbooks returns an empty list")
+            {
+                REQUIRE(store.list_runbooks().empty());
+            }
+        }
+
+        WHEN("a runbook is created for indicator=cpu status=red")
+        {
+            RunbookRecord rec;
+            rec.indicator  = "cpu";
+            rec.status     = "red";
+            rec.url        = "https://wiki.example.com/cpu-runbook";
+            rec.notes      = "Check top processes";
+            rec.created_by = "admin";
+            rec.created_at = 1000;
+            const auto id = store.create_runbook(rec);
+
+            THEN("list_runbooks returns it")
+            {
+                auto list = store.list_runbooks();
+                REQUIRE(list.size() == 1);
+                REQUIRE(list[0].runbook_id == id);
+                REQUIRE(list[0].indicator == "cpu");
+                REQUIRE(list[0].status == "red");
+                REQUIRE(list[0].url == "https://wiki.example.com/cpu-runbook");
+                REQUIRE(list[0].notes == "Check top processes");
+                REQUIRE(list[0].created_by == "admin");
+            }
+
+            AND_WHEN("it is deleted")
+            {
+                store.delete_runbook(id);
+
+                THEN("list_runbooks is empty again")
+                {
+                    REQUIRE(store.list_runbooks().empty());
+                }
+            }
+        }
+    }
+}
+
+SCENARIO("get_runbook returns exact indicator match before wildcard")
+{
+    GIVEN("a store with a wildcard runbook and an exact runbook for the same status")
+    {
+        SqliteStore store(unique_store_path("runbook-lookup.db").string());
+
+        RunbookRecord wildcard;
+        wildcard.indicator  = "*";
+        wildcard.status     = "red";
+        wildcard.url        = "https://wiki.example.com/generic-red";
+        wildcard.created_at = 1000;
+        store.create_runbook(wildcard);
+
+        RunbookRecord exact;
+        exact.indicator  = "cpu";
+        exact.status     = "red";
+        exact.url        = "https://wiki.example.com/cpu-red";
+        exact.created_at = 2000;
+        store.create_runbook(exact);
+
+        THEN("get_runbook for cpu/red returns the exact match")
+        {
+            auto result = store.get_runbook("cpu", "red");
+            REQUIRE(result.has_value());
+            REQUIRE(result->url == "https://wiki.example.com/cpu-red");
+        }
+
+        THEN("get_runbook for memory/red (no exact) returns the wildcard")
+        {
+            auto result = store.get_runbook("memory", "red");
+            REQUIRE(result.has_value());
+            REQUIRE(result->url == "https://wiki.example.com/generic-red");
+        }
+
+        THEN("get_runbook for cpu/yellow (no match at all) returns nullopt")
+        {
+            auto result = store.get_runbook("cpu", "yellow");
+            REQUIRE_FALSE(result.has_value());
+        }
+    }
+}
+
+SCENARIO("insert_alert persists runbook_url and list_alerts returns it")
+{
+    GIVEN("a store with a runbook for cpu/red")
+    {
+        SqliteStore store(unique_store_path("runbook-alert.db").string());
+
+        store.upsert_agent({"agent-rb", "host", "linux", "key", true, false, true});
+
+        RunbookRecord rb;
+        rb.indicator  = "cpu";
+        rb.status     = "red";
+        rb.url        = "https://wiki.example.com/cpu-runbook";
+        rb.created_at = 1000;
+        store.create_runbook(rb);
+
+        WHEN("an alert is inserted with the runbook URL already populated")
+        {
+            AlertRecord alert;
+            alert.agent_id    = "agent-rb";
+            alert.indicator   = "cpu";
+            alert.old_status  = "green";
+            alert.new_status  = "red";
+            alert.message     = "cpu went red";
+            alert.created_at  = 5000;
+            alert.runbook_url = rb.url;
+            const auto id = store.insert_alert(alert);
+
+            THEN("list_alerts returns it with the runbook_url set")
+            {
+                auto list = store.list_alerts(false);
+                REQUIRE(list.size() == 1);
+                REQUIRE(list[0].alert_id == id);
+                REQUIRE(list[0].runbook_url == "https://wiki.example.com/cpu-runbook");
+            }
+        }
+    }
+}

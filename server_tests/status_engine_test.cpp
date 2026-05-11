@@ -4,6 +4,7 @@
 #include "common/metrics.hpp"
 #include "common/protocol.hpp"
 
+#include <algorithm>
 #include <catch2/catch_test_macros.hpp>
 
 using namespace thewatcher;
@@ -1086,6 +1087,67 @@ SCENARIO("classify_percent treats NaN and infinite CPU values as grey")
                 auto s = store.latest_status_for_indicator("agent-nan", "cpu");
                 REQUIRE(s.has_value());
                 REQUIRE(s->new_status == "grey");
+            }
+        }
+    }
+}
+
+SCENARIO("record_transition attaches a runbook URL to alerts when a matching runbook exists")
+{
+    GIVEN("a store with a cpu/red runbook and an approved agent")
+    {
+        SqliteStore store(":memory:");
+        StatusEngine engine(store);
+
+        insert_approved_agent(store, "agent-runbook");
+
+        RunbookRecord rb;
+        rb.indicator  = "cpu";
+        rb.status     = "red";
+        rb.url        = "https://wiki.example.com/cpu-runbook";
+        rb.created_at = 1000;
+        store.create_runbook(rb);
+
+        WHEN("cpu transitions from green to red")
+        {
+            engine.evaluate_metrics("agent-runbook", metrics_with_cpu(10.0), 1000);
+            engine.evaluate_metrics("agent-runbook", metrics_with_cpu(99.0), 2000);
+
+            THEN("an alert is generated with the runbook URL set")
+            {
+                auto alerts = store.list_alerts(false);
+                auto it = std::find_if(alerts.begin(), alerts.end(), [](const AlertRecord& a) {
+                    return a.indicator == "cpu" && a.new_status == "red";
+                });
+                REQUIRE(it != alerts.end());
+                REQUIRE(it->runbook_url == "https://wiki.example.com/cpu-runbook");
+            }
+        }
+    }
+}
+
+SCENARIO("record_transition leaves runbook_url empty when no matching runbook exists")
+{
+    GIVEN("a store with no runbooks and an approved agent")
+    {
+        SqliteStore store(":memory:");
+        StatusEngine engine(store);
+
+        insert_approved_agent(store, "agent-no-runbook");
+
+        WHEN("cpu transitions from green to red")
+        {
+            engine.evaluate_metrics("agent-no-runbook", metrics_with_cpu(10.0), 1000);
+            engine.evaluate_metrics("agent-no-runbook", metrics_with_cpu(99.0), 2000);
+
+            THEN("the generated alert has an empty runbook_url")
+            {
+                auto alerts = store.list_alerts(false);
+                auto it = std::find_if(alerts.begin(), alerts.end(), [](const AlertRecord& a) {
+                    return a.indicator == "cpu" && a.new_status == "red";
+                });
+                REQUIRE(it != alerts.end());
+                REQUIRE(it->runbook_url.empty());
             }
         }
     }

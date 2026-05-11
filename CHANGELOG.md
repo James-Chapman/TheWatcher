@@ -3,6 +3,35 @@
 All notable changes to TheWatcher are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.5.0] - 2026-05-11
+
+### Added
+- **Runbook links** (Issue #11): a `RunbookRecord` maps `(indicator, status)`
+  pairs to a URL and optional notes. A wildcard indicator `"*"` matches any
+  indicator when no exact match exists. Runbooks are stored in a new `runbooks`
+  table (SQLite and PostgreSQL). When an alert fires, `StatusEngine` looks up a
+  matching runbook and embeds the URL in the `AlertRecord`; the URL is also
+  included in the webhook payload. New API endpoints:
+  - `GET /api/runbooks` — list all runbooks (viewer+)
+  - `POST /api/runbooks` — create a runbook (`{indicator, status, url, notes}`; admin only)
+  - `DELETE /api/runbooks/:id` — delete a runbook (admin only)
+  The dashboard gains a **Runbooks** management tab (admin only) and alert rows
+  link to the runbook URL when one is present.
+- **PostgreSQL backend** (Issue #12): `PostgresStore` is a full implementation
+  of the `Store` interface using libpq (the PostgreSQL C client library).
+  Enabled at build time when `libpq` is found by Meson; the
+  `HAVE_LIBPQ` preprocessor flag gates all PostgreSQL code. Activate by
+  setting `db_type = "postgres"` and `postgres_dsn = "..."` in the server
+  config. The schema uses `BIGSERIAL`, `BOOLEAN`, `DOUBLE PRECISION`, and
+  `BYTEA` PostgreSQL types; BYTEA is stored as `\x`-prefixed hex strings in
+  text mode. `make_store()` routes the connection automatically.
+  A dedicated `store_postgres_test` test executable covers agent CRUD,
+  metrics, alerts, runbooks, settings, sessions, maintenance windows, and
+  silence rules against a live PostgreSQL database.
+- **HA topology documentation** (`docs/ha-topology.md`): reference
+  two-server active/standby setup with pgBouncer connection pooling and
+  keepalived VRRP for virtual-IP failover.
+
 ## [0.4.1] - 2026-05-07
 
 ### Added

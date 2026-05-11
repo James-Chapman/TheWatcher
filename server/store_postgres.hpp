@@ -1,18 +1,20 @@
 #pragma once
 
+#ifdef HAVE_LIBPQ
+
 #include "store.hpp"
 
-#include <sqlite3.h>
+#include <libpq-fe.h>
 #include <string>
 
 namespace thewatcher::server
 {
 
-class SqliteStore final : public Store
+class PostgresStore final : public Store
 {
 public:
-    explicit SqliteStore(const std::string& path);
-    ~SqliteStore() override;
+    explicit PostgresStore(const std::string& dsn);
+    ~PostgresStore() override;
 
     void upsert_agent(const AgentRecord& rec) override;
     std::optional<AgentRecord> get_agent(const std::string& agent_id) override;
@@ -58,8 +60,8 @@ public:
     std::vector<StatusHistoryRow> list_status_history(const std::string& agent_id, int limit) override;
     std::optional<PendingStatusRecord> get_pending_status(const std::string& agent_id,
                                                           const std::string& indicator) override;
-    void set_pending_status(const std::string& agent_id, const std::string& indicator, const std::string& target_status,
-                            int count) override;
+    void set_pending_status(const std::string& agent_id, const std::string& indicator,
+                            const std::string& target_status, int count) override;
     void clear_pending_status(const std::string& agent_id, const std::string& indicator) override;
     int64_t insert_alert(const AlertRecord& alert) override;
     std::vector<AlertRecord> list_alerts(bool include_deleted) override;
@@ -107,7 +109,9 @@ private:
     void init_schema();
     void bootstrap_defaults();
 
-    sqlite3* db_ = nullptr;
+    PGconn* conn_ = nullptr;
 };
 
 } // namespace thewatcher::server
+
+#endif // HAVE_LIBPQ

@@ -7,6 +7,7 @@ import type {
   LogMatchRecord,
   MaintenanceWindowRecord,
   MetricsSnapshot,
+  RunbookRecord,
   ServerSettings,
   SessionInfo,
   SilenceRecord,
@@ -311,4 +312,16 @@ export async function updateView(viewId: number, name: string, agentIds: string[
 
 export async function deleteView(viewId: number): Promise<void> {
   await mutateJson<{ ok: boolean }>(`/api/views/${viewId}`, { method: 'DELETE' });
+}
+
+export async function fetchRunbooks(): Promise<RunbookRecord[]> {
+  return fetchJson<RunbookRecord[]>('/api/runbooks');
+}
+
+export async function createRunbook(indicator: string, status: string, url: string, notes: string): Promise<RunbookRecord> {
+  return jsonPost<RunbookRecord>('/api/runbooks', { indicator, status, url, notes });
+}
+
+export async function deleteRunbook(runbookId: number): Promise<void> {
+  await mutateJson<{ ok: boolean }>(`/api/runbooks/${runbookId}`, { method: 'DELETE' });
 }

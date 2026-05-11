@@ -103,6 +103,7 @@ struct AlertRecord
     int64_t deleted_at = 0;
     std::string note;
     int64_t escalated_at = 0;
+    std::string runbook_url; // populated from runbooks table when alert is created
 };
 
 struct MaintenanceWindowRecord
@@ -143,6 +144,17 @@ struct LogMatchRecord
     std::string path;
     std::string matched_line;
     std::string severity;
+    int64_t created_at = 0;
+};
+
+struct RunbookRecord
+{
+    int64_t runbook_id = 0;
+    std::string indicator; // exact name like "cpu", or "*" to match any indicator
+    std::string status;    // "yellow", "amber", "red"
+    std::string url;
+    std::string notes;
+    std::string created_by;
     int64_t created_at = 0;
 };
 
@@ -242,6 +254,14 @@ public:
     virtual std::vector<ViewRecord> list_views(int64_t user_id) = 0; // own + public
     virtual void update_view(const ViewRecord& rec) = 0;
     virtual void delete_view(int64_t view_id) = 0;
+
+    // Runbook links — attached to alerts by indicator+status on creation.
+    virtual int64_t create_runbook(const RunbookRecord& rec) = 0;
+    virtual std::vector<RunbookRecord> list_runbooks() = 0;
+    virtual void delete_runbook(int64_t runbook_id) = 0;
+    // Returns the best match for (indicator, status): exact > wildcard indicator.
+    virtual std::optional<RunbookRecord> get_runbook(const std::string& indicator,
+                                                     const std::string& status) = 0;
 };
 
 std::unique_ptr<Store> make_store(const std::string& db_type, const std::string& db_path_or_dsn);

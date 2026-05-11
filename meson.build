@@ -1,7 +1,7 @@
 project(
   'thewatcher',
   ['c', 'cpp'],
-  version: '0.4.1',
+  version: '0.5.0',
   default_options: [
     'cpp_std=c++20',
     'default_library=static',
@@ -53,48 +53,62 @@ json_dep   = dependency('nlohmann_json',    fallback: ['nlohmann_json', 'nlohman
 http_dep   = dependency('cpp-httplib',      fallback: ['cpp-httplib',   'cpp_httplib_dep'])
 catch2_dep = dependency('catch2-with-main', fallback: ['catch2',        'catch2_with_main_dep'])
 
-libsodium_project = subproject(
-  'libsodium',
-  default_options: ['default_library=static'],
-)
-sodium_dep = libsodium_project.get_variable('libsodium_dep')
-libsodium_cmake_include_path = meson.current_build_dir() / 'subprojects' / 'zeromq-4.3.5' / 'libsodium-include'
+# Prefer system-installed zeromq + libsodium (e.g. FreeBSD pkg install zeromq libsodium)
+# and fall back to building from source via cmake subproject when not available.
+zmq_system    = dependency('libzmq',    required: false, static: false, method: 'pkg-config')
+sodium_system = dependency('libsodium', required: false, static: false, method: 'pkg-config')
 
-python = import('python').find_installation()
-run_command(
-  python,
-  files('scripts/copy_headers.py'),
-  meson.current_build_dir() / 'subprojects' / 'libsodium-1.0.20',
-  libsodium_cmake_include_path,
-  check: true,
-)
+if zmq_system.found() and sodium_system.found()
+  sodium_dep = sodium_system
+  zmq_dep    = declare_dependency(dependencies: [zmq_system, sodium_system])
+  meson.override_dependency('libzmq',  zmq_dep)
+  meson.override_dependency('zeromq',  zmq_dep)
+  # zmq.hpp ships alongside zmq.h in the same package; reuse the include path.
+  cppzmq_dep = declare_dependency(dependencies: [zmq_system])
+else
+  libsodium_project = subproject(
+    'libsodium',
+    default_options: ['default_library=static'],
+  )
+  sodium_dep = libsodium_project.get_variable('libsodium_dep')
+  libsodium_cmake_include_path = meson.current_build_dir() / 'subprojects' / 'zeromq-4.3.5' / 'libsodium-include'
 
-cmake = import('cmake')
-libzmq_options = cmake.subproject_options()
-libzmq_options.add_cmake_defines({
-  'BUILD_SHARED': 'OFF',
-  'BUILD_STATIC': 'ON',
-  'BUILD_TESTS': 'OFF',
-  'ENABLE_CURVE': 'ON',
-  'WITH_LIBSODIUM': 'ON',
-  'WITH_LIBSODIUM_STATIC': 'ON',
-  'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
-  'CMAKE_POLICY_VERSION_MINIMUM': '3.5',
-  'ENABLE_PRECOMPILED': 'OFF',
-  'SODIUM_INCLUDE_DIRS': libsodium_cmake_include_path,
-  'SODIUM_LIBRARIES': libsodium_project.get_variable('libsodium_library_path'),
-})
-libzmq_project = cmake.subproject('libzmq', options: libzmq_options)
-zmq_dep = declare_dependency(
-  dependencies: [
-    libzmq_project.dependency('libzmq-static'),
-    sodium_dep,
-  ],
-)
-meson.override_dependency('libzmq', zmq_dep)
-meson.override_dependency('zeromq', zmq_dep)
+  python = import('python').find_installation()
+  run_command(
+    python,
+    files('scripts/copy_headers.py'),
+    meson.current_build_dir() / 'subprojects' / 'libsodium-1.0.20',
+    libsodium_cmake_include_path,
+    check: true,
+  )
 
-cppzmq_dep = dependency('cppzmq', fallback: ['cppzmq', 'cppzmq_dep'])
+  cmake = import('cmake')
+  libzmq_options = cmake.subproject_options()
+  libzmq_options.add_cmake_defines({
+    'BUILD_SHARED': 'OFF',
+    'BUILD_STATIC': 'ON',
+    'BUILD_TESTS': 'OFF',
+    'ENABLE_CURVE': 'ON',
+    'WITH_LIBSODIUM': 'ON',
+    'WITH_LIBSODIUM_STATIC': 'ON',
+    'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
+    'CMAKE_POLICY_VERSION_MINIMUM': '3.5',
+    'ENABLE_PRECOMPILED': 'OFF',
+    'SODIUM_INCLUDE_DIRS': libsodium_cmake_include_path,
+    'SODIUM_LIBRARIES': libsodium_project.get_variable('libsodium_library_path'),
+  })
+  libzmq_project = cmake.subproject('libzmq', options: libzmq_options)
+  zmq_dep = declare_dependency(
+    dependencies: [
+      libzmq_project.dependency('libzmq-static'),
+      sodium_dep,
+    ],
+  )
+  meson.override_dependency('libzmq', zmq_dep)
+  meson.override_dependency('zeromq', zmq_dep)
+
+  cppzmq_dep = dependency('cppzmq', fallback: ['cppzmq', 'cppzmq_dep'])
+endif
 
 subdir('common')
 subdir('agent/collectors')

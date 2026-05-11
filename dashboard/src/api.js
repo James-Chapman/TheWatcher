@@ -215,3 +215,12 @@ export async function updateView(viewId, name, agentIds, isPublic) {
 export async function deleteView(viewId) {
     await mutateJson(`/api/views/${viewId}`, { method: 'DELETE' });
 }
+export async function fetchRunbooks() {
+    return fetchJson('/api/runbooks');
+}
+export async function createRunbook(indicator, status, url, notes) {
+    return jsonPost('/api/runbooks', { indicator, status, url, notes });
+}
+export async function deleteRunbook(runbookId) {
+    await mutateJson(`/api/runbooks/${runbookId}`, { method: 'DELETE' });
+}

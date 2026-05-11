@@ -1,4 +1,4 @@
-import type { AgentCollectorConfigUpdate, AgentRecord, AgentThresholds, AlertRecord, GroupRecord, LogMatchRecord, MaintenanceWindowRecord, MetricsSnapshot, ServerSettings, SessionInfo, SilenceRecord, StatusHistoryRow, UptimeReport, UserRecord, ViewRecord } from './models';
+import type { AgentCollectorConfigUpdate, AgentRecord, AgentThresholds, AlertRecord, GroupRecord, LogMatchRecord, MaintenanceWindowRecord, MetricsSnapshot, RunbookRecord, ServerSettings, SessionInfo, SilenceRecord, StatusHistoryRow, UptimeReport, UserRecord, ViewRecord } from './models';
 export declare function fetchSession(): Promise<SessionInfo>;
 export declare function login(username: string, password: string): Promise<SessionInfo>;
 export declare function logout(): Promise<void>;
@@ -65,3 +65,6 @@ export declare function fetchViews(): Promise<ViewRecord[]>;
 export declare function createView(name: string, agentIds: string[], isPublic: boolean): Promise<ViewRecord>;
 export declare function updateView(viewId: number, name: string, agentIds: string[], isPublic: boolean): Promise<ViewRecord>;
 export declare function deleteView(viewId: number): Promise<void>;
+export declare function fetchRunbooks(): Promise<RunbookRecord[]>;
+export declare function createRunbook(indicator: string, status: string, url: string, notes: string): Promise<RunbookRecord>;
+export declare function deleteRunbook(runbookId: number): Promise<void>;
