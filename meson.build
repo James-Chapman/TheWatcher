@@ -20,8 +20,7 @@ add_project_arguments(
 )
 
 if host_machine.system() == 'windows'
-  # Match Bazel's effective Windows defaults: prevent <windows.h> from
-  # defining min/max as macros, target Win10+ APIs.
+  # Prevent <windows.h> from defining min/max as macros; target Win10+ APIs.
   add_project_arguments(
     '-DNOMINMAX',
     '-D_WIN32_WINNT=0x0A00',

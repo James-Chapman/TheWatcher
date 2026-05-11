@@ -73,7 +73,7 @@ are outside the normal top-N sample.
 1. Add the metric struct and JSON mapping to `common/metrics.hpp`.
 2. Add the field to `SystemMetrics`.
 3. Add collector source/header files under `agent/collectors/`.
-4. Add the files to `agent/collectors/BUILD.bazel`.
+4. Add the files to `agent/collectors/meson.build`.
 5. Register the collector in `Agent::Agent()` in `agent/agent.cpp`.
 6. Add or update `agent_tests/collector_contract_test.cpp`.
 7. Update `integration_tests/server_agent_integration_test.cpp` if the metric
@@ -89,7 +89,7 @@ More end-to-end extension guidance is in [Development](development.md).
 Run collector and integration tests:
 
 ```powershell
-.\scripts\bazel.cmd test //agent_tests:collector_contract_test //integration_tests:server_agent_integration_test --verbose_failures --test_output=errors
+meson test -C builddir-release collector_contract_test server_agent_integration_test --print-errorlogs
 ```
 
 If dashboard status mapping changes:

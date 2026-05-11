@@ -4,7 +4,6 @@
 *.log
 
 .agents/
-.bazelrc.user
 .claude/
 .claudeignore
 .clwb/
@@ -21,7 +20,6 @@ dashboard/*.tsbuildinfo
 
 plans/
 
-bazel-*
 build/
 builddir/
 builddir-release/

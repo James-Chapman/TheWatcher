@@ -108,17 +108,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The zeromq/libsodium pkg names on the vmactions FreeBSD 14.2 snapshot
+      # are unreliable, and the VM's outbound network is restricted. Pre-fetch
+      # the wrap archives on the Ubuntu host so the cmake/meson subprojects
+      # can build libzmq and libsodium from source inside the VM without
+      # needing the system packages or fresh downloads.
+      - name: Install meson on host
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-pip
+          pip3 install --quiet meson
+
+      - name: Cache Meson subproject downloads
+        uses: actions/cache@v4
+        with:
+          path: subprojects/packagecache
+          key: meson-wrap-freebsd-${{ hashFiles('subprojects/*.wrap') }}
+
+      - name: Pre-download wrap archives
+        run: meson subprojects download
+
       - name: Build and test on FreeBSD 14
         uses: vmactions/freebsd-vm@v1
         with:
           release: '14.2'
           usesh: true
-          # rsync the checked-out workspace into the VM.
+          # rsync the checked-out workspace (including subprojects/packagecache)
+          # into the VM.
           sync: rsync
           copyback: false
           prepare: |
-            pkg update -fq
-            pkg install -y cmake ninja meson pkgconf python3 zeromq libsodium
+            pkg install -y cmake ninja meson pkgconf python3
           run: |
             meson setup build --buildtype=release
             meson test -C build --print-errorlogs

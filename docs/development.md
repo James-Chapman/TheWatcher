@@ -15,25 +15,25 @@ dashboard/          React + TypeScript + Vite dashboard.
 dashboard_tests/    Dashboard test helpers or future browser tests.
 docs/               Operator and developer documentation.
 integration_tests/  End-to-end server-agent lifecycle tests.
-patches/            Third-party source patches consumed by Bazel.
 plans/              dev-task-planner task plans.
-scripts/            Build environment and Bazel wrapper scripts.
+scripts/            Cross-platform build-environment setup scripts.
 server/             Server runtime, API, storage, ZAP auth, config.
 server_tests/       Store, lifecycle, and ZAP tests.
-third_party/        Bazel BUILD wrappers for archive-backed dependencies.
+subprojects/        Meson wrap files and packagefile overlays for libsodium,
+                    libzmq, libcbor, and WrapDB-tracked dependencies.
 ```
 
 ## Core Build Targets
 
-```powershell
-.\scripts\bazel.cmd build //server:TheWatcherServer //agent:TheWatcherAgent --verbose_failures
-.\scripts\bazel.cmd test //agent_tests:config_test --verbose_failures
-.\scripts\bazel.cmd test //server_tests:store_test --verbose_failures
-.\scripts\bazel.cmd test //server_tests:status_engine_test --verbose_failures
-.\scripts\bazel.cmd test //server_tests:server_lifecycle_test --verbose_failures
-.\scripts\bazel.cmd test //server_tests:zap_handler_test --verbose_failures
-.\scripts\bazel.cmd test //integration_tests:server_agent_integration_test --verbose_failures --test_output=errors
-.\scripts\bazel.cmd test //... --verbose_failures
+```bash
+meson compile -C builddir-release TheWatcherServer TheWatcherAgent
+meson test    -C builddir-release config_test
+meson test    -C builddir-release store_test
+meson test    -C builddir-release status_engine_test
+meson test    -C builddir-release server_lifecycle_test
+meson test    -C builddir-release zap_handler_test
+meson test    -C builddir-release server_agent_integration_test --print-errorlogs
+meson test    -C builddir-release --print-errorlogs
 ```
 
 Dashboard:
@@ -55,16 +55,14 @@ npm.cmd test
 - Use BDD-style tests with `GIVEN`, `WHEN`, and `THEN`.
 - Add tests before behavior changes.
 - Update docs for every behavior or workflow change.
-- Bump `MODULE.bazel` version and update `CHANGELOG.md` for each change set.
-- Bazel builds ZeroMQ as a static archive with libsodium/CURVE support through
-  `third_party/libzmq.BUILD`; do not add vcpkg manifests or vcpkg include/link
-  paths to Bazel targets.
+- Bump the `version` in `meson.build` and update `CHANGELOG.md` for each
+  change set.
 - Meson builds ZeroMQ and libsodium as local static subprojects from
   `subprojects/*.wrap` plus `subprojects/packagefiles/`; do not add vcpkg,
   pkg-config, or system package assumptions for these dependencies.
-- Keep persistence/status tests on `//server:server_store` when they do not
-  need ZeroMQ. Use `//server:server_lib` only for tests that exercise the full
-  server runtime.
+- Keep persistence/status tests on the lighter `server_store_lib` target when
+  they do not need ZeroMQ. Use `server_lib` only for tests that exercise the
+  full server runtime.
 - Keep `httplib` route callbacks self-contained. Shared authorization,
   session, and command helpers should live on `ApiServer` and callbacks should
   capture `this` or values, not references to stack-local helper lambdas from
@@ -100,9 +98,10 @@ usage, services, packages, or custom application health.
    Keep platform-specific code behind preprocessor guards. The agent should
    still compile on Windows, Linux, and BSD.
 
-4. Register the collector in Bazel.
+4. Register the collector with Meson.
 
-   Update `agent/collectors/BUILD.bazel` with the new source and header.
+   Update `agent/collectors/meson.build` with the new source and header so
+   the static `agent_collectors` library picks them up.
 
 5. Add the collector to the agent runtime.
 
@@ -139,7 +138,7 @@ usage, services, packages, or custom application health.
 
    ```powershell
    clang-format -i <changed-cpp-files>
-   .\scripts\bazel.cmd test //agent_tests:collector_contract_test //integration_tests:server_agent_integration_test --verbose_failures --test_output=errors
+   meson test -C builddir-release collector_contract_test server_agent_integration_test --print-errorlogs
    cd dashboard
    npm.cmd run build
    npm.cmd test
@@ -165,18 +164,19 @@ usage, services, packages, or custom application health.
 
 ## Third-Party Dependencies
 
-Prefer Bzlmod registry modules when they preserve behavior. Keep archive-backed
-wrappers only where the project needs custom build settings or the dependency is
-not available in the registry.
+Prefer WrapDB-tracked Meson wraps when they preserve behavior. Keep custom
+packagefile overlays only where the project needs custom build settings
+(currently libsodium and libzmq, both built with CURVE-enabled static linkage)
+or the dependency is not available in WrapDB.
 
-Current archive-backed dependencies:
+Current dependencies pulled in via `subprojects/*.wrap`:
 
-- `libzmq`
-- `libsodium`
-- `cppzmq`
-- `libcbor`
-
-See [Bazel Build Notes](bazel-build.md) before changing third-party wrappers.
+- `libzmq` (with `subprojects/packagefiles/libzmq` overlay)
+- `libsodium` (with `subprojects/packagefiles/libsodium` overlay)
+- `libcbor` (with `subprojects/packagefiles/libcbor` overlay providing
+  pre-generated headers)
+- `cppzmq`, `sqlite3`, `nlohmann_json`, `cpp-httplib`, `catch2-with-main`
+  (WrapDB).
 
 ## Release Checklist
 
@@ -186,6 +186,6 @@ See [Bazel Build Notes](bazel-build.md) before changing third-party wrappers.
 4. Run relevant integration tests.
 5. Format C++ code.
 6. Update docs.
-7. Bump `MODULE.bazel`.
+7. Bump the `version` in `meson.build`.
 8. Add a `CHANGELOG.md` entry.
 9. Run final build/test commands for changed components.
