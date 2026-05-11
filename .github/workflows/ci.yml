@@ -117,6 +117,7 @@ jobs:
           sync: rsync
           copyback: false
           prepare: |
+            pkg update -fq
             pkg install -y cmake ninja meson pkgconf python3 zeromq libsodium
           run: |
             meson setup build --buildtype=release

@@ -55,8 +55,8 @@ catch2_dep = dependency('catch2-with-main', fallback: ['catch2',        'catch2_
 
 # Prefer system-installed zeromq + libsodium (e.g. FreeBSD pkg install zeromq libsodium)
 # and fall back to building from source via cmake subproject when not available.
-zmq_system    = dependency('libzmq',    required: false, static: false)
-sodium_system = dependency('libsodium', required: false, static: false)
+zmq_system    = dependency('libzmq',    required: false, static: false, method: 'pkg-config')
+sodium_system = dependency('libsodium', required: false, static: false, method: 'pkg-config')
 
 if zmq_system.found() and sodium_system.found()
   sodium_dep = sodium_system
