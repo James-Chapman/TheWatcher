@@ -40,9 +40,9 @@ if (NOT SODIUM_INCLUDE_DIRS OR NOT SODIUM_LIBRARIES)
 endif()
 
 if (SODIUM_INCLUDE_DIRS AND NOT SODIUM_LIBRARIES)
-  # Parent builds such as Bazel or Meson can supply libsodium as an adjacent
-  # static target. libzmq only needs the headers while compiling its static
-  # archive; the parent target links libsodium into final binaries.
+  # The parent Meson build supplies libsodium as an adjacent static target.
+  # libzmq only needs the headers while compiling its static archive; the
+  # parent target links libsodium into final binaries.
   set(SODIUM_LIBRARIES "libsodium_linked_by_parent_build")
   set(SODIUM_FOUND TRUE)
 endif()

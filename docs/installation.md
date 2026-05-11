@@ -41,8 +41,9 @@ dashboard and serve the static files with a web server.
 
 ### Build Machine
 
-- Bazelisk and the C++ toolchain described in [Build Environment](build-environment.md).
-- Git Bash on Windows for Bazel third-party builds.
+- Meson 1.4+, Ninja, and the C++ toolchain described in
+  [Build Environment](build-environment.md).
+- CMake on PATH (Meson drives the libzmq subproject build via CMake).
 - Visual Studio 2022 Build Tools on Windows.
 - npm for dashboard build and tests.
 
@@ -51,14 +52,21 @@ dashboard and serve the static files with a web server.
 Build the server and agent from the repository root:
 
 ```powershell
-.\scripts\bazel.cmd build //server:TheWatcherServer //agent:TheWatcherAgent --verbose_failures
+.\meson-build.cmd
+```
+
+Equivalent direct invocation:
+
+```bash
+meson setup builddir-release --buildtype=release --default-library=static
+meson compile -C builddir-release
 ```
 
 The Windows binaries are written under:
 
 ```text
-bazel-bin\server\TheWatcherServer.exe
-bazel-bin\agent\TheWatcherAgent.exe
+builddir-release\server\TheWatcherServer.exe
+builddir-release\agent\TheWatcherAgent.exe
 ```
 
 The dashboard production bundle is written to `dashboard\dist`:
@@ -236,7 +244,7 @@ Foreground mode is the simplest local setup. No service registration is needed.
 Create the server config and print its public key:
 
 ```powershell
-.\bazel-bin\server\TheWatcherServer.exe --config C:\ProgramData\TheWatcher\server.json
+.\builddir-release\server\TheWatcherServer.exe --config C:\ProgramData\TheWatcher\server.json
 ```
 
 Stop it with `Ctrl+C` if you only wanted to create the config. Normal agents
@@ -252,7 +260,7 @@ THEWATCHER_SERVER=127.0.0.1
 Start the agent:
 
 ```powershell
-.\bazel-bin\agent\TheWatcherAgent.exe --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
+.\builddir-release\agent\TheWatcherAgent.exe --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
 ```
 
 Open the dashboard and approve the pending agent.
@@ -262,13 +270,13 @@ Open the dashboard and approve the pending agent.
 Install the server service:
 
 ```powershell
-.\bazel-bin\server\TheWatcherServer.exe --install-service --config C:\ProgramData\TheWatcher\server.json
+.\builddir-release\server\TheWatcherServer.exe --install-service --config C:\ProgramData\TheWatcher\server.json
 ```
 
 Install the agent service:
 
 ```powershell
-.\bazel-bin\agent\TheWatcherAgent.exe --install-service --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
+.\builddir-release\agent\TheWatcherAgent.exe --install-service --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
 ```
 
 Start and stop services:
@@ -283,8 +291,8 @@ sc.exe stop TheWatcherAgent
 Uninstall services:
 
 ```powershell
-.\bazel-bin\server\TheWatcherServer.exe --uninstall-service
-.\bazel-bin\agent\TheWatcherAgent.exe --uninstall-service
+.\builddir-release\server\TheWatcherServer.exe --uninstall-service
+.\builddir-release\agent\TheWatcherAgent.exe --uninstall-service
 ```
 
 Use `--service-name <name>` on install, service mode, and uninstall when
@@ -300,7 +308,8 @@ packaging\windows\TheWatcher.iss
 
 Prerequisites:
 
-- Build `//server:TheWatcherServer` and `//agent:TheWatcherAgent`.
+- Build the server and agent with `.\meson-build.cmd` (or `meson compile -C
+  builddir-release TheWatcherServer TheWatcherAgent`).
 - Build the dashboard with `npm.cmd run build` if the installer should include
   static dashboard files.
 - Install Inno Setup 6 on the packaging machine.
@@ -327,10 +336,10 @@ service. The agent writes `SERVER_PUBLIC_KEY` and
 
 ## Linux And BSD
 
-Linux and BSD builds use the same Bazel targets. Run the binaries in foreground
-mode under a host supervisor such as systemd, rc.d, or another service manager.
-The Windows service flags intentionally return an explanatory error outside
-Windows.
+Linux and BSD builds use the same Meson targets. Run the binaries in
+foreground mode under a host supervisor such as systemd, rc.d, or another
+service manager. The Windows service flags intentionally return an
+explanatory error outside Windows.
 
 Typical config paths:
 

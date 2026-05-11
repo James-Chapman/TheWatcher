@@ -15,18 +15,21 @@ agents offline when `last_seen` exceeds the configured threshold.
 
 ## Quick Start
 
-Build everything from PowerShell:
+Build everything from a Visual Studio developer PowerShell prompt:
 
 ```powershell
 .\scripts\setup-build-env.cmd -SkipWsl
-.\scripts\bazel.cmd build //server:TheWatcherServer //agent:TheWatcherAgent --verbose_failures
-.\scripts\bazel.cmd test //... --verbose_failures
+.\meson-build.cmd
 ```
+
+(On Linux: `./scripts/setup-build-env-linux.sh` then
+`meson setup builddir-release --buildtype=release && meson test -C builddir-release --print-errorlogs`.
+On BSD: `./scripts/setup-build-env-bsd.sh` and the same meson commands.)
 
 Start the server in foreground mode:
 
 ```powershell
-.\bazel-bin\server\TheWatcherServer.exe --config C:\ProgramData\TheWatcher\server.json
+.\builddir-release\server\TheWatcherServer.exe --config C:\ProgramData\TheWatcher\server.json
 ```
 
 Create or edit the agent config:
@@ -38,7 +41,7 @@ THEWATCHER_SERVER=127.0.0.1
 Start the agent in foreground mode:
 
 ```powershell
-.\bazel-bin\agent\TheWatcherAgent.exe --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
+.\builddir-release\agent\TheWatcherAgent.exe --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
 ```
 
 Run the dashboard during development:
@@ -70,10 +73,8 @@ the agent writes back to `TheWatcherAgent.conf`.
   coding workflow, and how to extend the product end to end.
 - [Collector Contract](docs/collector-contract.md): how collectors populate
   `SystemMetrics` and what to change when adding a collector.
-- [Build Environment](docs/build-environment.md): Windows and optional WSL
-  toolchain setup.
-- [Bazel Build Notes](docs/bazel-build.md): third-party build wrappers and
-  Windows-specific Bazel behavior.
+- [Build Environment](docs/build-environment.md): Windows, Linux, and BSD
+  toolchain setup for the Meson build.
 - [Logging](docs/logging.md): log file locations and startup diagnostics.
 - [Service Installation](docs/service-installation.md): focused Windows service
   command reference.
@@ -81,9 +82,9 @@ the agent writes back to `TheWatcherAgent.conf`.
 ## Main Targets
 
 ```powershell
-.\scripts\bazel.cmd build //server:TheWatcherServer //agent:TheWatcherAgent
-.\scripts\bazel.cmd test //agent_tests:config_test //server_tests:store_test
-.\scripts\bazel.cmd test //integration_tests:server_agent_integration_test
+meson compile -C builddir-release TheWatcherServer TheWatcherAgent
+meson test    -C builddir-release config_test store_test
+meson test    -C builddir-release server_agent_integration_test
 ```
 
 The dashboard is built with npm:

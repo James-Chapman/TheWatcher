@@ -1,3 +1,0 @@
-# This project uses Bzlmod (MODULE.bazel) for dependency management.
-# This file exists for toolchain compatibility with Bazel < 7.
-workspace(name = "thewatcher")

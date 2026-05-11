@@ -16,7 +16,7 @@ only when installing or running under Windows Service Control Manager.
 Install:
 
 ```powershell
-.\bazel-bin\server\TheWatcherServer.exe --install-service --config C:\ProgramData\TheWatcher\server.json
+.\builddir-release\server\TheWatcherServer.exe --install-service --config C:\ProgramData\TheWatcher\server.json
 ```
 
 Start and stop:
@@ -29,7 +29,7 @@ sc.exe stop TheWatcherServer
 Uninstall:
 
 ```powershell
-.\bazel-bin\server\TheWatcherServer.exe --uninstall-service
+.\builddir-release\server\TheWatcherServer.exe --uninstall-service
 ```
 
 The installed command line runs the same executable with `--service`.
@@ -49,13 +49,13 @@ only when pre-pinning a known server identity before first enrollment.
 Install:
 
 ```powershell
-.\bazel-bin\agent\TheWatcherAgent.exe --install-service --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
+.\builddir-release\agent\TheWatcherAgent.exe --install-service --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
 ```
 
 You can also pass one-time overrides at install time:
 
 ```powershell
-.\bazel-bin\agent\TheWatcherAgent.exe --install-service --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf --server tcp://monitor.local:5555 --enrollment tcp://monitor.local:5556
+.\builddir-release\agent\TheWatcherAgent.exe --install-service --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf --server tcp://monitor.local:5555 --enrollment tcp://monitor.local:5556
 ```
 
 Start and stop:
@@ -68,7 +68,7 @@ sc.exe stop TheWatcherAgent
 Uninstall:
 
 ```powershell
-.\bazel-bin\agent\TheWatcherAgent.exe --uninstall-service
+.\builddir-release\agent\TheWatcherAgent.exe --uninstall-service
 ```
 
 ## Multiple Instances
@@ -77,9 +77,9 @@ Use `--service-name <name>` consistently with install, service mode, and
 uninstall:
 
 ```powershell
-.\bazel-bin\agent\TheWatcherAgent.exe --install-service --service-name TheWatcherAgentLab --config C:\ProgramData\TheWatcher\lab-agent.conf
+.\builddir-release\agent\TheWatcherAgent.exe --install-service --service-name TheWatcherAgentLab --config C:\ProgramData\TheWatcher\lab-agent.conf
 sc.exe start TheWatcherAgentLab
-.\bazel-bin\agent\TheWatcherAgent.exe --uninstall-service --service-name TheWatcherAgentLab
+.\builddir-release\agent\TheWatcherAgent.exe --uninstall-service --service-name TheWatcherAgentLab
 ```
 
 ## Logs

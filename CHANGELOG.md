@@ -3,6 +3,19 @@
 All notable changes to TheWatcher are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Removed
+- **Bazel/Bazelisk build system removed.** Meson + Ninja is now the sole
+  supported build path on Windows, Linux, and BSD. Deleted `BUILD.bazel`,
+  `MODULE.bazel(.lock)`, `WORKSPACE.bazel`, `.bazelrc`, `.bazelignore`,
+  every per-package `BUILD.bazel`, `scripts/bazel.cmd`, `build.cmd`, the
+  Bazel-only `patches/` and `third_party/` directories, and the Bazel
+  documentation. `scripts/setup-build-env.ps1` no longer installs Bazelisk
+  or writes `.bazelrc.user`; the Windows quick start now goes through
+  `meson-build.cmd`, and binaries land in `builddir-release/{server,agent}/`
+  instead of `bazel-bin/`.
+
 ## [0.5.0] - 2026-05-11
 
 ### Added

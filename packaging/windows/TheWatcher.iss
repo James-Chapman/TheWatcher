@@ -19,8 +19,8 @@ SolidCompression=yes
 WizardStyle=modern
 
 [Files]
-Source: "..\..\bazel-bin\server\TheWatcherServer.exe"; DestDir: "{app}\server"; Flags: ignoreversion
-Source: "..\..\bazel-bin\agent\TheWatcherAgent.exe"; DestDir: "{app}\agent"; Flags: ignoreversion
+Source: "..\..\builddir-release\server\TheWatcherServer.exe"; DestDir: "{app}\server"; Flags: ignoreversion
+Source: "..\..\builddir-release\agent\TheWatcherAgent.exe"; DestDir: "{app}\agent"; Flags: ignoreversion
 Source: "..\..\dashboard\dist\*"; DestDir: "{app}\dashboard"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Dirs]

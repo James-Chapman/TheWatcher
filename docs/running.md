@@ -6,7 +6,7 @@ dashboard.
 ## Start The Server In Foreground Mode
 
 ```powershell
-.\bazel-bin\server\TheWatcherServer.exe --config C:\ProgramData\TheWatcher\server.json
+.\builddir-release\server\TheWatcherServer.exe --config C:\ProgramData\TheWatcher\server.json
 ```
 
 Expected log lines include:
@@ -31,7 +31,7 @@ THEWATCHER_SERVER=127.0.0.1
 Start:
 
 ```powershell
-.\bazel-bin\agent\TheWatcherAgent.exe --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
+.\builddir-release\agent\TheWatcherAgent.exe --config C:\ProgramData\TheWatcher\TheWatcherAgent.conf
 ```
 
 The agent enrolls first. Until an operator approves it, enrollment remains
@@ -125,7 +125,7 @@ Get-Content C:\ProgramData\TheWatcher\TheWatcherAgent.log -Tail 50
 Run the end-to-end integration test:
 
 ```powershell
-.\scripts\bazel.cmd test //integration_tests:server_agent_integration_test --verbose_failures --test_output=errors
+meson test -C builddir-release server_agent_integration_test --print-errorlogs
 ```
 
 That test starts an isolated server, enrolls and approves an agent, verifies CPU,
