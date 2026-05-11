@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'claude/**'
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+
+  # ── Linux ──────────────────────────────────────────────────────────────────
+  linux:
+    name: Linux (ubuntu-22.04, gcc)
+    runs-on: ubuntu-22.04
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build python3-pip libpq-dev
+          pip3 install --quiet meson
+
+      - name: Create PostgreSQL test database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres \
+            -c "CREATE USER thewatcher_test WITH PASSWORD 'thewatcher_test';"
+          psql -h 127.0.0.1 -U postgres \
+            -c "CREATE DATABASE thewatcher_test OWNER thewatcher_test;"
+
+      - name: Cache Meson subproject downloads
+        uses: actions/cache@v4
+        with:
+          path: subprojects/packagecache
+          key: meson-wrap-linux-${{ hashFiles('subprojects/*.wrap') }}
+
+      - name: Configure
+        run: meson setup build --buildtype=release
+
+      - name: Test
+        env:
+          THEWATCHER_POSTGRES_TEST_DSN: >-
+            host=127.0.0.1 dbname=thewatcher_test
+            user=thewatcher_test password=thewatcher_test
+        run: meson test -C build --print-errorlogs
+
+  # ── Windows ────────────────────────────────────────────────────────────────
+  windows:
+    name: Windows (windows-latest, MSVC 2022)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Puts cl.exe, link.exe, and SDK headers on PATH.
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Install Meson and Ninja
+        run: pip install meson ninja
+
+      - name: Cache Meson subproject downloads
+        uses: actions/cache@v4
+        with:
+          path: subprojects/packagecache
+          key: meson-wrap-windows-${{ hashFiles('subprojects/*.wrap') }}
+
+      - name: Configure
+        # Explicit --backend=ninja avoids Meson choosing the VS generator.
+        run: meson setup build --buildtype=release --backend=ninja
+
+      # Build everything including the final executables.  On Windows,
+      # windows_service.cpp is compiled so TheWatcherServer/TheWatcherAgent
+      # link successfully (unlike Linux where those symbols are absent).
+      - name: Compile (all targets)
+        run: meson compile -C build
+
+      - name: Test
+        run: meson test -C build --no-rebuild --print-errorlogs
+
+  # ── FreeBSD ────────────────────────────────────────────────────────────────
+  freebsd:
+    name: FreeBSD 14 (clang)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pre-fetch wrap archives on the Ubuntu host so they are rsynced into
+      # the FreeBSD VM and saved to the actions/cache after the job.
+      - name: Pre-fetch Meson subproject archives
+        run: |
+          pip3 install --quiet meson
+          meson subprojects download
+
+      - name: Cache Meson subproject downloads
+        uses: actions/cache@v4
+        with:
+          path: subprojects/packagecache
+          key: meson-wrap-freebsd-${{ hashFiles('subprojects/*.wrap') }}
+
+      - name: Build and test on FreeBSD 14
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: '14.2'
+          usesh: true
+          sync: rsync
+          copyback: false
+          prepare: |
+            pkg install -y cmake ninja meson pkgconf python3
+          run: |
+            meson setup build --buildtype=release
+            meson test -C build --print-errorlogs
