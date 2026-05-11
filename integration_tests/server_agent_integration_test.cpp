@@ -1442,3 +1442,120 @@ SCENARIO("Pending enrollment rejection removes the agent from the queue and appr
         }
     }
 }
+
+// ── Scenario 11: Runbooks API ─────────────────────────────────────────────────
+
+SCENARIO("Runbooks API supports CRUD and enforces role-based access")
+{
+    GIVEN("a running server with the default admin user logged in")
+    {
+        ServerFixture fx;
+        REQUIRE(fx.startup.wait().started);
+        REQUIRE(fx.login());
+
+        WHEN("GET /api/runbooks is called on an empty store")
+        {
+            const auto list = get_json(fx.client, "/api/runbooks");
+
+            THEN("it returns an empty array")
+            {
+                REQUIRE(list.has_value());
+                REQUIRE(list->is_array());
+                REQUIRE(list->empty());
+            }
+        }
+
+        WHEN("POST /api/runbooks creates a cpu/red runbook")
+        {
+            const auto created = post_json_created(fx.client, "/api/runbooks", {
+                {"indicator", "cpu"},
+                {"status",    "red"},
+                {"url",       "https://wiki.example.com/cpu-runbook"},
+                {"notes",     "Check top processes"},
+            });
+
+            THEN("a 201 response is returned with the runbook record")
+            {
+                REQUIRE(created.has_value());
+                REQUIRE((*created)["runbook_id"].get<int64_t>() > 0);
+                REQUIRE((*created)["indicator"].get<std::string>() == "cpu");
+                REQUIRE((*created)["status"].get<std::string>() == "red");
+                REQUIRE((*created)["url"].get<std::string>() == "https://wiki.example.com/cpu-runbook");
+                REQUIRE((*created)["notes"].get<std::string>() == "Check top processes");
+            }
+
+            AND_THEN("GET /api/runbooks lists the new runbook")
+            {
+                const auto list = get_json(fx.client, "/api/runbooks");
+                REQUIRE(list.has_value());
+                REQUIRE(list->size() == 1);
+                REQUIRE(list->at(0)["indicator"].get<std::string>() == "cpu");
+            }
+
+            AND_WHEN("DELETE /api/runbooks/:id removes it")
+            {
+                const auto runbook_id = (*created)["runbook_id"].get<int64_t>();
+                REQUIRE(delete_ok(fx.client, "/api/runbooks/" + std::to_string(runbook_id)));
+
+                THEN("GET /api/runbooks is empty again")
+                {
+                    const auto list = get_json(fx.client, "/api/runbooks");
+                    REQUIRE(list.has_value());
+                    REQUIRE(list->empty());
+                }
+            }
+        }
+
+        WHEN("POST /api/runbooks is called with an invalid status")
+        {
+            const auto res = fx.client.Post("/api/runbooks",
+                json{{"indicator", "cpu"}, {"status", "purple"}, {"url", "https://example.com"}}.dump(),
+                "application/json");
+
+            THEN("a 400 error is returned")
+            {
+                REQUIRE(res);
+                REQUIRE(res->status == 400);
+            }
+        }
+
+        WHEN("POST /api/runbooks is called with a missing url")
+        {
+            const auto res = fx.client.Post("/api/runbooks",
+                json{{"indicator", "cpu"}, {"status", "red"}}.dump(),
+                "application/json");
+
+            THEN("a 400 error is returned")
+            {
+                REQUIRE(res);
+                REQUIRE(res->status == 400);
+            }
+        }
+
+        WHEN("a viewer user tries to create a runbook")
+        {
+            const auto viewer_body = json{{"username", "viewer_rb"}, {"password", "viewerpw!"}, {"role", "viewer"}};
+            REQUIRE(post_json(fx.client, "/api/users", viewer_body).has_value());
+
+            httplib::Client viewer("127.0.0.1", fx.config.api_port);
+            REQUIRE(login_as(viewer, "viewer_rb", "viewerpw!"));
+
+            const auto res = viewer.Post("/api/runbooks",
+                json{{"indicator", "cpu"}, {"status", "red"}, {"url", "https://example.com"}}.dump(),
+                "application/json");
+
+            THEN("a 403 Forbidden response is returned")
+            {
+                REQUIRE(res);
+                REQUIRE(res->status == 403);
+            }
+
+            AND_THEN("the viewer can still GET /api/runbooks (viewer+ access)")
+            {
+                const auto list = get_json(viewer, "/api/runbooks");
+                REQUIRE(list.has_value());
+                REQUIRE(list->is_array());
+            }
+        }
+    }
+}

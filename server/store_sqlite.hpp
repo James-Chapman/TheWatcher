@@ -95,6 +95,11 @@ public:
     void update_view(const ViewRecord& rec) override;
     void delete_view(int64_t view_id) override;
 
+    int64_t create_runbook(const RunbookRecord& rec) override;
+    std::vector<RunbookRecord> list_runbooks() override;
+    void delete_runbook(int64_t runbook_id) override;
+    std::optional<RunbookRecord> get_runbook(const std::string& indicator, const std::string& status) override;
+
 private:
     void exec(const char* sql);
     bool column_exists(const std::string& table, const std::string& column);

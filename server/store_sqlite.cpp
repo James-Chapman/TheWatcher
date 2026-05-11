@@ -152,7 +152,8 @@ namespace
                 sqlite3_column_int64(s, 8),
                 sqlite3_column_int64(s, 9),
                 text_col(s, 10),
-                sqlite3_column_int64(s, 11)};
+                sqlite3_column_int64(s, 11),
+                text_col(s, 12)};
     }
 
     MaintenanceWindowRecord row_to_maintenance_window(sqlite3_stmt* s)
@@ -476,6 +477,19 @@ void SqliteStore::init_schema()
             created_at     INTEGER NOT NULL
         );
     )");
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS runbooks (
+            runbook_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+            indicator   TEXT NOT NULL DEFAULT '*',
+            status      TEXT NOT NULL,
+            url         TEXT NOT NULL,
+            notes       TEXT NOT NULL DEFAULT '',
+            created_by  TEXT NOT NULL DEFAULT '',
+            created_at  INTEGER NOT NULL DEFAULT 0
+        );
+    )");
+    add_column_if_missing("alerts", "runbook_url",
+                          "ALTER TABLE alerts ADD COLUMN runbook_url TEXT NOT NULL DEFAULT '';");
 }
 
 void SqliteStore::bootstrap_defaults()
@@ -1092,7 +1106,8 @@ int64_t SqliteStore::insert_alert(const AlertRecord& alert)
     Stmt st;
     check(sqlite3_prepare_v2(db_,
                              "INSERT INTO alerts(agent_id,indicator,old_status,new_status,message,created_at,"
-                             "acknowledged_by,acknowledged_at,deleted_at,note,escalated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?);",
+                             "acknowledged_by,acknowledged_at,deleted_at,note,escalated_at,runbook_url) "
+                             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?);",
                              -1, &st.s, nullptr),
           db_, "prepare insert_alert");
     sqlite3_bind_text(st.s, 1, alert.agent_id.c_str(), -1, SQLITE_TRANSIENT);
@@ -1106,6 +1121,7 @@ int64_t SqliteStore::insert_alert(const AlertRecord& alert)
     sqlite3_bind_int64(st.s, 9, alert.deleted_at);
     sqlite3_bind_text(st.s, 10, alert.note.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(st.s, 11, alert.escalated_at);
+    sqlite3_bind_text(st.s, 12, alert.runbook_url.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step insert_alert");
     return sqlite3_last_insert_rowid(db_);
 }
@@ -1115,9 +1131,9 @@ std::vector<AlertRecord> SqliteStore::list_alerts(bool include_deleted)
     const char* sql =
         include_deleted
             ? "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,acknowledged_by,"
-              "acknowledged_at,deleted_at,note,escalated_at FROM alerts ORDER BY created_at DESC,alert_id DESC;"
+              "acknowledged_at,deleted_at,note,escalated_at,runbook_url FROM alerts ORDER BY created_at DESC,alert_id DESC;"
             : "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,acknowledged_by,"
-              "acknowledged_at,deleted_at,note,escalated_at FROM alerts WHERE deleted_at=0 ORDER BY created_at "
+              "acknowledged_at,deleted_at,note,escalated_at,runbook_url FROM alerts WHERE deleted_at=0 ORDER BY created_at "
               "DESC,alert_id DESC;";
     Stmt st;
     check(sqlite3_prepare_v2(db_, sql, -1, &st.s, nullptr), db_, "prepare list_alerts");
@@ -1132,7 +1148,7 @@ std::vector<AlertRecord> SqliteStore::list_unacknowledged_alerts()
     Stmt st;
     check(sqlite3_prepare_v2(db_,
                              "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,"
-                             "acknowledged_by,acknowledged_at,deleted_at,note,escalated_at FROM alerts WHERE "
+                             "acknowledged_by,acknowledged_at,deleted_at,note,escalated_at,runbook_url FROM alerts WHERE "
                              "deleted_at=0 AND acknowledged_at=0 ORDER BY created_at DESC,alert_id DESC;",
                              -1, &st.s, nullptr),
           db_, "prepare list_unacknowledged_alerts");
@@ -1574,6 +1590,84 @@ void SqliteStore::delete_view(int64_t view_id)
           db_, "prepare delete_view");
     sqlite3_bind_int64(st.s, 1, view_id);
     check(sqlite3_step(st.s), db_, "step delete_view");
+}
+
+// ── Runbooks ──────────────────────────────────────────────────────────────────
+
+namespace
+{
+    RunbookRecord row_to_runbook(sqlite3_stmt* s)
+    {
+        RunbookRecord r;
+        r.runbook_id = sqlite3_column_int64(s, 0);
+        r.indicator  = text_col(s, 1);
+        r.status     = text_col(s, 2);
+        r.url        = text_col(s, 3);
+        r.notes      = text_col(s, 4);
+        r.created_by = text_col(s, 5);
+        r.created_at = sqlite3_column_int64(s, 6);
+        return r;
+    }
+} // namespace
+
+int64_t SqliteStore::create_runbook(const RunbookRecord& rec)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "INSERT INTO runbooks(indicator,status,url,notes,created_by,created_at) "
+                             "VALUES(?,?,?,?,?,?);",
+                             -1, &st.s, nullptr),
+          db_, "prepare create_runbook");
+    sqlite3_bind_text(st.s, 1, rec.indicator.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, rec.status.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 3, rec.url.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 4, rec.notes.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 5, rec.created_by.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 6, rec.created_at);
+    check(sqlite3_step(st.s), db_, "step create_runbook");
+    return sqlite3_last_insert_rowid(db_);
+}
+
+std::vector<RunbookRecord> SqliteStore::list_runbooks()
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT runbook_id,indicator,status,url,notes,created_by,created_at "
+                             "FROM runbooks ORDER BY created_at ASC;",
+                             -1, &st.s, nullptr),
+          db_, "prepare list_runbooks");
+    std::vector<RunbookRecord> out;
+    while (sqlite3_step(st.s) == SQLITE_ROW)
+        out.push_back(row_to_runbook(st.s));
+    return out;
+}
+
+void SqliteStore::delete_runbook(int64_t runbook_id)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "DELETE FROM runbooks WHERE runbook_id=?;", -1, &st.s, nullptr),
+          db_, "prepare delete_runbook");
+    sqlite3_bind_int64(st.s, 1, runbook_id);
+    check(sqlite3_step(st.s), db_, "step delete_runbook");
+}
+
+std::optional<RunbookRecord> SqliteStore::get_runbook(const std::string& indicator, const std::string& status)
+{
+    // Prefer exact indicator match over wildcard '*'; limit to 1.
+    Stmt st;
+    check(sqlite3_prepare_v2(db_,
+                             "SELECT runbook_id,indicator,status,url,notes,created_by,created_at "
+                             "FROM runbooks "
+                             "WHERE (indicator=? OR indicator='*') AND status=? "
+                             "ORDER BY CASE WHEN indicator='*' THEN 1 ELSE 0 END "
+                             "LIMIT 1;",
+                             -1, &st.s, nullptr),
+          db_, "prepare get_runbook");
+    sqlite3_bind_text(st.s, 1, indicator.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, status.c_str(), -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st.s) == SQLITE_ROW)
+        return row_to_runbook(st.s);
+    return std::nullopt;
 }
 
 std::unique_ptr<Store> make_store(const std::string& db_type, const std::string& db_path_or_dsn)

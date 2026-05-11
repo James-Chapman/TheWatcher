@@ -171,13 +171,14 @@ namespace
         }
 
         json payload = {
-            {"alert_id",   alert_id        },
-            {"agent_id",   alert.agent_id  },
-            {"indicator",  alert.indicator },
-            {"old_status", alert.old_status},
-            {"new_status", alert.new_status},
-            {"message",    alert.message   },
-            {"created_at", alert.created_at},
+            {"alert_id",    alert_id           },
+            {"agent_id",    alert.agent_id     },
+            {"indicator",   alert.indicator    },
+            {"old_status",  alert.old_status   },
+            {"new_status",  alert.new_status   },
+            {"message",     alert.message      },
+            {"created_at",  alert.created_at   },
+            {"runbook_url", alert.runbook_url  },
         };
 
         httplib::Client client(target->host, target->port);
@@ -625,6 +626,9 @@ void StatusEngine::record_transition(const std::string& agent_id, const std::str
             alert.new_status = status_to_string(next);
             alert.message = final_message;
             alert.created_at = timestamp_ms;
+            const auto runbook = store_.get_runbook(indicator, alert.new_status);
+            if (runbook)
+                alert.runbook_url = runbook->url;
             const auto alert_id = store_.insert_alert(alert);
             LOGF_WARNING("Generated alert id=%lld agent_id=%s indicator=%s old=%s new=%s",
                          static_cast<long long>(alert_id), agent_id.c_str(), indicator.c_str(),

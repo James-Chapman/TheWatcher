@@ -13,13 +13,16 @@ import {
   createMaintenanceWindow,
   createSilence,
   createUser,
+  createRunbook,
   createView,
   deleteAgent,
   deleteAlert,
   deleteMaintenanceWindow,
+  deleteRunbook,
   deleteSilence,
   deleteUser,
   deleteView,
+  fetchRunbooks,
   disableUser,
   enableUser,
   fetchAgentHistory,
@@ -60,6 +63,7 @@ import type {
   MetricsSnapshot,
   NetworkInterfaceConfig,
   ProcessWatchConfig,
+  RunbookRecord,
   ServerSettings,
   SessionInfo,
   SilenceRecord,
@@ -82,7 +86,7 @@ import './styles.css';
 
 const COMPONENT_LABELS = ['CPU', 'Memory', 'Disk', 'Network', 'Temp', 'Proc', 'Heartbeat'];
 
-type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users' | 'maintenance' | 'silences' | 'settings' | 'views';
+type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users' | 'maintenance' | 'silences' | 'runbooks' | 'settings' | 'views';
 
 function colorLabel(color: HealthColor): string {
   return {
@@ -207,6 +211,7 @@ function Dashboard() {
           {operator ? <Tab view={view} target="maintenance" setView={setView} label="Maintenance" /> : null}
           {operator ? <Tab view={view} target="silences" setView={setView} label="Silences" /> : null}
           {admin ? <Tab view={view} target="users" setView={setView} label="Users" /> : null}
+          {admin ? <Tab view={view} target="runbooks" setView={setView} label="Runbooks" /> : null}
           {admin ? <Tab view={view} target="settings" setView={setView} label="Settings" /> : null}
         </nav>
         <div className="topbar-meta">
@@ -319,6 +324,7 @@ function Dashboard() {
         <SilencesPage agents={agents} busyAction={busyAction} operator={operator} runAction={runAction} silences={silences} />
       ) : null}
       {view === 'users' ? <UsersPage busyAction={busyAction} groups={groups} runAction={runAction} session={session} users={users} /> : null}
+      {view === 'runbooks' ? <RunbooksPage runAction={runAction} /> : null}
       {view === 'settings' ? <SettingsPage runAction={runAction} /> : null}
     </>
   );
@@ -1246,7 +1252,12 @@ function AlertsPage({
                 <td>{alert.indicator}</td>
                 <td><StatusDot color={alert.new_status} label={colorLabel(alert.new_status)} /></td>
                 <td className="uptime">{new Date(alert.created_at).toLocaleString()}</td>
-                <td>{alert.message}</td>
+                <td>
+                  {alert.message}
+                  {alert.runbook_url ? (
+                    <a href={alert.runbook_url} target="_blank" rel="noopener noreferrer" className="runbook-link"> [Runbook&#8599;]</a>
+                  ) : null}
+                </td>
                 <td className="uptime">
                   {isAcknowledged ? (
                     <span>
@@ -1672,6 +1683,114 @@ function UsersPage({
               </tr>
             );
           })}</tbody>
+        </table>
+      </div>
+    </main>
+  );
+}
+
+function RunbooksPage({
+  runAction,
+}: {
+  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+}) {
+  const [runbooks, setRunbooks] = React.useState<RunbookRecord[]>([]);
+  const [indicator, setIndicator] = React.useState('*');
+  const [status, setStatus] = React.useState<'yellow' | 'amber' | 'red'>('red');
+  const [url, setUrl] = React.useState('');
+  const [notes, setNotes] = React.useState('');
+
+  const load = React.useCallback(() => {
+    void fetchRunbooks().then(setRunbooks).catch(() => undefined);
+  }, []);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  return (
+    <main className="table-wrap management-wrap">
+      <div className="management-header"><h1>Runbooks</h1></div>
+      <form
+        className="settings-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void runAction('runbook:create', async () => {
+            await createRunbook(indicator, status, url, notes);
+            setUrl('');
+            setNotes('');
+            setIndicator('*');
+            load();
+          });
+        }}
+      >
+        <div className="form-grid">
+          <label>
+            Indicator (exact name or * for any)
+            <input
+              placeholder="cpu"
+              value={indicator}
+              onChange={(e) => setIndicator(e.target.value)}
+            />
+          </label>
+          <label>
+            Status
+            <select value={status} onChange={(e) => setStatus(e.target.value as 'yellow' | 'amber' | 'red')}>
+              <option value="yellow">Yellow</option>
+              <option value="amber">Amber</option>
+              <option value="red">Red</option>
+            </select>
+          </label>
+          <label>
+            Runbook URL
+            <input
+              placeholder="https://wiki.example.com/runbook"
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          </label>
+          <label>
+            Notes
+            <input
+              placeholder="Optional notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="button-row">
+          <button className="text-button" type="submit" disabled={!url}>
+            <Plus size={14} /> Add Runbook
+          </button>
+        </div>
+      </form>
+      <div className="table-outer">
+        <table className="agent-table">
+          <thead><tr><th>Indicator</th><th>Status</th><th>URL</th><th>Notes</th><th>Created By</th><th>Actions</th></tr></thead>
+          <tbody>
+            {runbooks.length === 0 ? (
+              <tr><td colSpan={6} className="uptime">No runbooks configured.</td></tr>
+            ) : runbooks.map((rb) => (
+              <tr key={rb.runbook_id}>
+                <td>{rb.indicator}</td>
+                <td><StatusDot color={rb.status} label={rb.status} /></td>
+                <td><a href={rb.url} target="_blank" rel="noopener noreferrer">{rb.url}</a></td>
+                <td>{rb.notes}</td>
+                <td className="uptime">{rb.created_by}</td>
+                <td>
+                  <ActionButton
+                    busy={false}
+                    danger
+                    icon={<Trash2 size={14} />}
+                    label="Delete"
+                    onClick={() => void runAction(`runbook:delete:${rb.runbook_id}`, async () => {
+                      await deleteRunbook(rb.runbook_id);
+                      load();
+                    })}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
         </table>
       </div>
     </main>

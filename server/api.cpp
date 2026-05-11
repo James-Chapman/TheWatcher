@@ -231,7 +231,21 @@ namespace
             {"acknowledged_at", alert.acknowledged_at},
             {"deleted_at",      alert.deleted_at     },
             {"note",            alert.note           },
-            {"escalated_at",    alert.escalated_at   }
+            {"escalated_at",    alert.escalated_at   },
+            {"runbook_url",     alert.runbook_url    }
+        };
+    }
+
+    json runbook_to_json(const RunbookRecord& r)
+    {
+        return {
+            {"runbook_id",  r.runbook_id},
+            {"indicator",   r.indicator },
+            {"status",      r.status    },
+            {"url",         r.url       },
+            {"notes",       r.notes     },
+            {"created_by",  r.created_by},
+            {"created_at",  r.created_at}
         };
     }
 
@@ -2020,6 +2034,80 @@ void ApiServer::setup_routes()
                 return;
             }
             store_.delete_view(id);
+            set_json(res, json{{"ok", true}});
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // ── Runbooks ──────────────────────────────────────────────────────────────
+
+    // GET /api/runbooks — list all runbooks (viewer+)
+    http_->Get("/api/runbooks", [this](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto session = require_role(req, res, "viewer");
+            if (!session) return;
+            auto rows = store_.list_runbooks();
+            json arr = json::array();
+            for (const auto& r : rows)
+                arr.push_back(runbook_to_json(r));
+            set_json(res, arr);
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 500;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // POST /api/runbooks — create a runbook (admin only)
+    http_->Post("/api/runbooks", [this](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto session = require_role(req, res, "admin");
+            if (!session) return;
+            if (!is_json_content_type(req))
+            {
+                res.status = 415;
+                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                return;
+            }
+            const auto body = json::parse(req.body);
+            RunbookRecord rec;
+            rec.indicator  = body.value("indicator", std::string("*"));
+            rec.status     = body.at("status").get<std::string>();
+            rec.url        = body.at("url").get<std::string>();
+            rec.notes      = body.value("notes", std::string(""));
+            rec.created_by = session->username;
+            rec.created_at = now_ms();
+            if (rec.url.empty())
+                throw std::runtime_error("url is required");
+            if (rec.status != "yellow" && rec.status != "amber" && rec.status != "red")
+                throw std::runtime_error("status must be yellow, amber, or red");
+            const auto id = store_.create_runbook(rec);
+            rec.runbook_id = id;
+            res.status = 201;
+            set_json(res, runbook_to_json(rec));
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{{"error", e.what()}});
+        }
+    });
+
+    // DELETE /api/runbooks/:id — delete a runbook (admin only)
+    http_->Delete("/api/runbooks/:id", [this](const httplib::Request& req, httplib::Response& res) {
+        try
+        {
+            auto session = require_role(req, res, "admin");
+            if (!session) return;
+            const auto id = std::stoll(req.path_params.at("id"));
+            store_.delete_runbook(id);
             set_json(res, json{{"ok", true}});
         }
         catch (const std::exception& e)

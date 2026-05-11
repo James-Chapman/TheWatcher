@@ -1136,6 +1136,13 @@ td {
   font-style: italic;
 }
 
+.runbook-link {
+  font-size: 0.8em;
+  margin-left: 0.3em;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
 /* ── Acknowledge modal ──────────────────────────────────────────────────── */
 
 .modal-panel {

@@ -141,6 +141,16 @@ export interface AlertRecord {
     deleted_at: number;
     note: string;
     escalated_at: number;
+    runbook_url?: string;
+}
+export interface RunbookRecord {
+    runbook_id: number;
+    indicator: string;
+    status: 'yellow' | 'amber' | 'red';
+    url: string;
+    notes: string;
+    created_by: string;
+    created_at: number;
 }
 export interface MaintenanceWindowRecord {
     window_id: number;
