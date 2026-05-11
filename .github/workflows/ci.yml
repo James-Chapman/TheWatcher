@@ -74,7 +74,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Puts cl.exe, link.exe, and SDK headers on PATH.
+      # Puts cl.exe, link.exe, and Windows SDK headers on PATH.
       - name: Set up MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -90,44 +90,30 @@ jobs:
           key: meson-wrap-windows-${{ hashFiles('subprojects/*.wrap') }}
 
       - name: Configure
-        # Explicit --backend=ninja avoids Meson choosing the VS generator.
+        # --backend=ninja avoids Meson choosing the VS solution generator.
         run: meson setup build --buildtype=release --backend=ninja
 
-      # Build everything including the final executables.  On Windows,
-      # windows_service.cpp is compiled so TheWatcherServer/TheWatcherAgent
-      # link successfully (unlike Linux where those symbols are absent).
-      - name: Compile (all targets)
-        run: meson compile -C build
-
       - name: Test
-        run: meson test -C build --no-rebuild --print-errorlogs
+        # meson test builds only the test-target objects it needs; it does
+        # not attempt to link TheWatcherServer / TheWatcherAgent whose
+        # platform-service entry points are intentionally Windows-only.
+        run: meson test -C build --print-errorlogs
 
   # ── FreeBSD ────────────────────────────────────────────────────────────────
   freebsd:
     name: FreeBSD 14 (clang)
+    # The FreeBSD VM runs on top of an Ubuntu host via vmactions.
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
-
-      # Pre-fetch wrap archives on the Ubuntu host so they are rsynced into
-      # the FreeBSD VM and saved to the actions/cache after the job.
-      - name: Pre-fetch Meson subproject archives
-        run: |
-          pip3 install --quiet meson
-          meson subprojects download
-
-      - name: Cache Meson subproject downloads
-        uses: actions/cache@v4
-        with:
-          path: subprojects/packagecache
-          key: meson-wrap-freebsd-${{ hashFiles('subprojects/*.wrap') }}
 
       - name: Build and test on FreeBSD 14
         uses: vmactions/freebsd-vm@v1
         with:
           release: '14.2'
           usesh: true
+          # rsync the checked-out workspace into the VM.
           sync: rsync
           copyback: false
           prepare: |
