@@ -1,5 +1,9 @@
 #include "store_sqlite.hpp"
 
+#ifdef HAVE_LIBPQ
+#include "store_postgres.hpp"
+#endif
+
 #include "common/SingleLog.hpp"
 
 #include <cctype>
@@ -1675,6 +1679,10 @@ std::unique_ptr<Store> make_store(const std::string& db_type, const std::string&
     LOGF_DEBUG("Creating store db_type=%s target=%s", db_type.c_str(), db_path_or_dsn.c_str());
     if (db_type == "sqlite")
         return std::make_unique<SqliteStore>(db_path_or_dsn);
+#ifdef HAVE_LIBPQ
+    if (db_type == "postgres")
+        return std::make_unique<PostgresStore>(db_path_or_dsn);
+#endif
     throw std::runtime_error("Unsupported db_type: " + db_type + " (compile with postgres support)");
 }
 

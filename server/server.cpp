@@ -96,7 +96,8 @@ Server::Server(ServerConfig config) : config_(std::move(config))
     LOGF_DEBUG("Creating server bind=%s enrollment=%s api=%s:%d db_type=%s db_path=%s offline_after_seconds=%d",
                config_.bind_address.c_str(), config_.enrollment_address.c_str(), config_.api_host.c_str(),
                config_.api_port, config_.db_type.c_str(), config_.db_path.c_str(), config_.offline_after_seconds);
-    store_ = make_store(config_.db_type, config_.db_path);
+    const auto& db_target = (config_.db_type == "postgres") ? config_.postgres_dsn : config_.db_path;
+    store_ = make_store(config_.db_type, db_target);
     zap_ = std::make_unique<ZapHandler>(ctx_);
     api_ = std::make_unique<ApiServer>(*store_, *zap_, config_.api_host, config_.api_port);
 

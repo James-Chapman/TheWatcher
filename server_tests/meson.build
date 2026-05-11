@@ -37,3 +37,18 @@ server_lifecycle_test = executable(
   dependencies: [server_dep, common_dep, catch2_dep, cppzmq_dep, sqlite_dep, platform_deps],
 )
 test('server_lifecycle', server_lifecycle_test)
+
+if libpq_dep.found()
+  store_postgres_test = executable(
+    'store_postgres_test',
+    ['store_postgres_test.cpp'],
+    cpp_args: ['-DHAVE_LIBPQ'],
+    include_directories: root_inc,
+    dependencies: [server_store_dep, catch2_dep, platform_deps],
+  )
+  test(
+    'store_postgres',
+    store_postgres_test,
+    env: ['THEWATCHER_POSTGRES_TEST_DSN=host=localhost dbname=thewatcher_test user=thewatcher_test password=thewatcher_test'],
+  )
+endif

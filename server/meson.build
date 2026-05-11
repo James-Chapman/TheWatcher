@@ -1,3 +1,21 @@
+libpq_dep = dependency('libpq', required: false, static: false)
+
+server_store_sources = [
+  'status_engine.cpp',
+  'store_sqlite.cpp',
+]
+server_store_cpp_args = []
+server_store_extra_deps = []
+
+if libpq_dep.found()
+  server_store_sources += ['store_postgres.cpp']
+  server_store_cpp_args += ['-DHAVE_LIBPQ']
+  server_store_extra_deps += [libpq_dep]
+  message('PostgreSQL support enabled (libpq found)')
+else
+  message('PostgreSQL support disabled (libpq not found)')
+endif
+
 server_config_lib = static_library(
   'watcher_server_config',
   ['config.cpp'],
@@ -23,10 +41,8 @@ server_config_dep = declare_dependency(
 
 server_store_lib = static_library(
   'watcher_server_store',
-  [
-    'status_engine.cpp',
-    'store_sqlite.cpp',
-  ],
+  server_store_sources,
+  cpp_args: server_store_cpp_args,
   include_directories: root_inc,
   dependencies: [
     common_dep,
@@ -36,12 +52,13 @@ server_store_lib = static_library(
     http_dep,
     json_dep,
     platform_deps,
-  ],
+  ] + server_store_extra_deps,
 )
 
 server_store_dep = declare_dependency(
   link_with: server_store_lib,
   include_directories: root_inc,
+  compile_args: server_store_cpp_args,
   dependencies: [
     common_dep,
     sqlite_dep,
@@ -50,7 +67,7 @@ server_store_dep = declare_dependency(
     http_dep,
     json_dep,
     platform_deps,
-  ],
+  ] + server_store_extra_deps,
 )
 
 server_lib = static_library(
