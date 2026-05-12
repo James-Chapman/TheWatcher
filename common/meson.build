@@ -1,8 +1,9 @@
-common_sources = []
-
-if host_machine.system() == 'windows'
-  common_sources += ['windows_service.cpp']
-endif
+common_sources = [
+  # Stays cross-platform: windows_service.cpp has #ifdef _WIN32 stubs
+  # that return "only available on Windows" on Linux/BSD so the
+  # server/agent main.cpp call sites still link.
+  'windows_service.cpp',
+]
 
 # nlohmann_json comes in via collector_config.hpp's REST-side macros
 # (REST stays JSON).

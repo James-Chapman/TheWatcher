@@ -26,6 +26,7 @@
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <sys/user.h>
+#include <unistd.h> // getpagesize()
 #else
 #error "Unsupported platform"
 #endif

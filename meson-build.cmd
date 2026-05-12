@@ -13,12 +13,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem --backend=ninja stops Meson choosing the VS solution generator when MSVC
+rem is present; harmless on hosts where ninja is the default backend anyway.
 if not exist "%BUILD_DIR%" (
     echo [meson-build] Configuring %BUILD_DIR% ...
-    meson setup "%BUILD_DIR%" --buildtype=release --default-library=static || exit /b %ERRORLEVEL%
+    meson setup "%BUILD_DIR%" --buildtype=release --default-library=static --backend=ninja || exit /b %ERRORLEVEL%
 ) else (
     echo [meson-build] Reconfiguring %BUILD_DIR% ...
-    meson setup "%BUILD_DIR%" --reconfigure --buildtype=release --default-library=static || exit /b %ERRORLEVEL%
+    meson setup "%BUILD_DIR%" --reconfigure --buildtype=release --default-library=static --backend=ninja || exit /b %ERRORLEVEL%
 )
 
 echo [meson-build] Compiling ...

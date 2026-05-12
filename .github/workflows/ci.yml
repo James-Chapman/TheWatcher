@@ -56,15 +56,12 @@ jobs:
           path: subprojects/packagecache
           key: meson-wrap-linux-${{ hashFiles('subprojects/*.wrap') }}
 
-      - name: Configure
-        run: meson setup build --buildtype=release
-
-      - name: Test
+      - name: Build and test (meson-build-linux.sh)
         env:
           THEWATCHER_POSTGRES_TEST_DSN: >-
             host=127.0.0.1 dbname=thewatcher_test
             user=thewatcher_test password=thewatcher_test
-        run: meson test -C build --print-errorlogs
+        run: ./meson-build-linux.sh
 
   # ── Windows ────────────────────────────────────────────────────────────────
   windows:
@@ -89,15 +86,12 @@ jobs:
           path: subprojects/packagecache
           key: meson-wrap-windows-${{ hashFiles('subprojects/*.wrap') }}
 
-      - name: Configure
-        # --backend=ninja avoids Meson choosing the VS solution generator.
-        run: meson setup build --buildtype=release --backend=ninja
-
-      - name: Test
+      - name: Build and test (meson-build.cmd)
         # meson test builds only the test-target objects it needs; it does
         # not attempt to link TheWatcherServer / TheWatcherAgent whose
         # platform-service entry points are intentionally Windows-only.
-        run: meson test -C build --print-errorlogs
+        run: .\meson-build.cmd
+        shell: cmd
 
   # ── FreeBSD ────────────────────────────────────────────────────────────────
   freebsd:
@@ -113,22 +107,62 @@ jobs:
       # the wrap archives on the Ubuntu host so the cmake/meson subprojects
       # can build libzmq and libsodium from source inside the VM without
       # needing the system packages or fresh downloads.
-      - name: Install meson on host
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends python3-pip
-          pip3 install --quiet meson
-
       - name: Cache Meson subproject downloads
         uses: actions/cache@v4
         with:
           path: subprojects/packagecache
           key: meson-wrap-freebsd-${{ hashFiles('subprojects/*.wrap') }}
 
-      - name: Pre-download wrap archives
-        run: meson subprojects download
+      - name: Pre-fetch wrap source archives
+        # We can't use `meson subprojects download` here: libzmq.wrap is a
+        # CMake-only wrap (no meson.build under packagefiles/libzmq/), and
+        # modern Meson's post-download validation exits 1 with
+        # "Subproject exists but has no meson.build file" even when the
+        # tarball downloads cleanly. Meson on the FreeBSD VM still builds
+        # libzmq via the CMake fallback during `meson setup` -- we just
+        # need the source tarballs cached so the VM (which has no
+        # outbound network) can find them in subprojects/packagecache/.
+        run: |
+          set -euo pipefail
+          mkdir -p subprojects/packagecache
 
-      - name: Build and test on FreeBSD 14
+          field() { awk -v key="$1" '$1==key && $2=="="{print $3; exit}' "$2"; }
+
+          for wrap in subprojects/*.wrap; do
+            name=$(basename "$wrap" .wrap)
+            src_url=$(field source_url "$wrap")
+            src_file=$(field source_filename "$wrap")
+            src_hash=$(field source_hash "$wrap")
+            patch_url=$(field patch_url "$wrap")
+            patch_file=$(field patch_filename "$wrap")
+            patch_hash=$(field patch_hash "$wrap")
+
+            if [ -n "$src_url" ]; then
+              dest="subprojects/packagecache/$src_file"
+              if [ ! -f "$dest" ]; then
+                echo "[$name] fetching $src_url"
+                curl -fL --retry 3 --output "$dest" "$src_url"
+              else
+                echo "[$name] cache hit: $dest"
+              fi
+              [ -n "$src_hash" ] && echo "$src_hash  $dest" | sha256sum -c -
+            fi
+
+            if [ -n "$patch_url" ]; then
+              dest="subprojects/packagecache/$patch_file"
+              if [ ! -f "$dest" ]; then
+                echo "[$name] fetching patch $patch_url"
+                curl -fL --retry 3 --output "$dest" "$patch_url"
+              else
+                echo "[$name] cache hit: $dest"
+              fi
+              [ -n "$patch_hash" ] && echo "$patch_hash  $dest" | sha256sum -c -
+            fi
+          done
+
+          ls -la subprojects/packagecache/
+
+      - name: Build and test on FreeBSD 14 (meson-build-bsd.sh)
         uses: vmactions/freebsd-vm@v1
         with:
           release: '14.2'
@@ -140,5 +174,4 @@ jobs:
           prepare: |
             pkg install -y cmake ninja meson pkgconf python3
           run: |
-            meson setup build --buildtype=release
-            meson test -C build --print-errorlogs
+            sh ./meson-build-bsd.sh
