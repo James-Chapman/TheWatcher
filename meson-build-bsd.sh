@@ -29,6 +29,23 @@ log "Compiling ..."
 meson compile -C "${BUILD_DIR}"
 
 log "Testing ..."
-meson test -C "${BUILD_DIR}" --print-errorlogs
+# `meson test --print-errorlogs` only echoes the last 100 lines of each
+# failing test's stdout/stderr, which on a long-running integration test
+# truncates the Catch2 REQUIRE source line + expansion that we actually
+# need to diagnose flakes. On failure, dump the full testlog.txt to the
+# console so CI logs preserve the assertion detail.
+test_status=0
+meson test -C "${BUILD_DIR}" --print-errorlogs || test_status=$?
+if [ "${test_status}" -ne 0 ]; then
+    log "Tests failed (exit ${test_status}); dumping full testlog.txt:"
+    if [ -f "${BUILD_DIR}/meson-logs/testlog.txt" ]; then
+        printf -- '----- BEGIN testlog.txt -----\n'
+        cat "${BUILD_DIR}/meson-logs/testlog.txt"
+        printf -- '----- END testlog.txt -----\n'
+    else
+        log "testlog.txt not found at ${BUILD_DIR}/meson-logs/testlog.txt"
+    fi
+    exit "${test_status}"
+fi
 
 log "Done."
