@@ -769,9 +769,14 @@ function AgentConfigModal({
 }) {
   const [draft, setDraft] = React.useState<AgentCollectorConfigUpdate>(() => buildCollectorDraft(agent));
 
+  // Only reset the draft when the *selected* agent changes (id changes).
+  // The parent polls every 5s and rebuilds `agents` with new object references,
+  // so depending on the whole `agent` reference would reset the form mid-edit
+  // and erase whatever the user is typing.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   React.useEffect(() => {
     setDraft(buildCollectorDraft(agent));
-  }, [agent]);
+  }, [agent.id]);
 
   const updateConfig = (update: (config: CollectorConfig) => CollectorConfig) => {
     setDraft((current) => ({ ...current, collector_config: update(current.collector_config) }));
