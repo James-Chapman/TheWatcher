@@ -102,6 +102,8 @@ install_packages_debian() {
         unzip zip curl ca-certificates \
         python3 python3-pip python3-venv \
         gawk
+    # pipx is shipped on Debian 12+ / Ubuntu 22.04+; best-effort.
+    $SUDO apt-get install -y pipx || log_warn "pipx package unavailable; will fall back to a managed venv for meson/ninja."
     if [ "$SKIP_NODE" -eq 0 ]; then
         $SUDO apt-get install -y nodejs npm
     fi
@@ -121,6 +123,7 @@ install_packages_rhel() {
         unzip zip curl ca-certificates \
         python3 python3-pip \
         gawk
+    $PKG pipx || log_warn "pipx package unavailable; will fall back to a managed venv for meson/ninja."
     if [ "$SKIP_NODE" -eq 0 ]; then
         $PKG nodejs npm
     fi
@@ -132,7 +135,7 @@ install_packages_arch() {
         git pkgconf \
         autoconf automake libtool make cmake ninja \
         unzip zip curl ca-certificates \
-        python python-pip \
+        python python-pip python-pipx \
         gawk
     if [ "$SKIP_NODE" -eq 0 ]; then
         $SUDO pacman -S --noconfirm --needed nodejs npm
@@ -147,6 +150,8 @@ install_packages_suse() {
         unzip zip curl ca-certificates \
         python3 python3-pip \
         gawk
+    $SUDO zypper --non-interactive install -y python3-pipx \
+        || log_warn "python3-pipx package unavailable; will fall back to a managed venv for meson/ninja."
     if [ "$SKIP_NODE" -eq 0 ]; then
         $SUDO zypper --non-interactive install -y nodejs npm
     fi
@@ -160,6 +165,7 @@ install_packages_alpine() {
         unzip zip curl ca-certificates \
         bash python3 py3-pip \
         gawk linux-headers
+    $SUDO apk add --no-cache pipx || log_warn "pipx package unavailable; will fall back to a managed venv for meson/ninja."
     if [ "$SKIP_NODE" -eq 0 ]; then
         $SUDO apk add --no-cache nodejs npm
     fi
@@ -183,27 +189,37 @@ install_meson() {
         die "python3 not found; rerun with --skip-meson or install Python first."
     fi
 
-    # Prefer the distro package if it is recent enough (meson >= 1.4), otherwise
-    # install per-user via pip --break-system-packages-free path: --user.
     if has_cmd meson; then
         local current
         current="$(meson --version 2>/dev/null || true)"
         log_info "Existing meson: ${current:-unknown}"
     fi
 
-    if python3 -m pip --version >/dev/null 2>&1; then
-        python3 -m pip install --user --upgrade "meson>=1.4" ninja
-    elif has_cmd pipx; then
-        pipx install meson || pipx upgrade meson
-        pipx install ninja || pipx upgrade ninja
+    # Modern distros (Debian 12+, Ubuntu 23.04+, Fedora 38+, Arch, ...) mark the
+    # system Python as externally managed (PEP 668), so `pip install --user`
+    # fails. Prefer pipx (one isolated venv per app); fall back to a managed
+    # venv we own, then to `pip --break-system-packages` as a last resort.
+    if has_cmd pipx; then
+        log_info "Using pipx"
+        pipx install --force "meson>=1.4"
+        pipx install --force ninja
     else
-        log_warn "pip is not available; skipping Meson/Ninja installation. Install python3-pip and rerun."
-        return
+        local venv_dir="${HOME}/.local/share/thewatcher-pyenv"
+        log_info "pipx unavailable; creating managed venv at ${venv_dir}"
+        if ! python3 -m venv "${venv_dir}"; then
+            die "Failed to create venv at ${venv_dir}. Install python3-venv (or your distro's equivalent) and rerun, or use --skip-meson."
+        fi
+        "${venv_dir}/bin/pip" install --upgrade pip
+        "${venv_dir}/bin/pip" install --upgrade "meson>=1.4" ninja
+
+        mkdir -p "${HOME}/.local/bin"
+        ln -sf "${venv_dir}/bin/meson" "${HOME}/.local/bin/meson"
+        ln -sf "${venv_dir}/bin/ninja" "${HOME}/.local/bin/ninja"
     fi
 
     case ":${PATH}:" in
         *":${HOME}/.local/bin:"*) ;;
-        *) log_warn "Add \"\$HOME/.local/bin\" to your PATH to use pip --user installs (meson, ninja)." ;;
+        *) log_warn "Add \"\$HOME/.local/bin\" to your PATH to pick up meson and ninja." ;;
     esac
 }
 
