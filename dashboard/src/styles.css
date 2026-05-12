@@ -42,6 +42,51 @@ button {
   font: inherit;
 }
 
+/* Dark form controls: ensure any input, textarea, or select matches the
+   page theme. Scoped rules later in this file (.login-panel input,
+   .config-modal input, .inline-form input, .settings-grid input, etc.)
+   override sizing/padding where needed. */
+input,
+textarea,
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  color-scheme: dark;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--border2);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--dim);
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  accent-color: var(--blue);
+  background: transparent;
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  background: var(--bg2);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .topbar {
   position: sticky;
   top: 0;
