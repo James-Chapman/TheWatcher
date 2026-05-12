@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 :root {
+  color-scheme: dark;
   --bg: oklch(0.10 0.012 240);
   --bg2: oklch(0.13 0.012 240);
   --bg3: oklch(0.16 0.013 240);
@@ -40,6 +41,76 @@ body {
 
 button {
   font: inherit;
+}
+
+/* Dark form controls. Force the dark theme on every input/textarea/select
+   so any page (Runbooks, Maintenance, Silences, Users, Views) that uses
+   bare <input> elements without a scoped class still matches the rest of
+   the UI. Specific scopes later in this file override sizing/padding
+   where needed.
+
+   !important is used here because Chromium/Edge on Windows can apply a
+   user-agent stylesheet that re-asserts a white background on text
+   inputs even when an author rule sets a darker one. */
+input,
+textarea,
+select {
+  font: inherit !important;
+  color: var(--text) !important;
+  background-color: var(--bg3) !important;
+  background-image: none !important;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  color-scheme: dark;
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']),
+textarea {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--border2);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--dim);
+}
+
+/* Chrome autofill repaints the background yellow/white. Force the dark
+   theme to stick by inset-shadowing the input background and overriding
+   the autofilled text colour. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: var(--text) !important;
+  -webkit-box-shadow: 0 0 0px 1000px var(--bg3) inset !important;
+  caret-color: var(--text);
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  accent-color: var(--blue);
+  background-color: transparent !important;
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  background-color: var(--bg2) !important;
+  color: var(--muted) !important;
+  cursor: not-allowed;
 }
 
 .topbar {
@@ -471,6 +542,12 @@ td {
   font-size: 11px;
 }
 
+/* Process uptime under one hour: highlight as an alarm. */
+.uptime-alarm {
+  color: var(--red);
+  font-weight: 600;
+}
+
 .dot-cell {
   text-align: center;
 }
@@ -499,6 +576,26 @@ td {
 .dot.red { box-shadow: 0 0 8px oklch(0.60 0.22 25 / 0.5); }
 .dot.blue { box-shadow: 0 0 8px oklch(0.62 0.16 240 / 0.4); }
 .dot.grey { box-shadow: none; opacity: 0.55; }
+
+/* Ring around an acknowledged alarm dot to flag the operator action. */
+.dot.acknowledged {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.acknowledged-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
 
 .small-dot {
   width: 8px;

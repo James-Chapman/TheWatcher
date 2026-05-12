@@ -31,7 +31,6 @@ import {
   fetchMetricHistory,
   fetchSession,
   fetchSettings,
-  fetchUptimeReport,
   fetchViews,
   loadDashboardData,
   login,
@@ -77,6 +76,7 @@ import {
   DEFAULT_PERCENT_THRESHOLDS,
   collectorConfigWithDefaults,
   groupOverviewAgents,
+  isUptimeAlarm,
   summaryCounts,
   toDashboardAgents,
   toDisplayAlerts,
@@ -404,7 +404,6 @@ function MonitoringTable({
   setGroupFilter: React.Dispatch<React.SetStateAction<OverviewGroupFilter>>;
 }) {
   const [agentHistory, setAgentHistory] = React.useState<Record<string, MetricsSnapshot[]>>({});
-  const [agentUptime, setAgentUptime] = React.useState<Record<string, number>>({});
   const [agentStatusHistory, setAgentStatusHistory] = React.useState<Record<string, StatusHistoryRow[]>>({});
   const [agentLogMatches, setAgentLogMatches] = React.useState<Record<string, LogMatchRecord[]>>({});
 
@@ -413,9 +412,6 @@ function MonitoringTable({
       if (!agentHistory[id]) {
         void fetchMetricHistory(id, 20).then((snapshots) => {
           setAgentHistory((prev) => ({ ...prev, [id]: snapshots }));
-        }).catch(() => undefined);
-        void fetchUptimeReport(id, 7).then((report) => {
-          setAgentUptime((prev) => ({ ...prev, [id]: report.uptime_percent }));
         }).catch(() => undefined);
         void fetchAgentHistory(id, 20).then((rows) => {
           setAgentStatusHistory((prev) => ({ ...prev, [id]: rows }));
@@ -486,7 +482,7 @@ function MonitoringTable({
                       }}
                     >
                       <td><AgentIdentity id={agent.id} name={agent.name} prefix={<span className="chevron">&gt;</span>} /></td>
-                      <td className="uptime">{agent.uptime}</td>
+                      <td className={`uptime ${isUptimeAlarm(agent.uptimeSeconds) ? 'uptime-alarm' : ''}`}>{agent.uptime}</td>
                       <td className="dot-cell"><StatusDot color={agent.status} label={colorLabel(agent.status)} /></td>
                       <td className="dot-cell"><StatusDot color={agent.alertColor} label="Alerts" /></td>
                       {agent.components.map((component) => (
@@ -534,10 +530,10 @@ function MonitoringTable({
                           })}
                           <div className="detail-card">
                             <div className="detail-card-header"><span>Uptime</span></div>
-                            <div className="detail-card-value green">
-                              {agentUptime[agent.id] != null ? `${agentUptime[agent.id].toFixed(1)}%` : '—'}
+                            <div className={`detail-card-value ${isUptimeAlarm(agent.uptimeSeconds) ? 'red' : 'green'}`}>
+                              {agent.uptime}
                             </div>
-                            <div className="detail-card-sub">Last 7 days</div>
+                            <div className="detail-card-sub">Since last restart</div>
                           </div>
                           {(agentStatusHistory[agent.id]?.length ?? 0) > 0 ? (
                             <div className="detail-card detail-card-wide">
@@ -769,9 +765,14 @@ function AgentConfigModal({
 }) {
   const [draft, setDraft] = React.useState<AgentCollectorConfigUpdate>(() => buildCollectorDraft(agent));
 
+  // Only reset the draft when the *selected* agent changes (id changes).
+  // The parent polls every 5s and rebuilds `agents` with new object references,
+  // so depending on the whole `agent` reference would reset the form mid-edit
+  // and erase whatever the user is typing.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   React.useEffect(() => {
     setDraft(buildCollectorDraft(agent));
-  }, [agent]);
+  }, [agent.id]);
 
   const updateConfig = (update: (config: CollectorConfig) => CollectorConfig) => {
     setDraft((current) => ({ ...current, collector_config: update(current.collector_config) }));
@@ -1250,7 +1251,7 @@ function AlertsPage({
                 </td>
                 <td><AgentIdentity id={alert.agentId} name={alert.agentName} /></td>
                 <td>{alert.indicator}</td>
-                <td><StatusDot color={alert.new_status} label={colorLabel(alert.new_status)} /></td>
+                <td><StatusDot color={alert.new_status} label={colorLabel(alert.new_status)} acknowledged={isAcknowledged} /></td>
                 <td className="uptime">{new Date(alert.created_at).toLocaleString()}</td>
                 <td>
                   {alert.message}
@@ -1952,8 +1953,14 @@ function AgentIdentity({ id, name, prefix }: { id: string; name: string; prefix?
   );
 }
 
-function StatusDot({ color, label }: { color: HealthColor; label: string }) {
-  return <span className="state-note"><span className={`dot ${color}`} /> {label}</span>;
+function StatusDot({ color, label, acknowledged = false }: { color: HealthColor; label: string; acknowledged?: boolean }) {
+  return (
+    <span className="state-note">
+      <span className={`dot ${color}${acknowledged ? ' acknowledged' : ''}`} aria-label={acknowledged ? `${label} (acknowledged)` : undefined} />
+      {' '}{label}
+      {acknowledged ? <span className="acknowledged-tag" aria-hidden="true">ack</span> : null}
+    </span>
+  );
 }
 
 function ActionButton({ busy, danger = false, disabled = false, icon, label, onClick, type = 'button' }: { busy: boolean; danger?: boolean; disabled?: boolean; icon: React.ReactNode; label: string; onClick: () => void; type?: 'button' | 'submit' }) {
