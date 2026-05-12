@@ -59,7 +59,14 @@ endif
 cbor_dep   = dependency('libcbor',          fallback: ['libcbor',       'libcbor_dep'])
 sqlite_dep = dependency('sqlite3',          fallback: ['sqlite3',       'sqlite3_dep'])
 json_dep   = dependency('nlohmann_json',    fallback: ['nlohmann_json', 'nlohmann_json_dep'])
-http_dep   = dependency('cpp-httplib',      fallback: ['cpp-httplib',   'cpp_httplib_dep'])
+# cpp-httplib's meson_options.txt defaults `tls`, `zstd`, and `brotli` to
+# `auto`, so on a host with libssl-dev / libzstd-dev / libbrotli-dev it
+# silently links those libraries into our server. We use plain HTTP only
+# (REST API is internal, HTTPS termination is a deployment concern), and
+# the auto-discovered OpenSSL is what drags libjitterentropy.a in on
+# Ubuntu 24.04+ where libcrypto.a gained that transitive dep.
+http_dep   = dependency('cpp-httplib',      fallback: ['cpp-httplib',   'cpp_httplib_dep'],
+                        default_options: ['tls=disabled', 'zstd=disabled', 'brotli=disabled'])
 catch2_dep = dependency('catch2-with-main', fallback: ['catch2',        'catch2_with_main_dep'])
 
 # Prefer system-installed zeromq + libsodium (e.g. FreeBSD pkg install zeromq libsodium)
@@ -100,10 +107,10 @@ else
     'ENABLE_CURVE': 'ON',
     'WITH_LIBSODIUM': 'ON',
     'WITH_LIBSODIUM_STATIC': 'ON',
-    # We use CURVE over libsodium, not zmq's WSS transport. Disabling
-    # TLS keeps libzmq from auto-pulling OpenSSL into the static link,
-    # which on Ubuntu 24.04+ drags in libjitterentropy.a and libzstd as
-    # transitive deps of libcrypto.a.
+    # WSS transport is unused -- TheWatcher's wire crypto is CURVE over
+    # libsodium. (libzmq's TLS uses GnuTLS, not OpenSSL; this is not
+    # what stops OpenSSL being linked. See the cpp-httplib block above
+    # for the actual control point.)
     'WITH_TLS': 'OFF',
     'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
     'CMAKE_POLICY_VERSION_MINIMUM': '3.5',
