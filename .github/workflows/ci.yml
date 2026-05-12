@@ -1,15 +1,17 @@
 name: CI
-
 on:
   push:
     branches:
       - main
       - master
       - 'claude/**'
+      - 'codex/**'
   pull_request:
     branches:
       - main
       - master
+  schedule:
+    - cron: "32 1 * * 1"
 
 jobs:
 
