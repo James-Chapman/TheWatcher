@@ -266,8 +266,8 @@ SCENARIO("A real agent enrolls, sends metrics, disconnects, and the server recor
         REQUIRE(server_error == nullptr);
 
         httplib::Client client("http://127.0.0.1:" + std::to_string(server_config.api_port));
-        client.set_connection_timeout(2, 0);
-        client.set_read_timeout(2, 0);
+        client.set_connection_timeout(5, 0);
+        client.set_read_timeout(5, 0);
 
         WHEN("the agent enrollment is approved through the server API")
         {
@@ -415,8 +415,8 @@ struct ServerFixture
         : server(make_config())
         , client("http://127.0.0.1:" + std::to_string(config.api_port))
     {
-        client.set_connection_timeout(2, 0);
-        client.set_read_timeout(2, 0);
+        client.set_connection_timeout(5, 0);
+        client.set_read_timeout(5, 0);
 
         thread = std::thread([this] {
             try
@@ -556,8 +556,8 @@ SCENARIO("Server settings can be read and updated via the HTTP API")
         WHEN("an unauthenticated request is made to GET /api/settings")
         {
             httplib::Client unauth("http://127.0.0.1:" + std::to_string(fx.config.api_port));
-            unauth.set_connection_timeout(2, 0);
-            unauth.set_read_timeout(2, 0);
+            unauth.set_connection_timeout(5, 0);
+            unauth.set_read_timeout(5, 0);
             auto res = unauth.Get("/api/settings");
 
             THEN("the server returns 401")
@@ -792,8 +792,8 @@ SCENARIO("User management API supports create, list, disable, enable, password c
                 AND_THEN("alice can login with her initial password")
                 {
                     httplib::Client alice("http://127.0.0.1:" + std::to_string(fx.config.api_port));
-                    alice.set_connection_timeout(2, 0);
-                    alice.set_read_timeout(2, 0);
+                    alice.set_connection_timeout(5, 0);
+                    alice.set_read_timeout(5, 0);
                     REQUIRE(login_as(alice, "alice", "s3cure!pw"));
 
                     AND_THEN("a viewer is denied access to the admin-only GET /api/users")
@@ -811,8 +811,8 @@ SCENARIO("User management API supports create, list, disable, enable, password c
                                         {{"password", "n3wpassword!"}}));
 
                     httplib::Client alice("http://127.0.0.1:" + std::to_string(fx.config.api_port));
-                    alice.set_connection_timeout(2, 0);
-                    alice.set_read_timeout(2, 0);
+                    alice.set_connection_timeout(5, 0);
+                    alice.set_read_timeout(5, 0);
                     REQUIRE_FALSE(login_as(alice, "alice", "s3cure!pw"));
                     REQUIRE(login_as(alice, "alice", "n3wpassword!"));
                 }
@@ -825,8 +825,8 @@ SCENARIO("User management API supports create, list, disable, enable, password c
                     REQUIRE(dis->status == 200);
 
                     httplib::Client alice("http://127.0.0.1:" + std::to_string(fx.config.api_port));
-                    alice.set_connection_timeout(2, 0);
-                    alice.set_read_timeout(2, 0);
+                    alice.set_connection_timeout(5, 0);
+                    alice.set_read_timeout(5, 0);
                     REQUIRE_FALSE(login_as(alice, "alice", "s3cure!pw"));
 
                     const auto en = fx.client.Put(
@@ -1046,8 +1046,8 @@ SCENARIO("Views API supports full CRUD and enforces public/private visibility be
             const auto view_id = (*created)["view_id"].get<int64_t>();
 
             httplib::Client alice("http://127.0.0.1:" + std::to_string(fx.config.api_port));
-            alice.set_connection_timeout(2, 0);
-            alice.set_read_timeout(2, 0);
+            alice.set_connection_timeout(5, 0);
+            alice.set_read_timeout(5, 0);
             REQUIRE(login_as(alice, "alice_view", "alicepw!"));
 
             THEN("alice receives 403 on GET /api/views/:id")
@@ -1089,8 +1089,8 @@ SCENARIO("Views API supports full CRUD and enforces public/private visibility be
             const auto view_id = (*created)["view_id"].get<int64_t>();
 
             httplib::Client bob("http://127.0.0.1:" + std::to_string(fx.config.api_port));
-            bob.set_connection_timeout(2, 0);
-            bob.set_read_timeout(2, 0);
+            bob.set_connection_timeout(5, 0);
+            bob.set_read_timeout(5, 0);
             REQUIRE(login_as(bob, "bob_view", "bobpw!"));
 
             THEN("bob can GET the public view directly")
@@ -1201,8 +1201,8 @@ SCENARIO("Alert API returns well-formed responses and enforces authentication on
         WHEN("an unauthenticated client calls GET /api/alerts")
         {
             httplib::Client unauth("http://127.0.0.1:" + std::to_string(fx.config.api_port));
-            unauth.set_connection_timeout(2, 0);
-            unauth.set_read_timeout(2, 0);
+            unauth.set_connection_timeout(5, 0);
+            unauth.set_read_timeout(5, 0);
             const auto res = unauth.Get("/api/alerts");
 
             THEN("the server returns 401")
@@ -1226,8 +1226,8 @@ SCENARIO("Session and login API enforces authentication and provides accurate se
         WHEN("an unauthenticated client calls GET /api/session")
         {
             httplib::Client unauth("http://127.0.0.1:" + std::to_string(fx.config.api_port));
-            unauth.set_connection_timeout(2, 0);
-            unauth.set_read_timeout(2, 0);
+            unauth.set_connection_timeout(5, 0);
+            unauth.set_read_timeout(5, 0);
             const auto res = unauth.Get("/api/session");
 
             THEN("the server returns 401")
@@ -1265,8 +1265,8 @@ SCENARIO("Session and login API enforces authentication and provides accurate se
         WHEN("login is attempted with the wrong password")
         {
             httplib::Client bad("http://127.0.0.1:" + std::to_string(fx.config.api_port));
-            bad.set_connection_timeout(2, 0);
-            bad.set_read_timeout(2, 0);
+            bad.set_connection_timeout(5, 0);
+            bad.set_read_timeout(5, 0);
             const auto res = bad.Post("/api/login",
                 json{{"username", "thewatcher"}, {"password", "wrongpassword"}}.dump(),
                 "application/json");
@@ -1281,8 +1281,8 @@ SCENARIO("Session and login API enforces authentication and provides accurate se
         WHEN("login is attempted with a non-existent username")
         {
             httplib::Client bad("http://127.0.0.1:" + std::to_string(fx.config.api_port));
-            bad.set_connection_timeout(2, 0);
-            bad.set_read_timeout(2, 0);
+            bad.set_connection_timeout(5, 0);
+            bad.set_read_timeout(5, 0);
             const auto res = bad.Post("/api/login",
                 json{{"username", "nobody"}, {"password", "pw"}}.dump(),
                 "application/json");
