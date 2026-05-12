@@ -277,6 +277,7 @@ export interface DashboardAgent {
     thresholds: AgentThresholds;
     collectorConfig: CollectorConfig;
     lastSeen: number;
+    uptimeSeconds: number;
     uptime: string;
     group: string;
     groupIds: number[];

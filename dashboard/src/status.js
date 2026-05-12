@@ -105,12 +105,18 @@ export function formatDuration(seconds) {
         return 'unknown';
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
-    if (days > 0)
-        return `${days}d ${hours}h`;
     const minutes = Math.floor((seconds % 3600) / 60);
+    if (days > 0)
+        return `${days}d ${hours}h ${minutes}m`;
     if (hours > 0)
         return `${hours}h ${minutes}m`;
     return `${minutes}m`;
+}
+// Process uptime under this many seconds is treated as an alarm condition
+// (the agent has likely just restarted).
+export const UPTIME_ALARM_SECONDS = 3600;
+export function isUptimeAlarm(uptimeSeconds) {
+    return Number.isFinite(uptimeSeconds) && uptimeSeconds > 0 && uptimeSeconds < UPTIME_ALARM_SECONDS;
 }
 function maxPercent(values) {
     const finite = values.filter(Number.isFinite);
@@ -288,6 +294,7 @@ export function toDashboardAgents(agents, snapshots, alerts = []) {
             thresholds: agent.thresholds ?? DEFAULT_THRESHOLDS,
             collectorConfig: collectorConfigWithDefaults(agent.collector_config),
             lastSeen: agent.last_seen,
+            uptimeSeconds: metrics?.uptime_seconds ?? 0,
             uptime: metrics ? formatDuration(metrics.uptime_seconds) : 'unknown',
             group: agent.maintenance ? 'Maintenance Agents' : 'Approved Agents',
             groupIds: agent.group_ids ?? [],

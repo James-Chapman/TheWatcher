@@ -516,6 +516,12 @@ td {
   font-size: 11px;
 }
 
+/* Process uptime under one hour: highlight as an alarm. */
+.uptime-alarm {
+  color: var(--red);
+  font-weight: 600;
+}
+
 .dot-cell {
   text-align: center;
 }
@@ -544,6 +550,26 @@ td {
 .dot.red { box-shadow: 0 0 8px oklch(0.60 0.22 25 / 0.5); }
 .dot.blue { box-shadow: 0 0 8px oklch(0.62 0.16 240 / 0.4); }
 .dot.grey { box-shadow: none; opacity: 0.55; }
+
+/* Ring around an acknowledged alarm dot to flag the operator action. */
+.dot.acknowledged {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.acknowledged-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  background: var(--bg3);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
 
 .small-dot {
   width: 8px;

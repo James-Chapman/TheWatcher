@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_COLLECTOR_CONFIG, DEFAULT_NETWORK_THRESHOLDS, DEFAULT_PERCENT_THRESHOLDS, DEFAULT_THRESHOLDS, agentStatus, classifyNetworkMbps, classifyPercent, collectorConfigWithDefaults, formatBytes, formatDuration, groupOverviewAgents, hostStatus, summaryCounts, toDashboardAgents, toDisplayAlerts, worstColor, } from './status';
+import { DEFAULT_COLLECTOR_CONFIG, DEFAULT_NETWORK_THRESHOLDS, DEFAULT_PERCENT_THRESHOLDS, DEFAULT_THRESHOLDS, agentStatus, classifyNetworkMbps, classifyPercent, collectorConfigWithDefaults, formatBytes, formatDuration, groupOverviewAgents, hostStatus, isUptimeAlarm, summaryCounts, toDashboardAgents, toDisplayAlerts, worstColor, } from './status';
 function agent(overrides = {}) {
     return {
         agent_id: 'agent-1',
@@ -31,9 +31,9 @@ describe('GIVEN dashboard health thresholds', () => {
 describe('GIVEN agents with component health', () => {
     it('WHEN summary counts are calculated THEN each agent contributes to its host state', () => {
         const agents = [
-            { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }], description: '' },
-            { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }], description: '' },
-            { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }], description: '' },
+            { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptimeSeconds: 60, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }], description: '' },
+            { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptimeSeconds: 60, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }], description: '' },
+            { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptimeSeconds: 60, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }], description: '' },
         ];
         expect(agentStatus(agents[2])).toBe('red');
         expect(summaryCounts(agents)).toMatchObject({ green: 1, yellow: 1, red: 1 });
@@ -229,9 +229,26 @@ describe('GIVEN formatDuration', () => {
         expect(formatDuration(3600 + 30 * 60)).toBe('1h 30m');
         expect(formatDuration(23 * 3600 + 59 * 60)).toBe('23h 59m');
     });
-    it('WHEN given day-scale durations THEN returns days and hours', () => {
-        expect(formatDuration(86400)).toBe('1d 0h');
-        expect(formatDuration(2 * 86400 + 6 * 3600)).toBe('2d 6h');
+    it('WHEN given day-scale durations THEN returns days, hours, and minutes', () => {
+        expect(formatDuration(86400)).toBe('1d 0h 0m');
+        expect(formatDuration(2 * 86400 + 6 * 3600)).toBe('2d 6h 0m');
+        expect(formatDuration(2 * 86400 + 6 * 3600 + 25 * 60)).toBe('2d 6h 25m');
+    });
+});
+describe('GIVEN isUptimeAlarm', () => {
+    it('WHEN uptime is under one hour and positive THEN returns true', () => {
+        expect(isUptimeAlarm(1)).toBe(true);
+        expect(isUptimeAlarm(60)).toBe(true);
+        expect(isUptimeAlarm(3599)).toBe(true);
+    });
+    it('WHEN uptime is one hour or more THEN returns false', () => {
+        expect(isUptimeAlarm(3600)).toBe(false);
+        expect(isUptimeAlarm(86400)).toBe(false);
+    });
+    it('WHEN uptime is zero or invalid THEN returns false', () => {
+        expect(isUptimeAlarm(0)).toBe(false);
+        expect(isUptimeAlarm(-1)).toBe(false);
+        expect(isUptimeAlarm(Number.NaN)).toBe(false);
     });
 });
 describe('GIVEN classifyNetworkMbps', () => {
