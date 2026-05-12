@@ -56,15 +56,12 @@ jobs:
           path: subprojects/packagecache
           key: meson-wrap-linux-${{ hashFiles('subprojects/*.wrap') }}
 
-      - name: Configure
-        run: meson setup build --buildtype=release
-
-      - name: Test
+      - name: Build and test (meson-build-linux.sh)
         env:
           THEWATCHER_POSTGRES_TEST_DSN: >-
             host=127.0.0.1 dbname=thewatcher_test
             user=thewatcher_test password=thewatcher_test
-        run: meson test -C build --print-errorlogs
+        run: ./meson-build-linux.sh
 
   # ── Windows ────────────────────────────────────────────────────────────────
   windows:
@@ -89,15 +86,12 @@ jobs:
           path: subprojects/packagecache
           key: meson-wrap-windows-${{ hashFiles('subprojects/*.wrap') }}
 
-      - name: Configure
-        # --backend=ninja avoids Meson choosing the VS solution generator.
-        run: meson setup build --buildtype=release --backend=ninja
-
-      - name: Test
+      - name: Build and test (meson-build.cmd)
         # meson test builds only the test-target objects it needs; it does
         # not attempt to link TheWatcherServer / TheWatcherAgent whose
         # platform-service entry points are intentionally Windows-only.
-        run: meson test -C build --print-errorlogs
+        run: .\meson-build.cmd
+        shell: cmd
 
   # ── FreeBSD ────────────────────────────────────────────────────────────────
   freebsd:
@@ -128,7 +122,7 @@ jobs:
       - name: Pre-download wrap archives
         run: meson subprojects download
 
-      - name: Build and test on FreeBSD 14
+      - name: Build and test on FreeBSD 14 (meson-build-bsd.sh)
         uses: vmactions/freebsd-vm@v1
         with:
           release: '14.2'
@@ -140,5 +134,4 @@ jobs:
           prepare: |
             pkg install -y cmake ninja meson pkgconf python3
           run: |
-            meson setup build --buildtype=release
-            meson test -C build --print-errorlogs
+            sh ./meson-build-bsd.sh
