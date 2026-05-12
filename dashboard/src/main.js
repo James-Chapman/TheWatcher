@@ -136,16 +136,13 @@ function Sparkline({ data, width = 80, height = 24, color = 'var(--text)' }) {
 }
 function MonitoringTable({ agents, error, expanded, groupFilter, groups, loading, setExpanded, setGroupFilter, }) {
     const [agentHistory, setAgentHistory] = React.useState({});
-    const [agentStatusHistory, setAgentStatusHistory] = React.useState({});
     const [agentLogMatches, setAgentLogMatches] = React.useState({});
+    const [historyAgent, setHistoryAgent] = React.useState(null);
     React.useEffect(() => {
         for (const id of expanded) {
             if (!agentHistory[id]) {
                 void fetchMetricHistory(id, 20).then((snapshots) => {
                     setAgentHistory((prev) => ({ ...prev, [id]: snapshots }));
-                }).catch(() => undefined);
-                void fetchAgentHistory(id, 20).then((rows) => {
-                    setAgentStatusHistory((prev) => ({ ...prev, [id]: rows }));
                 }).catch(() => undefined);
                 void fetchLogMatches(id, 20).then((rows) => {
                     setAgentLogMatches((prev) => ({ ...prev, [id]: rows }));
@@ -174,7 +171,24 @@ function MonitoringTable({ agents, error, expanded, groupFilter, groups, loading
                                                                             : []
                                                                     : [];
                                                                 return (_jsxs("div", { className: "detail-card", children: [_jsxs("div", { className: "detail-card-header", children: [_jsx("span", { children: component.label }), _jsx("span", { className: `dot ${component.color} small-dot` })] }), _jsx("div", { className: `detail-card-value ${component.color}`, children: component.value }), _jsxs("div", { className: "detail-card-sub", children: [colorLabel(component.color), " / ", component.detail] }), sparkData.length >= 2 ? (_jsx("div", { className: "sparkline-wrap", children: _jsx(Sparkline, { data: sparkData, color: `var(--${component.color === 'green' ? 'green' : component.color === 'yellow' ? 'yellow' : component.color === 'amber' ? 'amber' : component.color === 'red' ? 'red' : 'muted'})` }) })) : null] }, component.key));
-                                                            }), _jsxs("div", { className: "detail-card", children: [_jsx("div", { className: "detail-card-header", children: _jsx("span", { children: "Uptime" }) }), _jsx("div", { className: `detail-card-value ${isUptimeAlarm(agent.uptimeSeconds) ? 'red' : 'green'}`, children: agent.uptime }), _jsx("div", { className: "detail-card-sub", children: "Since last restart" })] }), (agentStatusHistory[agent.id]?.length ?? 0) > 0 ? (_jsxs("div", { className: "detail-card detail-card-wide", children: [_jsx("div", { className: "detail-card-header", children: _jsx("span", { children: "Status History" }) }), _jsx("table", { className: "history-table", children: _jsx("tbody", { children: agentStatusHistory[agent.id].slice(0, 10).map((row) => (_jsxs("tr", { children: [_jsx("td", { className: "history-ts", children: new Date(row.created_at).toLocaleString() }), _jsx("td", { children: row.indicator }), _jsx("td", { children: _jsx("span", { className: `dot ${row.old_status} small-dot` }) }), _jsx("td", { children: "\u2192" }), _jsx("td", { children: _jsx("span", { className: `dot ${row.new_status} small-dot` }) }), _jsx("td", { className: "history-msg", children: row.message })] }, row.id))) }) })] })) : null, (agentLogMatches[agent.id]?.length ?? 0) > 0 ? (_jsxs("div", { className: "detail-card detail-card-wide", children: [_jsx("div", { className: "detail-card-header", children: _jsx("span", { children: "Log Matches" }) }), _jsx("table", { className: "history-table", children: _jsx("tbody", { children: agentLogMatches[agent.id].slice(0, 10).map((row) => (_jsxs("tr", { children: [_jsx("td", { className: "history-ts", children: new Date(row.created_at).toLocaleString() }), _jsx("td", { children: row.indicator_name }), _jsx("td", { children: _jsx("span", { className: `dot ${row.severity} small-dot` }) }), _jsxs("td", { className: "history-msg", title: row.matched_line, children: [row.path, ": ", row.matched_line.slice(0, 80)] })] }, row.match_id))) }) })] })) : null] }) }) })] }, `${group.id}:${agent.id}`)))] }, group.id))) })] }) })] }));
+                                                            }), _jsxs("div", { className: "detail-card", children: [_jsx("div", { className: "detail-card-header", children: _jsx("span", { children: "Uptime" }) }), _jsx("div", { className: `detail-card-value ${isUptimeAlarm(agent.uptimeSeconds) ? 'red' : 'green'}`, children: agent.uptime }), _jsx("div", { className: "detail-card-sub", children: "Since last restart" })] }), _jsxs("div", { className: "detail-card", children: [_jsx("div", { className: "detail-card-header", children: _jsx("span", { children: "Status History" }) }), _jsx("button", { className: "text-button", onClick: (event) => {
+                                                                            event.stopPropagation();
+                                                                            setHistoryAgent({ id: agent.id, name: agent.name });
+                                                                        }, children: "View status history" })] }), (agentLogMatches[agent.id]?.length ?? 0) > 0 ? (_jsxs("div", { className: "detail-card detail-card-wide", children: [_jsx("div", { className: "detail-card-header", children: _jsx("span", { children: "Log Matches" }) }), _jsx("table", { className: "history-table", children: _jsx("tbody", { children: agentLogMatches[agent.id].slice(0, 10).map((row) => (_jsxs("tr", { children: [_jsx("td", { className: "history-ts", children: new Date(row.created_at).toLocaleString() }), _jsx("td", { children: row.indicator_name }), _jsx("td", { children: _jsx("span", { className: `dot ${row.severity} small-dot` }) }), _jsxs("td", { className: "history-msg", title: row.matched_line, children: [row.path, ": ", row.matched_line.slice(0, 80)] })] }, row.match_id))) }) })] })) : null] }) }) })] }, `${group.id}:${agent.id}`)))] }, group.id))) })] }) }), historyAgent ? (_jsx(StatusHistoryModal, { agentId: historyAgent.id, agentName: historyAgent.name, onClose: () => setHistoryAgent(null) })) : null] }));
+}
+function StatusHistoryModal({ agentId, agentName, onClose, }) {
+    const [rows, setRows] = React.useState(null);
+    const [error, setError] = React.useState(null);
+    React.useEffect(() => {
+        let cancelled = false;
+        void fetchAgentHistory(agentId, 200)
+            .then((data) => { if (!cancelled)
+            setRows(data); })
+            .catch((err) => { if (!cancelled)
+            setError(err instanceof Error ? err.message : 'Failed to load status history'); });
+        return () => { cancelled = true; };
+    }, [agentId]);
+    return (_jsx("div", { className: "modal-backdrop", onClick: onClose, children: _jsxs("div", { className: "modal-panel status-history-modal", onClick: (e) => e.stopPropagation(), children: [_jsxs("div", { className: "modal-header", children: [_jsxs("h2", { children: ["Status History \u2014 ", agentName] }), _jsx("button", { className: "icon-button", onClick: onClose, "aria-label": "Close", children: _jsx(X, { size: 14 }) })] }), _jsxs("div", { className: "status-history-body", children: [error ? _jsx("div", { className: "banner error", children: error }) : null, !error && rows === null ? _jsx("div", { className: "banner", children: "Loading status history\u2026" }) : null, rows !== null && rows.length === 0 ? _jsx("div", { className: "banner", children: "No status history recorded for this agent." }) : null, rows !== null && rows.length > 0 ? (_jsxs("table", { className: "history-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "Timestamp" }), _jsx("th", { children: "Indicator" }), _jsx("th", { colSpan: 3, children: "Change" }), _jsx("th", { children: "Message" })] }) }), _jsx("tbody", { children: rows.map((row) => (_jsxs("tr", { children: [_jsx("td", { className: "history-ts", children: new Date(row.created_at).toLocaleString() }), _jsx("td", { children: row.indicator }), _jsx("td", { children: _jsx("span", { className: `dot ${row.old_status} small-dot` }) }), _jsx("td", { children: "\u2192" }), _jsx("td", { children: _jsx("span", { className: `dot ${row.new_status} small-dot` }) }), _jsx("td", { className: "history-msg", children: row.message })] }, row.id))) })] })) : null] })] }) }));
 }
 function AgentManagement({ admin, agents, busyAction, error, groupDrafts, groups, loading, onConfigure, operator, runAction, setGroupDrafts, }) {
     const [descDrafts, setDescDrafts] = React.useState({});
@@ -241,6 +255,7 @@ function AgentConfigModal({ agent, busy, onClose, operator, runAction, }) {
     // The parent polls every 5s and rebuilds `agents` with new object references,
     // so depending on the whole `agent` reference would reset the form mid-edit
     // and erase whatever the user is typing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     React.useEffect(() => {
         setDraft(buildCollectorDraft(agent));
     }, [agent.id]);
@@ -487,7 +502,7 @@ function AgentIdentity({ id, name, prefix }) {
     return (_jsxs("div", { children: [_jsxs("div", { className: "server-name", children: [prefix, _jsx("span", { children: name || id })] }), _jsx("div", { className: "agent-id", children: id })] }));
 }
 function StatusDot({ color, label, acknowledged = false }) {
-    return _jsxs("span", { className: "state-note", children: [_jsx("span", { className: `dot ${color}${acknowledged ? ' acknowledged' : ''}`, "aria-label": acknowledged ? `${label} (acknowledged)` : undefined }), " ", label, acknowledged ? _jsx("span", { className: "acknowledged-tag", "aria-hidden": "true", children: "ack" }) : null] });
+    return (_jsxs("span", { className: "state-note", children: [_jsx("span", { className: `dot ${color}${acknowledged ? ' acknowledged' : ''}`, "aria-label": acknowledged ? `${label} (acknowledged)` : undefined }), ' ', label, acknowledged ? _jsx("span", { className: "acknowledged-tag", "aria-hidden": "true", children: "ack" }) : null] }));
 }
 function ActionButton({ busy, danger = false, disabled = false, icon, label, onClick, type = 'button' }) {
     return (_jsxs("button", { className: `text-button ${danger ? 'danger' : ''}`, disabled: disabled || busy, onClick: onClick, type: type, children: [icon, busy ? '...' : label] }));
