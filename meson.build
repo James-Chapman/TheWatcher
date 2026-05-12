@@ -29,6 +29,16 @@ if host_machine.system() == 'windows'
   )
 endif
 
+# libc++ (default on the BSDs and macOS) still gates std::jthread /
+# std::stop_token behind -fexperimental-library even though the
+# implementation has shipped. Gate the flag on compiler acceptance so it
+# is a no-op on libstdc++/gcc.
+if host_machine.system() in ['freebsd', 'netbsd', 'openbsd', 'dragonfly', 'darwin']
+  if cpp.has_argument('-fexperimental-library')
+    add_project_arguments('-fexperimental-library', language: 'cpp')
+  endif
+endif
+
 thread_dep = dependency('threads')
 
 platform_deps = [thread_dep]
