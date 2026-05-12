@@ -1299,3 +1299,50 @@ td {
   background: var(--bg);
   color: var(--fg);
 }
+
+.status-history-modal {
+  width: min(880px, 100%);
+  max-height: min(82vh, 720px);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.status-history-body {
+  overflow: auto;
+  padding: 12px 16px 16px;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.history-table th,
+.history-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.history-table thead th {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  background: var(--bg2);
+}
+
+.history-table .history-ts {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.history-table .history-msg {
+  color: var(--text);
+}
