@@ -100,6 +100,11 @@ else
     'ENABLE_CURVE': 'ON',
     'WITH_LIBSODIUM': 'ON',
     'WITH_LIBSODIUM_STATIC': 'ON',
+    # We use CURVE over libsodium, not zmq's WSS transport. Disabling
+    # TLS keeps libzmq from auto-pulling OpenSSL into the static link,
+    # which on Ubuntu 24.04+ drags in libjitterentropy.a and libzstd as
+    # transitive deps of libcrypto.a.
+    'WITH_TLS': 'OFF',
     'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
     'CMAKE_POLICY_VERSION_MINIMUM': '3.5',
     'ENABLE_PRECOMPILED': 'OFF',
