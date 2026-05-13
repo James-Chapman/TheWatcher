@@ -65,6 +65,13 @@ jobs:
             user=thewatcher_test password=thewatcher_test
         run: ./meson-build-linux.sh
 
+      - name: Archive build output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-linux
+          path: builddir-release/
+
   # ── Windows ────────────────────────────────────────────────────────────────
   windows:
     name: Windows (windows-latest, MSVC 2022)
@@ -94,6 +101,13 @@ jobs:
         # platform-service entry points are intentionally Windows-only.
         run: .\meson-build.cmd
         shell: cmd
+
+      - name: Archive build output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-windows
+          path: builddir-release/
 
   # ── FreeBSD ────────────────────────────────────────────────────────────────
   freebsd:
@@ -172,8 +186,15 @@ jobs:
           # rsync the checked-out workspace (including subprojects/packagecache)
           # into the VM.
           sync: rsync
-          copyback: false
+          copyback: true
           prepare: |
             pkg install -y cmake ninja meson pkgconf python3
           run: |
             sh ./meson-build-bsd.sh
+
+      - name: Archive build output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-freebsd
+          path: builddir-release/
