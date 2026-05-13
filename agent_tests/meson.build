@@ -29,3 +29,11 @@ log_collector_test = executable(
   dependencies: [collectors_dep, common_dep, catch2_dep, platform_deps],
 )
 test('log_collector', log_collector_test)
+
+disk_collector_test = executable(
+  'disk_collector_test',
+  ['disk_collector_test.cpp'],
+  include_directories: root_inc,
+  dependencies: [collectors_dep, common_dep, catch2_dep, platform_deps],
+)
+test('disk_collector', disk_collector_test)

@@ -9,6 +9,13 @@
 #include <utility>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace thewatcher::agent
 {
 
@@ -88,6 +95,60 @@ namespace
             disk.usage_percent =
                 space.capacity > 0 ? 100.0 * static_cast<double>(disk.used_bytes) / static_cast<double>(space.capacity)
                                    : 0.0;
+            disks.push_back(std::move(disk));
+        }
+
+        return disks;
+    }
+
+#elif defined(_WIN32)
+
+    std::vector<DiskMetrics> read_mounts()
+    {
+        std::vector<DiskMetrics> disks;
+        const DWORD mask = ::GetLogicalDrives();
+        if (mask == 0)
+        {
+            return disks;
+        }
+
+        for (int i = 0; i < 26; ++i)
+        {
+            if ((mask & (1u << i)) == 0)
+            {
+                continue;
+            }
+
+            char root[4] = {static_cast<char>('A' + i), ':', '\\', '\0'};
+            if (::GetDriveTypeA(root) != DRIVE_FIXED)
+            {
+                continue;
+            }
+
+            std::error_code ec;
+            auto space = std::filesystem::space(root, ec);
+            if (ec)
+            {
+                continue;
+            }
+
+            char fs_name[MAX_PATH + 1] = {};
+            if (!::GetVolumeInformationA(root, nullptr, 0, nullptr, nullptr, nullptr, fs_name, sizeof(fs_name)))
+            {
+                fs_name[0] = '\0';
+            }
+
+            DiskMetrics disk;
+            disk.device = root;
+            disk.mount_point = root;
+            disk.filesystem = fs_name[0] != '\0' ? std::string(fs_name) : std::string("unknown");
+            disk.total_bytes = space.capacity;
+            disk.free_bytes = space.free;
+            disk.used_bytes = space.capacity > space.free ? space.capacity - space.free : 0;
+            disk.usage_percent =
+                space.capacity > 0
+                    ? 100.0 * static_cast<double>(disk.used_bytes) / static_cast<double>(space.capacity)
+                    : 0.0;
             disks.push_back(std::move(disk));
         }
 
