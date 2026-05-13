@@ -13,6 +13,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
+call "c:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+
 rem --backend=ninja stops Meson choosing the VS solution generator when MSVC
 rem is present; harmless on hosts where ninja is the default backend anyway.
 if not exist "%BUILD_DIR%" (
