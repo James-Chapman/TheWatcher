@@ -224,7 +224,18 @@ function Dashboard() {
           <button className="icon-button" onClick={() => void refresh()} aria-label="Refresh dashboard">
             <RefreshCw size={14} />
           </button>
-          <button className="icon-button" onClick={() => void logout().then(() => setSession(null))} aria-label="Log out">
+          <button
+            className="icon-button"
+            onClick={() => {
+              // Clear session locally regardless of server response so the UI
+              // returns to the login screen immediately. Without this, an error
+              // (or even a missing .catch on the previous version) would leave
+              // the user on the dashboard until they refreshed the page.
+              void logout().catch(() => undefined);
+              setSession(null);
+            }}
+            aria-label="Log out"
+          >
             <LogOut size={14} />
           </button>
         </div>
@@ -809,7 +820,7 @@ function buildCollectorDraft(agent: DashboardAgent): AgentCollectorConfigUpdate 
 }
 
 function AgentConfigModal({
-  agent,
+  agent: agentProp,
   busy,
   onClose,
   operator,
@@ -821,16 +832,20 @@ function AgentConfigModal({
   operator: boolean;
   runAction: (key: string, action: () => Promise<void>) => Promise<void>;
 }) {
-  const [draft, setDraft] = React.useState<AgentCollectorConfigUpdate>(() => buildCollectorDraft(agent));
+  // Snapshot the agent locally. The parent polls every 5s and rebuilds
+  // `agents` with new object references, which would otherwise re-render
+  // the form on every poll and risk fighting controlled-input state.
+  // We only swap the snapshot when the *selected* agent id changes — i.e.
+  // when the user opens a different agent's modal.
+  const [agent, setAgent] = React.useState(agentProp);
+  React.useEffect(() => {
+    if (agentProp.id !== agent.id) setAgent(agentProp);
+  }, [agentProp, agent.id]);
 
-  // Only reset the draft when the *selected* agent changes (id changes).
-  // The parent polls every 5s and rebuilds `agents` with new object references,
-  // so depending on the whole `agent` reference would reset the form mid-edit
-  // and erase whatever the user is typing.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const [draft, setDraft] = React.useState<AgentCollectorConfigUpdate>(() => buildCollectorDraft(agent));
   React.useEffect(() => {
     setDraft(buildCollectorDraft(agent));
-  }, [agent.id]);
+  }, [agent]);
 
   const updateConfig = (update: (config: CollectorConfig) => CollectorConfig) => {
     setDraft((current) => ({ ...current, collector_config: update(current.collector_config) }));
@@ -980,7 +995,11 @@ function AgentConfigModal({
             </div>
             <div className="config-list">
               {draft.collector_config.processes.map((process, index) => (
-                <div className="process-row" key={`${process.name}:${index}`}>
+                // NOTE: do not include `process.name` in the key — the name
+                // is being edited via the input below, so changing it would
+                // change the key, forcing React to unmount/remount the row
+                // and dropping the input's focus on every keystroke.
+                <div className="process-row" key={`process:${index}`}>
                   <label className="toggle-line">
                     <input type="checkbox" checked={process.enabled} onChange={(event) => updateProcess(index, (current) => ({ ...current, enabled: event.target.checked }))} />
                     <span>Enabled</span>
