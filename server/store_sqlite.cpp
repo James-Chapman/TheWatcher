@@ -6,11 +6,13 @@
 
 #include "common/SingleLog.hpp"
 
-#include <cctype>
 #include <nlohmann/json.hpp>
-#include <sodium.h>
+
+#include <cctype>
 #include <stdexcept>
 #include <string>
+
+#include <sodium.h>
 
 namespace thewatcher::server
 {
@@ -24,7 +26,7 @@ namespace
         "memory_warning_pct_of_avg,memory_degraded_pct_of_avg,memory_critical_pct_of_avg,"
         "disk_warning_pct_of_avg,disk_degraded_pct_of_avg,disk_critical_pct_of_avg,"
         "network_warning_pct_of_avg,network_degraded_pct_of_avg,network_critical_pct_of_avg,"
-        "collector_config_json,description";
+        "collector_config_json,description,heartbeat_interval,runbook_markdown";
 
     struct Stmt
     {
@@ -95,6 +97,8 @@ namespace
             }
         }
         r.description = text_col(s, 27);
+        r.heartbeat_interval = sqlite3_column_int(s, 28);
+        r.runbook_markdown = text_col(s, 29);
         return r;
     }
 
@@ -162,12 +166,8 @@ namespace
 
     MaintenanceWindowRecord row_to_maintenance_window(sqlite3_stmt* s)
     {
-        return {sqlite3_column_int64(s, 0),
-                text_col(s, 1),
-                sqlite3_column_int64(s, 2),
-                sqlite3_column_int64(s, 3),
-                text_col(s, 4),
-                text_col(s, 5),
+        return {sqlite3_column_int64(s, 0), text_col(s, 1), sqlite3_column_int64(s, 2),
+                sqlite3_column_int64(s, 3), text_col(s, 4), text_col(s, 5),
                 sqlite3_column_int64(s, 6)};
     }
 
@@ -279,7 +279,9 @@ void SqliteStore::init_schema()
             network_degraded_pct_of_avg REAL NOT NULL DEFAULT 150.0,
             network_critical_pct_of_avg REAL NOT NULL DEFAULT 200.0,
             collector_config_json       TEXT NOT NULL DEFAULT '',
-            description                 TEXT NOT NULL DEFAULT ''
+            description                 TEXT NOT NULL DEFAULT '',
+            heartbeat_interval          INTEGER NOT NULL DEFAULT 5,
+            runbook_markdown            TEXT NOT NULL DEFAULT ''
         );
     )");
     add_column_if_missing("agents", "rejected", "ALTER TABLE agents ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0;");
@@ -322,6 +324,10 @@ void SqliteStore::init_schema()
                           "ALTER TABLE agents ADD COLUMN network_critical_pct_of_avg REAL NOT NULL DEFAULT 200.0;");
     add_column_if_missing("agents", "collector_config_json",
                           "ALTER TABLE agents ADD COLUMN collector_config_json TEXT NOT NULL DEFAULT '';");
+    add_column_if_missing("agents", "heartbeat_interval",
+                          "ALTER TABLE agents ADD COLUMN heartbeat_interval INTEGER NOT NULL DEFAULT 5;");
+    add_column_if_missing("agents", "runbook_markdown",
+                          "ALTER TABLE agents ADD COLUMN runbook_markdown TEXT NOT NULL DEFAULT '';");
     // Schema break in 0.3.0: metrics column changed from JSON TEXT to CBOR BLOB.
     // Existing 0.2.x dev databases drop and recreate the metrics table on first start.
     if (column_exists("metrics", "metrics_json") && !column_exists("metrics", "metrics_cbor"))
@@ -423,8 +429,7 @@ void SqliteStore::init_schema()
             FOREIGN KEY(agent_id) REFERENCES agents(agent_id) ON DELETE CASCADE
         );
     )");
-    add_column_if_missing("alerts", "note",
-                          "ALTER TABLE alerts ADD COLUMN note TEXT NOT NULL DEFAULT '';");
+    add_column_if_missing("alerts", "note", "ALTER TABLE alerts ADD COLUMN note TEXT NOT NULL DEFAULT '';");
     add_column_if_missing("alerts", "escalated_at",
                           "ALTER TABLE alerts ADD COLUMN escalated_at INTEGER NOT NULL DEFAULT 0;");
     exec("CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(deleted_at, acknowledged_at, created_at DESC);");
@@ -477,21 +482,27 @@ void SqliteStore::init_schema()
             name           TEXT NOT NULL,
             owner_user_id  INTEGER NOT NULL DEFAULT 0,
             is_public      INTEGER NOT NULL DEFAULT 0,
+            group_id       INTEGER NOT NULL DEFAULT 0,
             config_json    TEXT NOT NULL DEFAULT '{}',
             created_at     INTEGER NOT NULL
         );
     )");
+    add_column_if_missing("views", "group_id", "ALTER TABLE views ADD COLUMN group_id INTEGER NOT NULL DEFAULT 0;");
     exec(R"(
         CREATE TABLE IF NOT EXISTS runbooks (
             runbook_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id    TEXT NOT NULL DEFAULT '',
             indicator   TEXT NOT NULL DEFAULT '*',
             status      TEXT NOT NULL,
             url         TEXT NOT NULL,
+            markdown    TEXT NOT NULL DEFAULT '',
             notes       TEXT NOT NULL DEFAULT '',
             created_by  TEXT NOT NULL DEFAULT '',
             created_at  INTEGER NOT NULL DEFAULT 0
         );
     )");
+    add_column_if_missing("runbooks", "agent_id", "ALTER TABLE runbooks ADD COLUMN agent_id TEXT NOT NULL DEFAULT '';");
+    add_column_if_missing("runbooks", "markdown", "ALTER TABLE runbooks ADD COLUMN markdown TEXT NOT NULL DEFAULT '';");
     add_column_if_missing("alerts", "runbook_url",
                           "ALTER TABLE alerts ADD COLUMN runbook_url TEXT NOT NULL DEFAULT '';");
 }
@@ -505,7 +516,7 @@ void SqliteStore::bootstrap_defaults()
           "prepare default admin lookup");
     if (sqlite3_step(st.s) != SQLITE_ROW)
     {
-        const auto admin_id = create_user("thewatcher", hash_default_password(), "admin");
+        const auto admin_id = create_user("thewatcher", hash_default_password(), "global_admin");
         set_user_groups(admin_id, {admin_group});
         exec("UPDATE users SET built_in=1 WHERE username='thewatcher';");
         LOG_INFO("Bootstrapped default admin user thewatcher");
@@ -519,8 +530,8 @@ void SqliteStore::upsert_agent(const AgentRecord& rec)
                rec.agent_id.c_str(), rec.approved ? 1 : 0, rec.rejected ? 1 : 0, rec.connected ? 1 : 0,
                rec.maintenance ? 1 : 0, rec.collection_interval, rec.process_limit);
     const char* sql = R"(
-        INSERT INTO agents(agent_id,hostname,platform,curve_public_key_z85,approved,rejected,connected,maintenance,maintenance_reason,maintenance_until,collection_interval,process_limit,first_seen,last_seen,cpu_warning_pct_of_avg,cpu_degraded_pct_of_avg,cpu_critical_pct_of_avg,memory_warning_pct_of_avg,memory_degraded_pct_of_avg,memory_critical_pct_of_avg,disk_warning_pct_of_avg,disk_degraded_pct_of_avg,disk_critical_pct_of_avg,network_warning_pct_of_avg,network_degraded_pct_of_avg,network_critical_pct_of_avg,collector_config_json,description)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO agents(agent_id,hostname,platform,curve_public_key_z85,approved,rejected,connected,maintenance,maintenance_reason,maintenance_until,collection_interval,process_limit,first_seen,last_seen,cpu_warning_pct_of_avg,cpu_degraded_pct_of_avg,cpu_critical_pct_of_avg,memory_warning_pct_of_avg,memory_degraded_pct_of_avg,memory_critical_pct_of_avg,disk_warning_pct_of_avg,disk_degraded_pct_of_avg,disk_critical_pct_of_avg,network_warning_pct_of_avg,network_degraded_pct_of_avg,network_critical_pct_of_avg,collector_config_json,description,heartbeat_interval,runbook_markdown)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(agent_id) DO UPDATE SET
             hostname=excluded.hostname,
             platform=excluded.platform,
@@ -532,6 +543,8 @@ void SqliteStore::upsert_agent(const AgentRecord& rec)
             collection_interval=excluded.collection_interval,
             process_limit=excluded.process_limit,
             collector_config_json=excluded.collector_config_json,
+            heartbeat_interval=excluded.heartbeat_interval,
+            runbook_markdown=excluded.runbook_markdown,
             last_seen=excluded.last_seen;
     )";
     Stmt st;
@@ -565,6 +578,8 @@ void SqliteStore::upsert_agent(const AgentRecord& rec)
     const auto collector_config_json = nlohmann::json(rec.collector_config).dump();
     sqlite3_bind_text(st.s, 27, collector_config_json.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(st.s, 28, rec.description.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st.s, 29, rec.heartbeat_interval);
+    sqlite3_bind_text(st.s, 30, rec.runbook_markdown.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step upsert_agent");
 }
 
@@ -976,7 +991,7 @@ std::vector<MetricsRow> SqliteStore::get_metrics(const std::string& agent_id, in
 }
 
 std::vector<MetricsRow> SqliteStore::get_metrics_in_window(const std::string& agent_id, int64_t since_ms,
-                                                              int64_t until_ms)
+                                                           int64_t until_ms)
 {
     Stmt st;
     check(sqlite3_prepare_v2(db_,
@@ -1133,12 +1148,13 @@ int64_t SqliteStore::insert_alert(const AlertRecord& alert)
 std::vector<AlertRecord> SqliteStore::list_alerts(bool include_deleted)
 {
     const char* sql =
-        include_deleted
-            ? "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,acknowledged_by,"
-              "acknowledged_at,deleted_at,note,escalated_at,runbook_url FROM alerts ORDER BY created_at DESC,alert_id DESC;"
-            : "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,acknowledged_by,"
-              "acknowledged_at,deleted_at,note,escalated_at,runbook_url FROM alerts WHERE deleted_at=0 ORDER BY created_at "
-              "DESC,alert_id DESC;";
+        include_deleted ? "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,acknowledged_by,"
+                          "acknowledged_at,deleted_at,note,escalated_at,runbook_url FROM alerts ORDER BY created_at "
+                          "DESC,alert_id DESC;"
+                        : "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,acknowledged_by,"
+                          "acknowledged_at,deleted_at,note,escalated_at,runbook_url FROM alerts WHERE deleted_at=0 "
+                          "ORDER BY created_at "
+                          "DESC,alert_id DESC;";
     Stmt st;
     check(sqlite3_prepare_v2(db_, sql, -1, &st.s, nullptr), db_, "prepare list_alerts");
     std::vector<AlertRecord> out;
@@ -1150,12 +1166,13 @@ std::vector<AlertRecord> SqliteStore::list_alerts(bool include_deleted)
 std::vector<AlertRecord> SqliteStore::list_unacknowledged_alerts()
 {
     Stmt st;
-    check(sqlite3_prepare_v2(db_,
-                             "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,"
-                             "acknowledged_by,acknowledged_at,deleted_at,note,escalated_at,runbook_url FROM alerts WHERE "
-                             "deleted_at=0 AND acknowledged_at=0 ORDER BY created_at DESC,alert_id DESC;",
-                             -1, &st.s, nullptr),
-          db_, "prepare list_unacknowledged_alerts");
+    check(
+        sqlite3_prepare_v2(db_,
+                           "SELECT alert_id,agent_id,indicator,old_status,new_status,message,created_at,"
+                           "acknowledged_by,acknowledged_at,deleted_at,note,escalated_at,runbook_url FROM alerts WHERE "
+                           "deleted_at=0 AND acknowledged_at=0 ORDER BY created_at DESC,alert_id DESC;",
+                           -1, &st.s, nullptr),
+        db_, "prepare list_unacknowledged_alerts");
     std::vector<AlertRecord> out;
     while (sqlite3_step(st.s) == SQLITE_ROW)
         out.push_back(row_to_alert(st.s));
@@ -1222,6 +1239,16 @@ void SqliteStore::set_agent_description(const std::string& agent_id, const std::
     sqlite3_bind_text(st.s, 1, description.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(st.s, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
     check(sqlite3_step(st.s), db_, "step set_agent_description");
+}
+
+void SqliteStore::set_agent_runbook(const std::string& agent_id, const std::string& markdown)
+{
+    Stmt st;
+    check(sqlite3_prepare_v2(db_, "UPDATE agents SET runbook_markdown=? WHERE agent_id=?;", -1, &st.s, nullptr), db_,
+          "prepare set_agent_runbook");
+    sqlite3_bind_text(st.s, 1, markdown.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    check(sqlite3_step(st.s), db_, "step set_agent_runbook");
 }
 
 std::vector<std::string> SqliteStore::get_offline_unalerted_agent_ids()
@@ -1366,18 +1393,18 @@ void SqliteStore::set_setting(const std::string& key, const std::string& value)
 
 namespace
 {
-SilenceRecord row_to_silence(sqlite3_stmt* s)
-{
-    SilenceRecord r;
-    r.silence_id = sqlite3_column_int64(s, 0);
-    r.agent_id = text_col(s, 1);
-    r.indicator = text_col(s, 2);
-    r.reason = text_col(s, 3);
-    r.until_ms = sqlite3_column_int64(s, 4);
-    r.created_by = text_col(s, 5);
-    r.created_at = sqlite3_column_int64(s, 6);
-    return r;
-}
+    SilenceRecord row_to_silence(sqlite3_stmt* s)
+    {
+        SilenceRecord r;
+        r.silence_id = sqlite3_column_int64(s, 0);
+        r.agent_id = text_col(s, 1);
+        r.indicator = text_col(s, 2);
+        r.reason = text_col(s, 3);
+        r.until_ms = sqlite3_column_int64(s, 4);
+        r.created_by = text_col(s, 5);
+        r.created_at = sqlite3_column_int64(s, 6);
+        return r;
+    }
 } // namespace
 
 int64_t SqliteStore::create_silence(const SilenceRecord& rec)
@@ -1415,8 +1442,8 @@ std::vector<SilenceRecord> SqliteStore::list_silences()
 void SqliteStore::delete_silence(int64_t silence_id)
 {
     Stmt st;
-    check(sqlite3_prepare_v2(db_, "DELETE FROM silences WHERE silence_id=?;", -1, &st.s, nullptr),
-          db_, "prepare delete_silence");
+    check(sqlite3_prepare_v2(db_, "DELETE FROM silences WHERE silence_id=?;", -1, &st.s, nullptr), db_,
+          "prepare delete_silence");
     sqlite3_bind_int64(st.s, 1, silence_id);
     check(sqlite3_step(st.s), db_, "step delete_silence");
 }
@@ -1440,8 +1467,8 @@ bool SqliteStore::is_silenced(const std::string& agent_id, const std::string& in
 void SqliteStore::prune_metrics_before(int64_t cutoff_ms)
 {
     Stmt st;
-    check(sqlite3_prepare_v2(db_, "DELETE FROM metrics WHERE timestamp_ms < ?;", -1, &st.s, nullptr),
-          db_, "prepare prune_metrics_before");
+    check(sqlite3_prepare_v2(db_, "DELETE FROM metrics WHERE timestamp_ms < ?;", -1, &st.s, nullptr), db_,
+          "prepare prune_metrics_before");
     sqlite3_bind_int64(st.s, 1, cutoff_ms);
     check(sqlite3_step(st.s), db_, "step prune_metrics_before");
 }
@@ -1497,6 +1524,7 @@ namespace
     {
         nlohmann::json j;
         j["agent_ids"] = rec.agent_ids;
+        j["group_id"] = rec.group_id;
         return j;
     }
 
@@ -1508,14 +1536,19 @@ namespace
         r.owner_user_id = sqlite3_column_int64(s, 2);
         r.owner_username = text_col(s, 3);
         r.is_public = sqlite3_column_int(s, 4) != 0;
-        r.created_at = sqlite3_column_int64(s, 5);
+        r.group_id = sqlite3_column_int64(s, 5);
+        r.created_at = sqlite3_column_int64(s, 6);
         try
         {
-            const auto cfg = nlohmann::json::parse(text_col(s, 6));
+            const auto cfg = nlohmann::json::parse(text_col(s, 7));
             if (cfg.contains("agent_ids") && cfg["agent_ids"].is_array())
                 r.agent_ids = cfg["agent_ids"].get<std::vector<std::string>>();
+            if (r.group_id == 0 && cfg.contains("group_id"))
+                r.group_id = cfg["group_id"].get<int64_t>();
         }
-        catch (...) {}
+        catch (...)
+        {
+        }
         return r;
     }
 } // namespace
@@ -1525,15 +1558,16 @@ int64_t SqliteStore::create_view(const ViewRecord& rec)
     const auto cfg = view_to_config_json(rec).dump();
     Stmt st;
     check(sqlite3_prepare_v2(db_,
-                             "INSERT INTO views(name,owner_user_id,is_public,config_json,created_at) "
-                             "VALUES(?,?,?,?,?);",
+                             "INSERT INTO views(name,owner_user_id,is_public,group_id,config_json,created_at) "
+                             "VALUES(?,?,?,?,?,?);",
                              -1, &st.s, nullptr),
           db_, "prepare create_view");
     sqlite3_bind_text(st.s, 1, rec.name.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(st.s, 2, rec.owner_user_id);
     sqlite3_bind_int(st.s, 3, rec.is_public ? 1 : 0);
-    sqlite3_bind_text(st.s, 4, cfg.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(st.s, 5, rec.created_at);
+    sqlite3_bind_int64(st.s, 4, rec.group_id);
+    sqlite3_bind_text(st.s, 5, cfg.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 6, rec.created_at);
     check(sqlite3_step(st.s), db_, "step create_view");
     return sqlite3_last_insert_rowid(db_);
 }
@@ -1543,7 +1577,7 @@ std::optional<ViewRecord> SqliteStore::get_view(int64_t view_id)
     Stmt st;
     check(sqlite3_prepare_v2(db_,
                              "SELECT v.view_id,v.name,v.owner_user_id,COALESCE(u.username,''),v.is_public,"
-                             "v.created_at,v.config_json "
+                             "v.group_id,v.created_at,v.config_json "
                              "FROM views v LEFT JOIN users u ON u.user_id=v.owner_user_id "
                              "WHERE v.view_id=?;",
                              -1, &st.s, nullptr),
@@ -1559,13 +1593,16 @@ std::vector<ViewRecord> SqliteStore::list_views(int64_t user_id)
     Stmt st;
     check(sqlite3_prepare_v2(db_,
                              "SELECT v.view_id,v.name,v.owner_user_id,COALESCE(u.username,''),v.is_public,"
-                             "v.created_at,v.config_json "
+                             "v.group_id,v.created_at,v.config_json "
                              "FROM views v LEFT JOIN users u ON u.user_id=v.owner_user_id "
-                             "WHERE v.owner_user_id=? OR v.is_public=1 "
+                             "WHERE ? <= 0 OR v.owner_user_id=? OR v.is_public=1 OR EXISTS ("
+                             "SELECT 1 FROM user_groups ug WHERE ug.user_id=? AND ug.group_id=v.group_id) "
                              "ORDER BY v.created_at ASC;",
                              -1, &st.s, nullptr),
           db_, "prepare list_views");
     sqlite3_bind_int64(st.s, 1, user_id);
+    sqlite3_bind_int64(st.s, 2, user_id);
+    sqlite3_bind_int64(st.s, 3, user_id);
     std::vector<ViewRecord> out;
     while (sqlite3_step(st.s) == SQLITE_ROW)
         out.push_back(row_to_view(st.s));
@@ -1576,22 +1613,22 @@ void SqliteStore::update_view(const ViewRecord& rec)
 {
     const auto cfg = view_to_config_json(rec).dump();
     Stmt st;
-    check(sqlite3_prepare_v2(db_,
-                             "UPDATE views SET name=?,is_public=?,config_json=? WHERE view_id=?;",
-                             -1, &st.s, nullptr),
+    check(sqlite3_prepare_v2(db_, "UPDATE views SET name=?,is_public=?,group_id=?,config_json=? WHERE view_id=?;", -1,
+                             &st.s, nullptr),
           db_, "prepare update_view");
     sqlite3_bind_text(st.s, 1, rec.name.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(st.s, 2, rec.is_public ? 1 : 0);
-    sqlite3_bind_text(st.s, 3, cfg.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(st.s, 4, rec.view_id);
+    sqlite3_bind_int64(st.s, 3, rec.group_id);
+    sqlite3_bind_text(st.s, 4, cfg.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 5, rec.view_id);
     check(sqlite3_step(st.s), db_, "step update_view");
 }
 
 void SqliteStore::delete_view(int64_t view_id)
 {
     Stmt st;
-    check(sqlite3_prepare_v2(db_, "DELETE FROM views WHERE view_id=?;", -1, &st.s, nullptr),
-          db_, "prepare delete_view");
+    check(sqlite3_prepare_v2(db_, "DELETE FROM views WHERE view_id=?;", -1, &st.s, nullptr), db_,
+          "prepare delete_view");
     sqlite3_bind_int64(st.s, 1, view_id);
     check(sqlite3_step(st.s), db_, "step delete_view");
 }
@@ -1604,12 +1641,14 @@ namespace
     {
         RunbookRecord r;
         r.runbook_id = sqlite3_column_int64(s, 0);
-        r.indicator  = text_col(s, 1);
-        r.status     = text_col(s, 2);
-        r.url        = text_col(s, 3);
-        r.notes      = text_col(s, 4);
-        r.created_by = text_col(s, 5);
-        r.created_at = sqlite3_column_int64(s, 6);
+        r.agent_id = text_col(s, 1);
+        r.indicator = text_col(s, 2);
+        r.status = text_col(s, 3);
+        r.url = text_col(s, 4);
+        r.markdown = text_col(s, 5);
+        r.notes = text_col(s, 6);
+        r.created_by = text_col(s, 7);
+        r.created_at = sqlite3_column_int64(s, 8);
         return r;
     }
 } // namespace
@@ -1618,16 +1657,18 @@ int64_t SqliteStore::create_runbook(const RunbookRecord& rec)
 {
     Stmt st;
     check(sqlite3_prepare_v2(db_,
-                             "INSERT INTO runbooks(indicator,status,url,notes,created_by,created_at) "
-                             "VALUES(?,?,?,?,?,?);",
+                             "INSERT INTO runbooks(agent_id,indicator,status,url,markdown,notes,created_by,created_at) "
+                             "VALUES(?,?,?,?,?,?,?,?);",
                              -1, &st.s, nullptr),
           db_, "prepare create_runbook");
-    sqlite3_bind_text(st.s, 1, rec.indicator.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(st.s, 2, rec.status.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(st.s, 3, rec.url.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(st.s, 4, rec.notes.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(st.s, 5, rec.created_by.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(st.s, 6, rec.created_at);
+    sqlite3_bind_text(st.s, 1, rec.agent_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 2, rec.indicator.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 3, rec.status.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 4, rec.url.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 5, rec.markdown.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 6, rec.notes.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st.s, 7, rec.created_by.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(st.s, 8, rec.created_at);
     check(sqlite3_step(st.s), db_, "step create_runbook");
     return sqlite3_last_insert_rowid(db_);
 }
@@ -1636,7 +1677,7 @@ std::vector<RunbookRecord> SqliteStore::list_runbooks()
 {
     Stmt st;
     check(sqlite3_prepare_v2(db_,
-                             "SELECT runbook_id,indicator,status,url,notes,created_by,created_at "
+                             "SELECT runbook_id,agent_id,indicator,status,url,markdown,notes,created_by,created_at "
                              "FROM runbooks ORDER BY created_at ASC;",
                              -1, &st.s, nullptr),
           db_, "prepare list_runbooks");
@@ -1649,8 +1690,8 @@ std::vector<RunbookRecord> SqliteStore::list_runbooks()
 void SqliteStore::delete_runbook(int64_t runbook_id)
 {
     Stmt st;
-    check(sqlite3_prepare_v2(db_, "DELETE FROM runbooks WHERE runbook_id=?;", -1, &st.s, nullptr),
-          db_, "prepare delete_runbook");
+    check(sqlite3_prepare_v2(db_, "DELETE FROM runbooks WHERE runbook_id=?;", -1, &st.s, nullptr), db_,
+          "prepare delete_runbook");
     sqlite3_bind_int64(st.s, 1, runbook_id);
     check(sqlite3_step(st.s), db_, "step delete_runbook");
 }
@@ -1660,7 +1701,7 @@ std::optional<RunbookRecord> SqliteStore::get_runbook(const std::string& indicat
     // Prefer exact indicator match over wildcard '*'; limit to 1.
     Stmt st;
     check(sqlite3_prepare_v2(db_,
-                             "SELECT runbook_id,indicator,status,url,notes,created_by,created_at "
+                             "SELECT runbook_id,agent_id,indicator,status,url,markdown,notes,created_by,created_at "
                              "FROM runbooks "
                              "WHERE (indicator=? OR indicator='*') AND status=? "
                              "ORDER BY CASE WHEN indicator='*' THEN 1 ELSE 0 END, runbook_id DESC "

@@ -6,7 +6,6 @@
 #include "collectors/memory_collector.hpp"
 #include "collectors/network_collector.hpp"
 #include "collectors/process_collector.hpp"
-#include "collectors/temperature_collector.hpp"
 #include "common/SingleLog.hpp"
 #include "enrollment.hpp"
 
@@ -98,7 +97,10 @@ namespace
 // ── Construction ──────────────────────────────────────────────────────────────
 
 Agent::Agent(AgentConfig config)
-    : config_(std::move(config)), interval_seconds_(config_.collection_interval), process_limit_(config_.process_limit)
+    : config_(std::move(config))
+    , interval_seconds_(config_.collection_interval)
+    , heartbeat_interval_seconds_(config_.heartbeat_interval)
+    , process_limit_(config_.process_limit)
 {
     LOG_FUNCTION_TRACE
 
@@ -106,14 +108,14 @@ Agent::Agent(AgentConfig config)
     os_version_ = get_os_version();
     hostname_ = get_hostname();
     platform_ = get_platform_string();
-    LOGF_DEBUG("Agent constructed id=%s host=%s platform=%s os=%s version=%s interval=%d process_limit=%d",
+    LOGF_DEBUG("Agent constructed id=%s host=%s platform=%s os=%s version=%s interval=%d heartbeat_interval=%d "
+               "process_limit=%d",
                config_.agent_id.c_str(), hostname_.c_str(), platform_.c_str(), os_name_.c_str(), os_version_.c_str(),
-               interval_seconds_.load(), process_limit_.load());
+               interval_seconds_.load(), heartbeat_interval_seconds_.load(), process_limit_.load());
 
     collectors_.emplace_back(std::make_unique<CpuCollector>());
     collectors_.emplace_back(std::make_unique<MemoryCollector>());
     collectors_.emplace_back(std::make_unique<DiskCollector>());
-    collectors_.emplace_back(std::make_unique<TemperatureCollector>());
     collectors_.emplace_back(std::make_unique<ProcessCollector>(process_limit_.load()));
     collectors_.emplace_back(std::make_unique<NetworkCollector>());
     {
@@ -135,9 +137,14 @@ void Agent::start()
 {
     LOG_FUNCTION_TRACE
     {
-        std::atomic<bool> stop_enroll{false};
+        enrollment_stop_.store(false);
         LOGF_INFO("Starting enrollment with %s", config_.enrollment_address.c_str());
-        enroll(config_, ctx_, stop_enroll);
+        enroll(config_, ctx_, enrollment_stop_);
+        if (enrollment_stop_.load())
+        {
+            LOG_INFO("Enrollment stopped before data connection");
+            return;
+        }
         if (!config_.config_path.empty())
         {
             LOGF_DEBUG("Persisting enrolled server key pin to %s", config_.config_path.c_str());
@@ -180,6 +187,7 @@ void Agent::stop()
     io_thread_.request_stop();
     collection_thread_.request_stop();
     heartbeat_thread_.request_stop();
+    enrollment_stop_.store(true);
     connected_.store(false);
     LOG_DEBUG("Stop requested for IO, collection, and heartbeat threads");
 }
@@ -275,8 +283,8 @@ void Agent::collection_loop(std::stop_token st)
                         lf.timestamp_ms = f.timestamp_ms;
                         lf.payload = proto::pack(m);
                         enqueue(proto::encode_frame(lf));
-                        LOGF_DEBUG("Queued LOG_MATCH frame agent_id=%s indicator=%s path=%s",
-                                   lf.agent_id.c_str(), m.indicator_name.c_str(), m.path.c_str());
+                        LOGF_DEBUG("Queued LOG_MATCH frame agent_id=%s indicator=%s path=%s", lf.agent_id.c_str(),
+                                   m.indicator_name.c_str(), m.path.c_str());
                     }
                 }
 
@@ -322,7 +330,7 @@ void Agent::heartbeat_loop(std::stop_token st)
             enqueue(std::move(encoded_heartbeat));
         }
 
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{10};
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{heartbeat_interval_seconds_.load()};
         while (!st.stop_requested() && std::chrono::steady_clock::now() < deadline)
             std::this_thread::sleep_for(std::chrono::milliseconds{500});
     }
@@ -380,12 +388,15 @@ void Agent::handle_frame(const proto::Frame& f)
         LOGF_DEBUG("Received CONFIG_UPDATE payload_size=%zu", f.payload.size());
         auto cfg = proto::unpack<ConfigUpdate>(f.payload);
         interval_seconds_.store(cfg.interval_seconds);
+        heartbeat_interval_seconds_.store(cfg.heartbeat_interval_seconds);
         process_limit_.store(cfg.process_limit);
         collector_config_ = cfg.collector_config;
-        LOGF_INFO("Applied config update interval_seconds=%d process_limit=%d disk_configs=%zu network_configs=%zu "
+        LOGF_INFO("Applied config update interval_seconds=%d heartbeat_interval_seconds=%d process_limit=%d "
+                  "disk_configs=%zu network_configs=%zu "
                   "process_watches=%zu",
-                  cfg.interval_seconds, cfg.process_limit, collector_config_.disks.size(),
-                  collector_config_.networks.size(), collector_config_.processes.size());
+                  cfg.interval_seconds, cfg.heartbeat_interval_seconds, cfg.process_limit,
+                  collector_config_.disks.size(), collector_config_.networks.size(),
+                  collector_config_.processes.size());
         for (auto& c : collectors_)
         {
             if (auto* process = dynamic_cast<ProcessCollector*>(c.get()))
@@ -463,7 +474,6 @@ void Agent::handle_command(const CommandMessage& cmd)
         collectors_.emplace_back(std::make_unique<CpuCollector>());
         collectors_.emplace_back(std::make_unique<MemoryCollector>());
         collectors_.emplace_back(std::make_unique<DiskCollector>());
-        collectors_.emplace_back(std::make_unique<TemperatureCollector>());
         collectors_.emplace_back(std::make_unique<ProcessCollector>(process_limit_.load()));
         collectors_.emplace_back(std::make_unique<NetworkCollector>());
         {

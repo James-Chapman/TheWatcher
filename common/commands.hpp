@@ -3,12 +3,12 @@
 #include "common/collector_config.hpp"
 #include "protocol.hpp"
 
-#include <cbor.h>
-
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <cbor.h>
 
 namespace thewatcher
 {
@@ -59,6 +59,7 @@ struct ConfigUpdate
     int interval_seconds = 30;
     int process_limit = 25;
     CollectorConfig collector_config;
+    int heartbeat_interval_seconds = 5;
 };
 
 } // namespace thewatcher
@@ -167,13 +168,14 @@ inline thewatcher::SetProcessLimitArgs from_cbor<thewatcher::SetProcessLimitArgs
 template <>
 inline CborPtr to_cbor(const thewatcher::ConfigUpdate& u)
 {
-    auto root = adopt(cbor_new_definite_array(3));
+    auto root = adopt(cbor_new_definite_array(4));
 
     push(root.get(), make_int64(u.interval_seconds));
     push(root.get(), make_int64(u.process_limit));
 
     auto collector = to_cbor(u.collector_config);
     push(root.get(), collector.release());
+    push(root.get(), make_int64(u.heartbeat_interval_seconds));
 
     return root;
 }
@@ -181,7 +183,7 @@ inline CborPtr to_cbor(const thewatcher::ConfigUpdate& u)
 template <>
 inline thewatcher::ConfigUpdate from_cbor<thewatcher::ConfigUpdate>(cbor_item_t* item)
 {
-    if (!cbor_isa_array(item) || cbor_array_size(item) != 3)
+    if (!cbor_isa_array(item) || cbor_array_size(item) < 3)
     {
         throw std::runtime_error("Invalid ConfigUpdate CBOR payload");
     }
@@ -190,6 +192,8 @@ inline thewatcher::ConfigUpdate from_cbor<thewatcher::ConfigUpdate>(cbor_item_t*
     u.interval_seconds = static_cast<int>(read_int64(array_get(item, 0)));
     u.process_limit = static_cast<int>(read_int64(array_get(item, 1)));
     u.collector_config = from_cbor<thewatcher::CollectorConfig>(array_get(item, 2));
+    if (cbor_array_size(item) >= 4)
+        u.heartbeat_interval_seconds = static_cast<int>(read_int64(array_get(item, 3)));
 
     return u;
 }

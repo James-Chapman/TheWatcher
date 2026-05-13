@@ -7,7 +7,6 @@ collectors_lib = static_library(
     'memory_collector.cpp',
     'network_collector.cpp',
     'process_collector.cpp',
-    'temperature_collector.cpp',
   ],
   include_directories : root_inc,
   dependencies : [

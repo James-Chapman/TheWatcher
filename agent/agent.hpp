@@ -15,6 +15,7 @@
 #include <string>
 #include <thread> // C++20: std::jthread
 #include <vector>
+
 #include <zmq.hpp>
 
 namespace thewatcher::agent
@@ -61,8 +62,10 @@ private:
     std::mutex outbox_mutex_;
 
     std::atomic<int> interval_seconds_{5}; // Default to 5 seconds
-    std::atomic<int> process_limit_{100};  // Default limit of 100 processes
+    std::atomic<int> heartbeat_interval_seconds_{5};
+    std::atomic<int> process_limit_{100}; // Default limit of 100 processes
     CollectorConfig collector_config_;
+    std::atomic<bool> enrollment_stop_{false};
     std::atomic<bool> paused_{false};
     std::atomic<bool> connected_{false};
 

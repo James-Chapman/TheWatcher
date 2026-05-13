@@ -6,15 +6,16 @@
 #include <cctype>
 #include <cstdio>
 #include <fstream>
-#include <sodium.h>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
+
+#include <sodium.h>
 // JSON support intentionally absent: TheWatcherAgent.conf is KEY=VALUE only.
 
 #ifdef _WIN32
-#include <windows.h>
 #include <shlobj.h>
+#include <windows.h>
 #else
 #include <pwd.h>
 #include <unistd.h>
@@ -115,6 +116,8 @@ namespace
             cfg.agent_secret_key = it->second;
         if (auto it = values.find("COLLECTION_INTERVAL"); it != values.end())
             cfg.collection_interval = std::stoi(it->second);
+        if (auto it = values.find("HEARTBEAT_INTERVAL"); it != values.end())
+            cfg.heartbeat_interval = std::stoi(it->second);
         if (auto it = values.find("PROCESS_LIMIT"); it != values.end())
             cfg.process_limit = std::stoi(it->second);
     }
@@ -166,9 +169,10 @@ AgentConfig AgentConfig::load_or_create(const std::filesystem::path& path)
                 cfg.agent_secret_key = kp.secret_key_z85;
             cfg.save(path);
         }
-        LOGF_DEBUG("Loaded agent config id=%s server=%s enrollment=%s interval=%d process_limit=%d",
-                   cfg.agent_id.c_str(), cfg.server_address.c_str(), cfg.enrollment_address.c_str(),
-                   cfg.collection_interval, cfg.process_limit);
+        LOGF_DEBUG(
+            "Loaded agent config id=%s server=%s enrollment=%s interval=%d heartbeat_interval=%d process_limit=%d",
+            cfg.agent_id.c_str(), cfg.server_address.c_str(), cfg.enrollment_address.c_str(), cfg.collection_interval,
+            cfg.heartbeat_interval, cfg.process_limit);
         return cfg;
     }
 
@@ -206,14 +210,14 @@ void AgentConfig::save(const std::filesystem::path& path) const
     f << "AGENT_PUBLIC_KEY=" << agent_public_key << '\n';
     f << "AGENT_SECRET_KEY=" << agent_secret_key << '\n';
     f << "COLLECTION_INTERVAL=" << collection_interval << '\n';
+    f << "HEARTBEAT_INTERVAL=" << heartbeat_interval << '\n';
     f << "PROCESS_LIMIT=" << process_limit << '\n';
     f.close();
 
     // M-6: Restrict config file to owner read/write only — it contains the CURVE secret key.
 #ifndef _WIN32
-    std::filesystem::permissions(path,
-        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
-        std::filesystem::perm_options::replace);
+    std::filesystem::permissions(path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace);
 #endif
 }
 

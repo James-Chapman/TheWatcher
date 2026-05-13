@@ -26,6 +26,7 @@ export declare function approveAgent(agentId: string, groupIds?: number[]): Prom
 export declare function rejectAgent(agentId: string): Promise<void>;
 export declare function deleteAgent(agentId: string): Promise<void>;
 export declare function setAgentGroups(agentId: string, groupIds: number[]): Promise<void>;
+export declare function setAgentRunbook(agentId: string, markdown: string): Promise<void>;
 export declare function setAgentInterval(agentId: string, intervalSeconds: number): Promise<void>;
 export declare function setAgentProcessLimit(agentId: string, limit: number): Promise<void>;
 export declare function setAgentCollectorConfig(agentId: string, update: AgentCollectorConfigUpdate): Promise<void>;
@@ -62,8 +63,8 @@ export declare function deleteSilence(silenceId: number): Promise<void>;
 export declare function fetchAgentHistory(agentId: string, limit?: number): Promise<StatusHistoryRow[]>;
 export declare function fetchLogMatches(agentId: string, limit?: number): Promise<LogMatchRecord[]>;
 export declare function fetchViews(): Promise<ViewRecord[]>;
-export declare function createView(name: string, agentIds: string[], isPublic: boolean): Promise<ViewRecord>;
-export declare function updateView(viewId: number, name: string, agentIds: string[], isPublic: boolean): Promise<ViewRecord>;
+export declare function createView(name: string, agentIds: string[], isPublic: boolean, groupId: number): Promise<ViewRecord>;
+export declare function updateView(viewId: number, name: string, agentIds: string[], isPublic: boolean, groupId: number): Promise<ViewRecord>;
 export declare function deleteView(viewId: number): Promise<void>;
 export declare function fetchRunbooks(): Promise<RunbookRecord[]>;
 export declare function createRunbook(indicator: string, status: string, url: string, notes: string): Promise<RunbookRecord>;

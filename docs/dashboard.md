@@ -14,9 +14,10 @@ Current capabilities:
 - approved-agent-only monitoring;
 - pending enrollment approval/rejection with group assignment;
 - hostname-based alert notifications and alert acknowledgement/delete workflow;
-- user and group creation for admins;
+- six-role user and group access control;
 - per-agent collector configuration for poll interval, process limit, CPU,
-  memory, disk, network, process watches, and consecutive-reading counts;
+  memory, disk, network, process watches, consecutive-reading counts,
+  heartbeat interval, group assignment, and markdown runbooks;
 - pause/resume maintenance mode;
 - restart collectors;
 - request immediate status;
@@ -59,7 +60,8 @@ npm.cmd test
 
 The current tests cover health thresholds, alert display enrichment,
 worst-status summary counts, missing-metrics behavior, maintenance state, agent
-management API calls, and admin user/group API calls.
+management API calls, grouped views, runbook saves, and role-aware user/group
+API calls.
 
 ## Views
 
@@ -79,7 +81,7 @@ The group filter can show all groups, a single group, or only ungrouped agents.
 Columns:
 
 ```text
-Server | Uptime | Status | Alerts | CPU | Memory | Disk | Network | Temp | Proc | Heartbeat
+Server | Uptime | Status | Alerts | CPU | Memory | Disk | Network | Proc | Heartbeat
 ```
 
 The top counters are:
@@ -92,22 +94,27 @@ Status priority is red, amber, yellow, grey, then green. A host with no data is
 shown as yellow in the derived Status column while its missing component dots
 are grey. Maintenance turns all component dots blue.
 
-The Heartbeat dot is the final component dot. It is green when the server still
-considers the agent connected, grey when the agent is offline or has never sent
-a heartbeat, and blue during maintenance.
+The server identity cell shows the hostname and primary non-loopback IP address
+when the agent reports one. The Heartbeat dot is the final component dot. It is
+green when the server still considers the agent connected, grey when the agent
+is offline or has never sent a heartbeat, and blue during maintenance.
 
 Unacknowledged alerts appear between the top counters and the Monitoring table.
 Each alert is rendered as its own severity-themed item using the known hostname
-as primary text and the agent id as smaller secondary text.
+as primary text and the agent id as smaller secondary text. Non-global users
+only see alerts for agents assigned to their groups; changing an agent's group
+changes which users can see its alerts.
 
 ### Agents
 
 The Agents view manages approved agents only:
 
 - approved agents have a Configure button beside the agent identity;
-- the Configure modal updates poll interval, process sample limit, CPU and
-  memory absolute percentage thresholds, fixed disk thresholds, network
-  interface Mbps thresholds, process watches, and consecutive-reading counts;
+- the Configure modal updates heartbeat interval, poll interval, process sample
+  limit, group assignment, per-agent markdown runbook, CPU and memory absolute
+  percentage thresholds, fixed disk thresholds, network interface Mbps
+  thresholds, process watches, and consecutive-reading counts;
+- each Configure field has an info tooltip that describes the setting;
 - disk rows are shown by mount point/path with device name in brackets;
 - network thresholds are combined receive plus transmit megabits per second per
   selected interface;
@@ -119,26 +126,46 @@ The Agents view manages approved agents only:
 
 ### Pending Enrollments
 
-The Pending Enrollments view is admin-only. It shows unapproved agents awaiting
-approval. Approving an agent accepts a list of group ids; rejecting an agent
-marks enrollment rejected. Approved/rejected buttons disappear from approved
-agent management because decided enrollments are no longer pending. Pending
-rows show the hostname as primary text and the agent id as smaller secondary
-text.
+The Pending Enrollments view is global-operator-or-admin only. It shows
+unapproved agents awaiting approval. Approving an agent accepts a list of group
+ids; rejecting an agent marks enrollment rejected. Approved/rejected buttons
+disappear from approved agent management because decided enrollments are no
+longer pending. Pending rows show the hostname as primary text and the IP
+address plus agent id as secondary text.
 
 ### Alerts
 
-The Alerts view lists active, non-deleted alerts. Operators and admins can
-acknowledge alerts or soft-delete them. The Monitoring alert dot is green unless
-the host has an unacknowledged alert, in which case it is red. Monitoring alert
-notifications and Alert rows show the known hostname as primary text and the
-agent id as smaller secondary text.
+The Alerts view lists active, non-deleted alerts visible to the current user's
+groups. Operators and admins can acknowledge alerts or soft-delete them. The
+Monitoring alert dot is green unless the host has an unacknowledged alert, in
+which case it is red. Monitoring alert notifications and Alert rows show the
+known hostname as primary text and the agent id as smaller secondary text.
+Alert rows can display the agent's markdown runbook.
 
 ### Users & Groups
 
-The Users & Groups view is admin-only. It lists users, roles, groups, and state.
-Admins can create groups and create users with `viewer`, `operator`, or `admin`
-roles and an initial group assignment.
+The Users & Groups view lists users, roles, groups, and state visible to the
+current user. Global admins can create groups and any role. Group admins can
+create users only inside their own groups and cannot assign global roles.
+Global and group operators have read-only user access.
+
+Roles:
+
+| Role | Scope |
+| --- | --- |
+| `global_admin` | Full access to every agent, view, alert, setting, user, and group. |
+| `global_operator` | Full operational access; users and groups are read-only. |
+| `global_viewer` | Read-only access to everything. |
+| `group_admin` | Full access inside assigned groups plus user creation inside those groups. |
+| `group_operator` | Operational access inside assigned groups; users are read-only. |
+| `group_viewer` | Read-only access inside assigned groups. |
+
+### Views
+
+The Views page supports group assignment when a view is created or edited.
+Global users can see all views. Group users see owned views, public views, and
+views assigned to their groups; agents inside a view are still filtered by the
+same agent visibility rules.
 
 ## API Contract
 
@@ -150,7 +177,7 @@ The dashboard consumes:
 | `POST /api/logout` | Delete the current session. |
 | `GET /api/session` | Return the current authenticated session. |
 | `GET /api/agents` | Approved agent identity, connection, maintenance, settings, groups, and timestamps. |
-| `GET /api/pending-enrollments` | Pending enrollment records for admins. |
+| `GET /api/pending-enrollments` | Pending enrollment records for global operators and admins. |
 | `GET /api/metrics` | Latest metrics snapshot per agent. |
 | `GET /api/groups` | List groups. |
 | `POST /api/groups` | Create a group. |
@@ -167,12 +194,18 @@ The dashboard consumes:
 | `POST /api/agents/:id/set_interval` | Legacy endpoint for poll interval update. |
 | `POST /api/agents/:id/set_process_limit` | Legacy endpoint for process limit update. |
 | `POST /api/agents/:id/thresholds` | Legacy endpoint for old threshold rows. |
-| `POST /api/agents/:id/collector_config` | Persist collection interval, process limit, and full collector configuration. |
+| `POST /api/agents/:id/collector_config` | Persist collection interval, heartbeat interval, process limit, groups, runbook, and full collector configuration. |
+| `POST /api/agents/:id/runbook` | Persist the agent markdown runbook. |
 | `POST /api/agents/:id/maintenance` | Enter maintenance with optional reason and expiry. |
 | `POST /api/agents/:id/pause` | Queue maintenance pause. |
 | `POST /api/agents/:id/resume` | Queue maintenance resume. |
 | `POST /api/agents/:id/restart_collectors` | Queue collector restart. |
 | `POST /api/agents/:id/get_status` | Queue immediate metrics report. |
+| `GET /api/views` | List views visible to the current user. |
+| `POST /api/views` | Create a view with optional `group_id`. |
+| `GET /api/views/:id` | Read a visible view. |
+| `PUT /api/views/:id` | Update a view's name, agents, visibility, or group. |
+| `DELETE /api/views/:id` | Delete an editable view. |
 
 Agent rows include:
 
@@ -188,7 +221,9 @@ maintenance
 maintenance_reason
 maintenance_until
 collection_interval
+heartbeat_interval
 process_limit
+runbook_markdown
 collector_config
 thresholds
 first_seen
@@ -221,6 +256,8 @@ metrics
 - Process checks use exact executable names and expected counts. Fewer running
   instances than expected escalates yellow, amber, then red across configured
   consecutive failed readings.
+- Temperature collection is no longer evaluated by the dashboard or status
+  engine. Historical temperature fields can still decode from old metrics.
 - Worsening numeric collector transitions are committed only after the
   configured number of consecutive readings. Recovery resets pending counts.
 - `connected` becomes true after inbound agent traffic.

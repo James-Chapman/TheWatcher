@@ -23,9 +23,13 @@ mutates the provided snapshot in place.
 | CPU | `cpu_collector.hpp/.cpp` | `metrics.cpu` |
 | Memory | `memory_collector.hpp/.cpp` | `metrics.memory` |
 | Disk | `disk_collector.hpp/.cpp` | `metrics.disks` |
-| Temperature | `temperature_collector.hpp/.cpp` | `metrics.temperatures` |
 | Process | `process_collector.hpp/.cpp` | `metrics.top_processes` |
 | Network | `network_collector.hpp/.cpp` | `metrics.networks` |
+
+Temperature collection is intentionally not built. The `metrics.temperatures`
+field remains in `SystemMetrics` so older agents and stored rows can still be
+decoded, but current agents do not populate it and the status engine does not
+raise temperature alerts.
 
 The agent also fills static system fields in `Agent::fill_static_info()`:
 
@@ -54,12 +58,15 @@ uptime_seconds
 The current runtime settings are:
 
 - `collection_interval`: seconds between periodic metrics submissions.
+- `heartbeat_interval`: seconds between heartbeat frames. Valid range is 1 to
+  60 seconds. The default is 5 seconds.
 - `process_limit`: number of top processes captured by `ProcessCollector`.
 - `collector_config`: per-agent collector thresholds, enabled fixed disks,
   enabled network interfaces, process watches, and consecutive-reading counts.
 
 The server persists these settings and returns them to the agent in
-`CONFIG_UPDATE` after the agent sends `CONFIG_REQUEST`.
+`CONFIG_UPDATE` after the agent sends `CONFIG_REQUEST`. Collection interval is
+only for collector snapshots; heartbeat interval is configured separately.
 
 `collector_config` is defined in `common/collector_config.hpp`. CPU, memory,
 and disk thresholds are absolute percentages. Network thresholds are combined

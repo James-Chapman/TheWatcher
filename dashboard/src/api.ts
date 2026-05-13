@@ -129,6 +129,10 @@ export async function setAgentGroups(agentId: string, groupIds: number[]): Promi
   await jsonPost<{ ok: boolean }>(`/api/agents/${encodeURIComponent(agentId)}/groups`, { group_ids: groupIds });
 }
 
+export async function setAgentRunbook(agentId: string, markdown: string): Promise<void> {
+  await jsonPost<{ ok: boolean }>(`/api/agents/${encodeURIComponent(agentId)}/runbook`, { markdown });
+}
+
 export async function setAgentInterval(agentId: string, intervalSeconds: number): Promise<void> {
   await jsonPost<{ ok: boolean }>(`/api/agents/${encodeURIComponent(agentId)}/set_interval`, {
     interval_seconds: intervalSeconds,
@@ -298,14 +302,14 @@ export async function fetchViews(): Promise<ViewRecord[]> {
   return fetchJson<ViewRecord[]>('/api/views');
 }
 
-export async function createView(name: string, agentIds: string[], isPublic: boolean): Promise<ViewRecord> {
-  return jsonPost<ViewRecord>('/api/views', { name, agent_ids: agentIds, is_public: isPublic });
+export async function createView(name: string, agentIds: string[], isPublic: boolean, groupId: number): Promise<ViewRecord> {
+  return jsonPost<ViewRecord>('/api/views', { name, agent_ids: agentIds, is_public: isPublic, group_id: groupId });
 }
 
-export async function updateView(viewId: number, name: string, agentIds: string[], isPublic: boolean): Promise<ViewRecord> {
+export async function updateView(viewId: number, name: string, agentIds: string[], isPublic: boolean, groupId: number): Promise<ViewRecord> {
   return mutateJson<ViewRecord>(`/api/views/${viewId}`, {
     method: 'PUT',
-    body: JSON.stringify({ name, agent_ids: agentIds, is_public: isPublic }),
+    body: JSON.stringify({ name, agent_ids: agentIds, is_public: isPublic, group_id: groupId }),
     headers: { 'Content-Type': 'application/json' },
   });
 }

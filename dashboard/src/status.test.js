@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_COLLECTOR_CONFIG, DEFAULT_NETWORK_THRESHOLDS, DEFAULT_PERCENT_THRESHOLDS, DEFAULT_THRESHOLDS, agentStatus, classifyNetworkMbps, classifyPercent, collectorConfigWithDefaults, formatBytes, formatDuration, groupOverviewAgents, hostStatus, isUptimeAlarm, summaryCounts, toDashboardAgents, toDisplayAlerts, worstColor, } from './status';
+import { DEFAULT_COLLECTOR_CONFIG, DEFAULT_NETWORK_THRESHOLDS, DEFAULT_PERCENT_THRESHOLDS, DEFAULT_THRESHOLDS, agentStatus, classifyNetworkMbps, classifyPercent, collectorConfigWithDefaults, formatBytes, formatDuration, isUptimeAlarm, groupOverviewAgents, hostStatus, primaryIpAddress, summaryCounts, toDashboardAgents, toDisplayAlerts, worstColor, } from './status';
 function agent(overrides = {}) {
     return {
         agent_id: 'agent-1',
@@ -13,10 +13,12 @@ function agent(overrides = {}) {
         maintenance_reason: '',
         maintenance_until: 0,
         collection_interval: 30,
+        heartbeat_interval: 5,
         process_limit: 25,
         first_seen: 1,
         last_seen: 1,
         description: '',
+        runbook_markdown: '',
         ...overrides,
     };
 }
@@ -31,9 +33,9 @@ describe('GIVEN dashboard health thresholds', () => {
 describe('GIVEN agents with component health', () => {
     it('WHEN summary counts are calculated THEN each agent contributes to its host state', () => {
         const agents = [
-            { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptimeSeconds: 60, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }], description: '' },
-            { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptimeSeconds: 60, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }], description: '' },
-            { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptimeSeconds: 60, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }], description: '' },
+            { id: 'a', name: 'a', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, heartbeatInterval: 5, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptimeSeconds: 60, uptime: '1m', group: 'g', groupIds: [], status: 'green', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'green', value: '1%', detail: '' }], ipAddress: '', description: '', runbookMarkdown: '' },
+            { id: 'b', name: 'b', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, heartbeatInterval: 5, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptimeSeconds: 60, uptime: '1m', group: 'g', groupIds: [], status: 'yellow', alertColor: 'green', components: [{ key: 'cpu', label: 'CPU', color: 'yellow', value: '65%', detail: '' }], ipAddress: '', description: '', runbookMarkdown: '' },
+            { id: 'c', name: 'c', platform: 'linux', approved: true, rejected: false, connected: true, maintenance: false, maintenanceReason: '', maintenanceUntil: 0, collectionInterval: 30, heartbeatInterval: 5, processLimit: 25, thresholds: DEFAULT_THRESHOLDS, collectorConfig: DEFAULT_COLLECTOR_CONFIG, lastSeen: 0, uptimeSeconds: 60, uptime: '1m', group: 'g', groupIds: [], status: 'red', alertColor: 'red', components: [{ key: 'cpu', label: 'CPU', color: 'red', value: '95%', detail: '' }], ipAddress: '', description: '', runbookMarkdown: '' },
         ];
         expect(agentStatus(agents[2])).toBe('red');
         expect(summaryCounts(agents)).toMatchObject({ green: 1, yellow: 1, red: 1 });
@@ -73,7 +75,7 @@ describe('GIVEN backend agents and metrics', () => {
                 disks: [{ device: '/dev/sdb1', mount_point: '/data', filesystem: 'ext4', total_bytes: 1000, used_bytes: 500, usage_percent: 50 }],
                 temperatures: [],
                 top_processes: [{ pid: 1, name: 'TheWatcherAgent.exe', status: 'running', cpu_percent: 1, memory_rss_bytes: 1, num_threads: 1 }],
-                networks: [{ interface_name: 'eth0', bytes_sent_per_sec: 10_000_000, bytes_recv_per_sec: 10_000_000, errors_in: 0, errors_out: 0, drops_in: 0, drops_out: 0, is_up: true }],
+                networks: [{ interface_name: 'eth0', ip_address: '192.0.2.10', mac_address: '', bytes_sent_per_sec: 10_000_000, bytes_recv_per_sec: 10_000_000, errors_in: 0, errors_out: 0, drops_in: 0, drops_out: 0, is_up: true }],
                 os_name: 'Linux',
                 os_version: '6',
                 hostname: 'host-1',
@@ -344,10 +346,12 @@ describe('GIVEN toDashboardAgents with metric components', () => {
             maintenance_reason: '',
             maintenance_until: 0,
             collection_interval: 30,
+            heartbeat_interval: 5,
             process_limit: 25,
             first_seen: 1,
             last_seen: 1,
             description: '',
+            runbook_markdown: '',
             ...overrides,
         };
     }
@@ -361,7 +365,7 @@ describe('GIVEN toDashboardAgents with metric components', () => {
                 disks: [{ device: '/dev/sda1', mount_point: '/', filesystem: 'ext4', total_bytes: 100e9, used_bytes: 30e9, usage_percent: 30 }],
                 temperatures: [{ sensor_name: 'cpu', sensor_label: 'core0', temperature_celsius: 45 }],
                 top_processes: [{ pid: 1, name: 'init', status: 'running', cpu_percent: 1, memory_rss_bytes: 1000, num_threads: 1 }],
-                networks: [{ interface_name: 'eth0', bytes_sent_per_sec: 1e6, bytes_recv_per_sec: 1e6, errors_in: 0, errors_out: 0, drops_in: 0, drops_out: 0, is_up: true }],
+                networks: [{ interface_name: 'eth0', ip_address: '192.0.2.10', mac_address: '', bytes_sent_per_sec: 1e6, bytes_recv_per_sec: 1e6, errors_in: 0, errors_out: 0, drops_in: 0, drops_out: 0, is_up: true }],
                 os_name: 'Linux',
                 os_version: '6.1',
                 hostname: 'comp-host',
@@ -393,21 +397,18 @@ describe('GIVEN toDashboardAgents with metric components', () => {
         expect(disk.color).toBe('grey');
         expect(disk.value).toBe('none');
     });
-    it('WHEN temperature is above thresholds THEN temperature component reflects it', () => {
+    it('WHEN metrics include temperature sensors THEN dashboard components omit temperature status', () => {
         const snapshot = baseSnapshot('comp-agent');
         snapshot.metrics.temperatures[0].temperature_celsius = 96;
         const [dashAgent] = toDashboardAgents([baseAgent()], [snapshot]);
-        const temp = dashAgent.components.find((c) => c.key === 'temperature');
-        expect(temp.color).toBe('red');
-        expect(temp.value).toBe('96C');
+        expect(dashAgent.components.some((component) => component.key === 'temperature')).toBe(false);
     });
-    it('WHEN no temperature sensors are reported THEN temperature component is grey', () => {
+    it('WHEN a non-loopback network has an IP THEN dashboard rows expose it for display', () => {
         const snapshot = baseSnapshot('comp-agent');
-        snapshot.metrics.temperatures = [];
+        snapshot.metrics.networks[0].ip_address = '192.0.2.10';
         const [dashAgent] = toDashboardAgents([baseAgent()], [snapshot]);
-        const temp = dashAgent.components.find((c) => c.key === 'temperature');
-        expect(temp.color).toBe('grey');
-        expect(temp.value).toBe('n/a');
+        expect(primaryIpAddress(snapshot.metrics)).toBe('192.0.2.10');
+        expect(dashAgent.ipAddress).toBe('192.0.2.10');
     });
     it('WHEN a network interface has packet errors THEN network component is red', () => {
         const snapshot = baseSnapshot('comp-agent');
@@ -426,7 +427,7 @@ describe('GIVEN toDashboardAgents with metric components', () => {
     });
     it('WHEN the loopback interface is the only one and no config is set THEN it is excluded from monitoring', () => {
         const snapshot = baseSnapshot('comp-agent');
-        snapshot.metrics.networks = [{ interface_name: 'lo', bytes_sent_per_sec: 0, bytes_recv_per_sec: 0, errors_in: 0, errors_out: 0, drops_in: 0, drops_out: 0, is_up: true }];
+        snapshot.metrics.networks = [{ interface_name: 'lo', ip_address: '127.0.0.1', mac_address: '', bytes_sent_per_sec: 0, bytes_recv_per_sec: 0, errors_in: 0, errors_out: 0, drops_in: 0, drops_out: 0, is_up: true }];
         const [dashAgent] = toDashboardAgents([baseAgent()], [snapshot]);
         const net = dashAgent.components.find((c) => c.key === 'network');
         expect(net.color).toBe('grey');

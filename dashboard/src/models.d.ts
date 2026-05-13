@@ -1,5 +1,6 @@
 export type HealthColor = 'green' | 'yellow' | 'amber' | 'red' | 'grey' | 'blue';
-export type ComponentKey = 'cpu' | 'memory' | 'disk' | 'network' | 'temperature' | 'processes' | 'heartbeat';
+export type ComponentKey = 'cpu' | 'memory' | 'disk' | 'network' | 'processes' | 'heartbeat';
+export type UserRole = 'global_admin' | 'global_operator' | 'global_viewer' | 'group_admin' | 'group_operator' | 'group_viewer';
 export interface AgentRecord {
     agent_id: string;
     hostname: string;
@@ -12,10 +13,12 @@ export interface AgentRecord {
     maintenance_reason: string;
     maintenance_until: number;
     collection_interval: number;
+    heartbeat_interval: number;
     process_limit: number;
     first_seen: number;
     last_seen: number;
     description: string;
+    runbook_markdown: string;
     group_ids?: number[];
     thresholds?: AgentThresholds;
     collector_config?: CollectorConfig;
@@ -108,8 +111,11 @@ export interface CollectorConfig {
 }
 export interface AgentCollectorConfigUpdate {
     collection_interval: number;
+    heartbeat_interval: number;
     process_limit: number;
     collector_config: CollectorConfig;
+    group_ids?: number[];
+    runbook_markdown?: string;
 }
 export interface GroupRecord {
     group_id: number;
@@ -119,14 +125,14 @@ export interface GroupRecord {
 export interface UserRecord {
     user_id: number;
     username: string;
-    role: 'admin' | 'operator' | 'viewer';
+    role: UserRole;
     built_in: boolean;
     disabled: boolean;
     group_ids: number[];
 }
 export interface SessionInfo {
     username: string;
-    role: 'admin' | 'operator' | 'viewer';
+    role: UserRole;
 }
 export interface AlertRecord {
     alert_id: number;
@@ -142,12 +148,15 @@ export interface AlertRecord {
     note: string;
     escalated_at: number;
     runbook_url?: string;
+    runbook_markdown?: string;
 }
 export interface RunbookRecord {
     runbook_id: number;
+    agent_id: string;
     indicator: string;
     status: 'yellow' | 'amber' | 'red';
     url: string;
+    markdown: string;
     notes: string;
     created_by: string;
     created_at: number;
@@ -185,6 +194,7 @@ export interface ViewRecord {
     owner_user_id: number;
     owner_username: string;
     is_public: boolean;
+    group_id: number;
     agent_ids: string[];
     created_at: number;
 }
@@ -234,6 +244,8 @@ export interface NetworkMetrics {
     errors_out: number;
     drops_in: number;
     drops_out: number;
+    ip_address: string;
+    mac_address: string;
     is_up: boolean;
 }
 export interface SystemMetrics {
@@ -273,6 +285,7 @@ export interface DashboardAgent {
     maintenanceReason: string;
     maintenanceUntil: number;
     collectionInterval: number;
+    heartbeatInterval: number;
     processLimit: number;
     thresholds: AgentThresholds;
     collectorConfig: CollectorConfig;
@@ -285,5 +298,7 @@ export interface DashboardAgent {
     alertColor: HealthColor;
     components: ComponentHealth[];
     metrics?: SystemMetrics;
+    ipAddress: string;
     description: string;
+    runbookMarkdown: string;
 }

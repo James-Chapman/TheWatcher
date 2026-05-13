@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { acknowledgeAlert, archiveAlert, approveAgent, bulkAcknowledgeAlerts, bulkArchiveAlerts, changeUserPassword, createGroup, createMaintenanceWindow, createSilence, createUser, deleteAgent, deleteMaintenanceWindow, deleteSilence, deleteUser, disableUser, enableUser, fetchAgentHistory, fetchAgents, fetchAlerts, fetchGroups, fetchLatestMetrics, fetchMaintenanceWindows, fetchMetricHistory, fetchPendingEnrollments, fetchSession, fetchSettings, fetchSilences, fetchUnacknowledgedAlerts, fetchUptimeReport, fetchUsers, loadDashboardData, login, logout, pauseAgent, rejectAgent, requestAgentStatus, restartAgentCollectors, resumeAgent, setAgentDescription, setAgentGroups, setAgentCollectorConfig, setAgentInterval, setAgentProcessLimit, setAgentThresholds, setMaintenance, updateSettings, } from './api';
+import { acknowledgeAlert, archiveAlert, approveAgent, bulkAcknowledgeAlerts, bulkArchiveAlerts, changeUserPassword, createView, createGroup, createMaintenanceWindow, createSilence, createUser, deleteAgent, deleteMaintenanceWindow, deleteSilence, deleteUser, disableUser, enableUser, fetchAgentHistory, fetchAgents, fetchAlerts, fetchGroups, fetchLatestMetrics, fetchMaintenanceWindows, fetchMetricHistory, fetchPendingEnrollments, fetchSession, fetchSettings, fetchSilences, fetchUnacknowledgedAlerts, fetchUptimeReport, fetchUsers, loadDashboardData, login, logout, pauseAgent, rejectAgent, requestAgentStatus, restartAgentCollectors, resumeAgent, setAgentDescription, setAgentGroups, setAgentRunbook, setAgentCollectorConfig, setAgentInterval, setAgentProcessLimit, setAgentThresholds, setMaintenance, updateSettings, updateView, } from './api';
 describe('GIVEN agent management API actions', () => {
     afterEach(() => {
         vi.unstubAllGlobals();
@@ -39,6 +39,7 @@ describe('GIVEN agent management API actions', () => {
         await setAgentProcessLimit('agent-2', 12);
         await setAgentCollectorConfig('agent-2', {
             collection_interval: 30,
+            heartbeat_interval: 5,
             process_limit: 12,
             collector_config: {
                 cpu: { warning_percent: 80, degraded_percent: 90, critical_percent: 95 },
@@ -78,6 +79,7 @@ describe('GIVEN agent management API actions', () => {
         expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/agents/agent-2/collector_config', {
             body: JSON.stringify({
                 collection_interval: 30,
+                heartbeat_interval: 5,
                 process_limit: 12,
                 collector_config: {
                     cpu: { warning_percent: 80, degraded_percent: 90, critical_percent: 95 },
@@ -171,7 +173,7 @@ describe('GIVEN agent management API actions', () => {
         const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ user_id: 7, group_id: 3 }) });
         vi.stubGlobal('fetch', fetchMock);
         await createGroup('Production');
-        await createUser('operator1', 'secret', 'operator', [3]);
+        await createUser('operator1', 'secret', 'group_operator', [3]);
         expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/groups', {
             body: JSON.stringify({ name: 'Production' }),
             credentials: 'include',
@@ -179,7 +181,7 @@ describe('GIVEN agent management API actions', () => {
             method: 'POST',
         });
         expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/users', {
-            body: JSON.stringify({ username: 'operator1', password: 'secret', role: 'operator', group_ids: [3] }),
+            body: JSON.stringify({ username: 'operator1', password: 'secret', role: 'group_operator', group_ids: [3] }),
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             method: 'POST',
@@ -233,6 +235,35 @@ describe('GIVEN agent management API actions', () => {
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             method: 'POST',
+        });
+    });
+    it('WHEN an agent runbook is set THEN markdown is posted to the per-agent endpoint', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+        vi.stubGlobal('fetch', fetchMock);
+        await setAgentRunbook('agent-1', '## CPU\nRestart service');
+        expect(fetchMock).toHaveBeenCalledWith('/api/agents/agent-1/runbook', {
+            body: JSON.stringify({ markdown: '## CPU\nRestart service' }),
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            method: 'POST',
+        });
+    });
+    it('WHEN views are created and updated THEN the selected group is included', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ view_id: 1 }) });
+        vi.stubGlobal('fetch', fetchMock);
+        await createView('Production', ['agent-1'], false, 7);
+        await updateView(1, 'Production Linux', ['agent-2'], false, 8);
+        expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/views', {
+            body: JSON.stringify({ name: 'Production', agent_ids: ['agent-1'], is_public: false, group_id: 7 }),
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            method: 'POST',
+        });
+        expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/views/1', {
+            body: JSON.stringify({ name: 'Production Linux', agent_ids: ['agent-2'], is_public: false, group_id: 8 }),
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            method: 'PUT',
         });
     });
     it('WHEN settings are fetched THEN the settings endpoint is called', async () => {
@@ -291,7 +322,7 @@ describe('GIVEN read-only fetch endpoints', () => {
         vi.unstubAllGlobals();
     });
     it('WHEN fetchSession is called THEN GET /api/session is called', async () => {
-        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ username: 'admin', role: 'admin' }) });
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ username: 'admin', role: 'global_admin' }) });
         vi.stubGlobal('fetch', fetchMock);
         const session = await fetchSession();
         expect(fetchMock).toHaveBeenCalledWith('/api/session', { credentials: 'include' });
@@ -304,7 +335,7 @@ describe('GIVEN read-only fetch endpoints', () => {
         expect(fetchMock).toHaveBeenCalledWith('/api/logout', { credentials: 'include', method: 'POST' });
     });
     it('WHEN login is called THEN credentials are posted to /api/login', async () => {
-        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ username: 'admin', role: 'admin' }) });
+        const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ username: 'admin', role: 'global_admin' }) });
         vi.stubGlobal('fetch', fetchMock);
         await login('admin', 'secret');
         expect(fetchMock).toHaveBeenCalledWith('/api/login', {

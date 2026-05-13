@@ -16,6 +16,7 @@ struct AgentConfig
     std::string agent_public_key; // z85, 40 chars
     std::string agent_secret_key; // z85, 40 chars
     int collection_interval = 30;
+    int heartbeat_interval = 5;
     int process_limit = 25;
     std::string config_path;
 

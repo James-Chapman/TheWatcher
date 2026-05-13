@@ -90,7 +90,8 @@ namespace
 
 // ── Construction ──────────────────────────────────────────────────────────────
 
-Server::Server(ServerConfig config) : config_(std::move(config))
+Server::Server(ServerConfig config)
+    : config_(std::move(config))
 {
     LOG_FUNCTION_TRACE
     LOGF_DEBUG("Creating server bind=%s enrollment=%s api=%s:%d db_type=%s db_path=%s offline_after_seconds=%d",
@@ -360,11 +361,14 @@ void Server::handle_router_frame(zmq::socket_t& router)
         auto agent = store_->get_agent(agent_id);
         if (agent)
         {
-            ConfigUpdate cfg{agent->collection_interval, agent->process_limit, agent->collector_config};
-            LOGF_DEBUG("Sending config update agent_id=%s interval_seconds=%d process_limit=%d disk_configs=%zu "
+            ConfigUpdate cfg{agent->collection_interval, agent->process_limit, agent->collector_config,
+                             agent->heartbeat_interval};
+            LOGF_DEBUG("Sending config update agent_id=%s interval_seconds=%d heartbeat_interval_seconds=%d "
+                       "process_limit=%d disk_configs=%zu "
                        "network_configs=%zu process_watches=%zu",
-                       agent_id.c_str(), cfg.interval_seconds, cfg.process_limit, cfg.collector_config.disks.size(),
-                       cfg.collector_config.networks.size(), cfg.collector_config.processes.size());
+                       agent_id.c_str(), cfg.interval_seconds, cfg.heartbeat_interval_seconds, cfg.process_limit,
+                       cfg.collector_config.disks.size(), cfg.collector_config.networks.size(),
+                       cfg.collector_config.processes.size());
             Frame response;
             response.type = static_cast<uint8_t>(FrameType::CONFIG_UPDATE);
             response.agent_id = agent_id;
@@ -389,9 +393,9 @@ void Server::handle_router_frame(zmq::socket_t& router)
             auto command = dispatched_commands_.find(ack.command_id);
             if (command != dispatched_commands_.end())
             {
-                if (ack.success && (command->second.first == CommandType::DISCONNECT ||
-                                    command->second.first == CommandType::PAUSE ||
-                                    command->second.first == CommandType::RESUME))
+                if (ack.success &&
+                    (command->second.first == CommandType::DISCONNECT || command->second.first == CommandType::PAUSE ||
+                     command->second.first == CommandType::RESUME))
                 {
                     auto command_agent = store_->get_agent(agent_id);
                     if (command_agent)
@@ -655,14 +659,13 @@ void Server::maybe_send_report(int64_t now_ms)
     const int target_dow = std::stoi(store_->get_setting("reports.day_of_week", "1")); // 0=Sun
 
     // Minimum gap: 23 h for daily, 6 days 23 h for weekly.
-    const int64_t min_gap_ms = (schedule == "weekly") ? 6LL * 86'400'000LL + 23LL * 3'600'000LL
-                                                       : 23LL * 3'600'000LL;
+    const int64_t min_gap_ms = (schedule == "weekly") ? 6LL * 86'400'000LL + 23LL * 3'600'000LL : 23LL * 3'600'000LL;
     if (last_report_ms_ > 0 && now_ms - last_report_ms_ < min_gap_ms)
         return;
 
     // Convert now_ms to UTC calendar fields.
     const time_t now_t = static_cast<time_t>(now_ms / 1000);
-    struct tm utc {};
+    struct tm utc{};
 #ifdef _WIN32
     gmtime_s(&utc, &now_t);
 #else

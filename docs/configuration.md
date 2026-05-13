@@ -75,9 +75,12 @@ Payload shape:
 
 ```json
 {
-  "collection_interval": 30,
-  "process_limit": 25,
-  "collector_config": {
+    "collection_interval": 30,
+    "heartbeat_interval": 5,
+    "process_limit": 25,
+    "group_ids": [1],
+    "runbook_markdown": "# Host runbook\n\nCheck service state first.",
+    "collector_config": {
     "cpu": { "warning_percent": 80, "degraded_percent": 90, "critical_percent": 95 },
     "memory": { "warning_percent": 80, "degraded_percent": 90, "critical_percent": 95 },
     "cpu_readings": 1,
@@ -122,6 +125,13 @@ Collector fields:
 | `networks` | empty | Per-interface configuration. An empty list means monitor all reported non-loopback interfaces. Thresholds are combined receive plus transmit megabits per second. |
 | `processes` | empty | Exact executable names and expected instance counts. Fewer running instances than `expected_count` escalates process health and the alert message names the missing process. |
 
+`heartbeat_interval` is the per-agent heartbeat cadence in seconds. It is
+validated independently from `collection_interval`; valid values are 1 through
+60, and the default is 5. `group_ids` is accepted only from global roles and
+replaces the approved agent's group membership. `runbook_markdown` stores the
+agent-specific markdown runbook displayed with alerts and edited from the
+Configure modal.
+
 Thresholds must be ordered `warning < degraded < critical`. Percent thresholds
 must be no higher than 100 for the critical level. Consecutive-reading counters
 reset when the collector recovers or when a different worse state is observed.
@@ -144,7 +154,7 @@ The first SQLite database initialization creates:
 ```text
 username: thewatcher
 password: look_at_me
-role: admin
+role: global_admin
 group: Admins
 ```
 
@@ -155,13 +165,17 @@ Roles:
 
 | Role | Permissions |
 | --- | --- |
-| `viewer` | View approved agents, metrics, groups, and alerts. |
-| `operator` | Viewer permissions plus maintenance, settings, commands, alert acknowledgement, alert deletion, and agent deletion. |
-| `admin` | Operator permissions plus pending enrollment approval/rejection and user/group management. |
+| `global_admin` | Full unrestricted access to all groups, agents, views, users, settings, and commands. |
+| `global_operator` | Same operational access as `global_admin`, but users and groups are read-only. |
+| `global_viewer` | Read-only access to all groups, agents, views, users, alerts, and metrics. |
+| `group_admin` | Can see and configure agents, views, alerts, maintenance, and runbooks assigned to their groups, and can create users inside their own groups. |
+| `group_operator` | Same group-scoped operational access as `group_admin`, but users are read-only. |
+| `group_viewer` | Read-only access to agents, views, alerts, metrics, and users visible through their groups. |
 
 Users can belong to multiple groups. Agents are assigned to groups on approval
-and admins can replace an approved agent's group membership from the Agent
-Management page.
+and global users can replace an approved agent's group membership from the
+agent Configure modal. Moving an agent to a different group also moves alert
+visibility to that new group.
 
 ## Agent Config
 
@@ -198,6 +212,7 @@ AGENT_ID=<generated-agent-id>
 AGENT_PUBLIC_KEY=<40-character-z85-agent-public-key>
 AGENT_SECRET_KEY=<40-character-z85-agent-secret-key>
 COLLECTION_INTERVAL=30
+HEARTBEAT_INTERVAL=5
 PROCESS_LIMIT=25
 ```
 
@@ -214,6 +229,7 @@ Options:
 | `AGENT_PUBLIC_KEY` | generated | Agent CURVE public key sent during enrollment and approved by the server. |
 | `AGENT_SECRET_KEY` | generated | Agent CURVE secret key. Keep this private. |
 | `COLLECTION_INTERVAL` | `30` | Seconds between periodic metrics submissions. The server can update this through the dashboard. |
+| `HEARTBEAT_INTERVAL` | `5` | Seconds between heartbeat frames. The server can update this through the dashboard; valid values are 1 through 60. |
 | `PROCESS_LIMIT` | `25` | Number of top processes collected by the process collector. The server can update this through the dashboard. |
 
 ## Agent CLI Overrides
@@ -268,11 +284,11 @@ new key.
 ## Runtime Settings Flow
 
 The dashboard writes per-agent runtime settings through the server API. The
-server persists `collection_interval`, `process_limit`, and `collector_config`
+server persists `collection_interval`, `heartbeat_interval`, `process_limit`, and `collector_config`
 in the agents table. After every metrics submission, the agent sends a
 `CONFIG_REQUEST`; the server responds with `CONFIG_UPDATE` containing the
-current persisted settings. Agents apply process watches from that config so
-watched executables are reported even when they are outside the top process
-sample.
+current persisted settings. Agents apply the heartbeat cadence, process watches,
+and collector settings from that config so watched executables are reported even
+when they are outside the top process sample.
 
 Agents establish all ZeroMQ connections. The server never dials agents.

@@ -209,7 +209,8 @@ int main(int argc, char* argv[])
     LOGF_INFO("Public key: %s", config.agent_public_key.c_str());
     LOGF_DEBUG("Server address: %s", config.server_address.c_str());
     LOGF_DEBUG("Enrollment address: %s", config.enrollment_address.c_str());
-    LOGF_DEBUG("Initial collection interval=%d process_limit=%d", config.collection_interval, config.process_limit);
+    LOGF_DEBUG("Initial collection interval=%d heartbeat_interval=%d process_limit=%d", config.collection_interval,
+               config.heartbeat_interval, config.process_limit);
 
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);
@@ -243,6 +244,12 @@ int main(int argc, char* argv[])
 
         Agent agent(std::move(config));
         LOG_DEBUG("Starting foreground agent");
+        std::jthread signal_watchdog([&agent](std::stop_token st) {
+            while (!st.stop_requested() && !g_stop)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (g_stop)
+                agent.stop();
+        });
         agent.start();
 
         LOG_INFO("Running. Press Ctrl+C to stop.");
@@ -250,6 +257,7 @@ int main(int argc, char* argv[])
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
         LOG_INFO("Shutting down...");
+        signal_watchdog.request_stop();
         agent.stop();
     }
     catch (const std::exception& e)

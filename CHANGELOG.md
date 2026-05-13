@@ -5,6 +5,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-13
+
+### Added
+- Added the six-role access model: `global_admin`, `global_operator`,
+  `global_viewer`, `group_admin`, `group_operator`, and `group_viewer`.
+  Global roles can see all agents, alerts, views, and users according to their
+  write permissions; group roles are scoped to their assigned groups.
+- Added group-scoped views. View create/edit now accepts `group_id`, and
+  non-global users only see views owned by or assigned to their visible groups.
+- Added per-agent heartbeat configuration to the dashboard Configure modal,
+  API, persisted agent record, and `CONFIG_UPDATE` payload. Valid values are
+  1 through 60 seconds, with a default of 5 seconds.
+- Added per-agent markdown runbooks to the agent Configure modal and alert
+  payloads so alerts can show host-specific response guidance.
+- Added IP address display on Monitoring, Agents, and Pending Enrollment rows.
+  The agent id remains visible on Agents and Pending Enrollment rows.
+- Added Windows network collector support through IP Helper APIs.
+
+### Changed
+- Moved approved-agent group assignment into the agent Configure modal.
+- Operators can configure maintenance windows for agents they can operate.
+- Alerts, agents, and views are filtered by group membership for non-global
+  users. Moving an agent between groups moves its alert visibility with it.
+- User and group management now follows the new role model: global admins can
+  manage users and groups, global/group operators have read-only user access,
+  and group admins can create users only inside their own groups.
+- Linux and BSD foreground agents now respond to `Ctrl+C` while waiting for
+  enrollment retry loops.
+
+### Removed
+- Removed the agent temperature collector from the build and dashboard health
+  model. Historical temperature metric fields remain in the wire schema for
+  backward compatibility.
+
 ### Removed
 - **Bazel/Bazelisk build system removed.** Meson + Ninja is now the sole
   supported build path on Windows, Linux, and BSD. Deleted `BUILD.bazel`,
