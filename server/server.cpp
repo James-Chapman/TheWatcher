@@ -285,7 +285,8 @@ void Server::handle_router_frame(zmq::socket_t& router)
     while (router.get(zmq::sockopt::rcvmore))
     {
         zmq::message_t extra;
-        router.recv(extra, zmq::recv_flags::none);
+        if (!router.recv(extra, zmq::recv_flags::none))
+            break;
     }
 
     if (payload_msg.size() == 0)
@@ -443,14 +444,14 @@ void Server::handle_router_frame(zmq::socket_t& router)
         try
         {
             auto match = unpack<LogMatch>(frame.payload);
-            LogMatchRecord rec;
-            rec.agent_id = agent_id;
-            rec.indicator_name = match.indicator_name;
-            rec.path = match.path;
-            rec.matched_line = match.matched_line;
-            rec.severity = match.severity;
-            rec.created_at = frame.timestamp_ms;
-            store_->insert_log_match(rec);
+            LogMatchRecord log_match_record;
+            log_match_record.agent_id = agent_id;
+            log_match_record.indicator_name = match.indicator_name;
+            log_match_record.path = match.path;
+            log_match_record.matched_line = match.matched_line;
+            log_match_record.severity = match.severity;
+            log_match_record.created_at = frame.timestamp_ms;
+            store_->insert_log_match(log_match_record);
 
             // Raise an alert on the named indicator so it shows up on the dashboard.
             if (!store_->is_silenced(agent_id, match.indicator_name, frame.timestamp_ms))
@@ -492,7 +493,9 @@ void Server::handle_enrollment(zmq::socket_t& enroll)
     // Helper: send an error response and return.
     auto send_error = [&](const std::string& reason) {
         LOGF_DEBUG("Sending enrollment error response reason=%s", reason.c_str());
-        EnrollResponse resp{false, reason};
+        EnrollResponse resp;
+        resp.approved = false;
+        resp.message = reason;
         Frame f;
         f.type = static_cast<uint8_t>(FrameType::ENROLL_RESPONSE);
         f.agent_id = "";

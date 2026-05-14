@@ -7,6 +7,8 @@
 #include <fstream>
 #include <regex>
 #include <string>
+#include <system_error>
+
 #include <sys/stat.h>
 
 namespace thewatcher::agent
@@ -58,11 +60,15 @@ std::vector<proto::LogMatch> LogCollector::take_matches()
 
 void LogCollector::tail_file(const LogMonitorConfig& cfg)
 {
-    struct stat st {};
+    struct stat st{};
     if (::stat(cfg.path.c_str(), &st) != 0)
     {
         if (errno != ENOENT)
-            LOGF_WARNING("LogCollector stat path=%s error=%s", cfg.path.c_str(), std::strerror(errno));
+        {
+            const auto stat_error = errno;
+            const auto message = std::system_category().message(stat_error);
+            LOGF_WARNING("LogCollector stat path=%s error=%s", cfg.path.c_str(), message.c_str());
+        }
         // File doesn't exist yet; reset state so we start from byte 0 when it appears.
         file_states_.erase(cfg.path);
         return;

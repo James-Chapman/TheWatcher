@@ -9,11 +9,11 @@
 #include <cstdio>
 #include <stdexcept>
 #include <thread>
+
 #include <zmq.hpp>
 
 #ifdef _WIN32
 #include <windows.h>
-#include <sysinfoapi.h>
 #elif defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
 #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -21,6 +21,7 @@
 #include <unistd.h>
 #else
 #include <fstream>
+
 #include <sys/utsname.h>
 #include <unistd.h>
 #endif
@@ -130,7 +131,7 @@ void enroll(AgentConfig& config, zmq::context_t& ctx, const std::atomic<bool>& s
 
     zmq::socket_t req(ctx, ZMQ_REQ);
     req.set(zmq::sockopt::linger, 0);
-    req.set(zmq::sockopt::rcvtimeo, 5000);
+    req.set(zmq::sockopt::rcvtimeo, recv_timeout_ms);
     req.connect(config.enrollment_address);
 
     EnrollRequest er;

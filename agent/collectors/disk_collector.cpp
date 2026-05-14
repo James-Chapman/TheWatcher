@@ -146,9 +146,8 @@ namespace
             disk.free_bytes = space.free;
             disk.used_bytes = space.capacity > space.free ? space.capacity - space.free : 0;
             disk.usage_percent =
-                space.capacity > 0
-                    ? 100.0 * static_cast<double>(disk.used_bytes) / static_cast<double>(space.capacity)
-                    : 0.0;
+                space.capacity > 0 ? 100.0 * static_cast<double>(disk.used_bytes) / static_cast<double>(space.capacity)
+                                   : 0.0;
             disks.push_back(std::move(disk));
         }
 
@@ -189,6 +188,8 @@ namespace
 
 #endif
 
+#ifdef __linux__
+
     std::string device_basename(const std::string& path)
     {
         const auto pos = path.find_last_of("/\\");
@@ -205,6 +206,8 @@ namespace
         constexpr uint64_t sector_size = 512;
         return static_cast<uint64_t>(static_cast<double>((current - previous) * sector_size) / elapsed_seconds);
     }
+
+#endif
 
 } // namespace
 

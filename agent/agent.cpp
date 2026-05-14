@@ -229,8 +229,13 @@ void Agent::io_loop(std::stop_token st)
         if (items[0].revents & ZMQ_POLLIN)
         {
             zmq::message_t delim, payload;
-            dealer_.recv(delim, zmq::recv_flags::none);
-            dealer_.recv(payload, zmq::recv_flags::none);
+            const auto delim_size = dealer_.recv(delim, zmq::recv_flags::none);
+            const auto payload_size = dealer_.recv(payload, zmq::recv_flags::none);
+            if (!delim_size || !payload_size)
+            {
+                LOG_WARNING("Agent failed to receive a complete server frame");
+                continue;
+            }
             try
             {
                 auto frame = proto::decode_frame(payload.data(), payload.size());

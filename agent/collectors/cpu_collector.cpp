@@ -107,6 +107,8 @@ namespace
 
 #endif
 
+#if defined(__linux__) || defined(_WIN32)
+
     double percent_from_delta(uint64_t previous_idle, uint64_t previous_total, uint64_t current_idle,
                               uint64_t current_total)
     {
@@ -119,6 +121,8 @@ namespace
         const auto idle_delta = static_cast<double>(current_idle - previous_idle);
         return total_delta > 0.0 ? 100.0 * (total_delta - idle_delta) / total_delta : 0.0;
     }
+
+#endif
 
 } // namespace
 
