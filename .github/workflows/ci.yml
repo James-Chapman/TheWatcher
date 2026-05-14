@@ -66,11 +66,26 @@ jobs:
         run: ./meson-build-linux.sh
 
       - name: Archive build output
+        id: upload-linux-build
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-linux
           path: builddir-release/
+
+      - name: Publish build download link
+        if: always()
+        env:
+          ARTIFACT_URL: ${{ steps.upload-linux-build.outputs.artifact-url }}
+        run: |
+          {
+            echo "### Build artifact"
+            if [ -n "${ARTIFACT_URL}" ]; then
+              echo "- [Download Linux build output](${ARTIFACT_URL})"
+            else
+              echo "- Linux build output artifact was not uploaded."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Windows ────────────────────────────────────────────────────────────────
   windows:
@@ -103,11 +118,25 @@ jobs:
         shell: cmd
 
       - name: Archive build output
+        id: upload-windows-build
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-windows
           path: builddir-release/
+
+      - name: Publish build download link
+        if: always()
+        shell: pwsh
+        env:
+          ARTIFACT_URL: ${{ steps.upload-windows-build.outputs.artifact-url }}
+        run: |
+          "### Build artifact" >> $env:GITHUB_STEP_SUMMARY
+          if ($env:ARTIFACT_URL) {
+            "- [Download Windows build output]($env:ARTIFACT_URL)" >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "- Windows build output artifact was not uploaded." >> $env:GITHUB_STEP_SUMMARY
+          }
 
   # ── FreeBSD ────────────────────────────────────────────────────────────────
   freebsd:
@@ -190,11 +219,44 @@ jobs:
           prepare: |
             pkg install -y cmake ninja meson pkgconf python3
           run: |
+            set +e
             sh ./meson-build-bsd.sh
+            status=$?
+            echo "$status" > .freebsd-build-exit-code
+            exit 0
 
       - name: Archive build output
+        id: upload-freebsd-build
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-freebsd
           path: builddir-release/
+
+      - name: Publish build download link
+        if: always()
+        env:
+          ARTIFACT_URL: ${{ steps.upload-freebsd-build.outputs.artifact-url }}
+        run: |
+          {
+            echo "### Build artifact"
+            if [ -n "${ARTIFACT_URL}" ]; then
+              echo "- [Download FreeBSD build output](${ARTIFACT_URL})"
+            else
+              echo "- FreeBSD build output artifact was not uploaded."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail FreeBSD build if build/test failed
+        if: always()
+        run: |
+          if [ ! -f .freebsd-build-exit-code ]; then
+            echo "FreeBSD build status file was not copied back from the VM."
+            exit 1
+          fi
+
+          status=$(cat .freebsd-build-exit-code)
+          if [ "$status" != "0" ]; then
+            echo "FreeBSD build/test failed with exit code $status."
+            exit "$status"
+          fi

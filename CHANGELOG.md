@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-05-14
+
+### Changed
+- Added GitHub Actions job-summary download links for archived Linux,
+  Windows, and FreeBSD build output artifacts.
+
 ## [0.7.4] - 2026-05-14
 
 ### Changed
