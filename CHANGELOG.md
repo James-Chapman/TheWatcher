@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-14
+
+### Fixed
+- Fixed pending enrollment Approve and Reject actions from dashboard origins
+  that share the API host or loopback machine but use a different port. The API
+  now emits credentialed CORS headers for those allowed origins while continuing
+  to reject arbitrary cross-site unsafe requests.
+
 ## [0.7.0] - 2026-05-14
 
 ### Added

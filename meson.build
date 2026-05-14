@@ -1,7 +1,7 @@
 project(
   'thewatcher',
   ['c', 'cpp'],
-  version: '0.7.0',
+  version: '0.7.1',
   default_options: [
     'cpp_std=c++20',
     'default_library=static',

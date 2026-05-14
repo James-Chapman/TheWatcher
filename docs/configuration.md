@@ -162,10 +162,13 @@ group: Admins
 Passwords are stored as libsodium password hashes, not plaintext. Sessions are
 stored in SQLite and returned to the browser as HTTP-only `tw_session` cookies.
 Unsafe authenticated API requests that include an `Origin` or `Referer` header
-must match the request `Host`; cross-origin browser writes are rejected with
-HTTP 403. API responses also send baseline browser hardening headers including
-`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
-`Cache-Control: no-store`, and a restrictive Content Security Policy.
+must come from the API host or a loopback dashboard origin; other cross-origin
+browser writes are rejected with HTTP 403. Allowed dashboard origins receive
+credentialed CORS response headers so local dashboard/API port splits work
+without weakening arbitrary cross-site writes. API responses also send baseline
+browser hardening headers including `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Cache-Control: no-store`, and a restrictive Content
+Security Policy.
 
 Roles:
 

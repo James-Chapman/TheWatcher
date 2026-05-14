@@ -362,14 +362,29 @@ namespace
         });
     }
 
-    std::optional<std::string> normalize_authority(const std::string& authority)
+    std::optional<std::string> authority_host(const std::string& authority)
     {
         if (authority.empty() || contains_forbidden_authority_char(authority))
             return std::nullopt;
-        return lowercase_ascii(authority);
+        if (authority.front() == '[')
+        {
+            const auto close = authority.find(']');
+            if (close == std::string::npos)
+                return std::nullopt;
+            return lowercase_ascii(authority.substr(1, close - 1));
+        }
+
+        const auto first_colon = authority.find(':');
+        const auto last_colon = authority.rfind(':');
+        if (first_colon != last_colon)
+            return std::nullopt;
+        const auto host = first_colon == std::string::npos ? authority : authority.substr(0, first_colon);
+        if (host.empty())
+            return std::nullopt;
+        return lowercase_ascii(host);
     }
 
-    std::optional<std::string> origin_authority(const std::string& origin)
+    std::optional<std::string> origin_host(const std::string& origin)
     {
         const auto scheme_end = origin.find("://");
         if (scheme_end == std::string::npos)
@@ -379,7 +394,34 @@ namespace
         const auto authority_end = origin.find_first_of("/?#", authority_start);
         const auto authority = origin.substr(
             authority_start, authority_end == std::string::npos ? std::string::npos : authority_end - authority_start);
-        return normalize_authority(authority);
+        return authority_host(authority);
+    }
+
+    bool is_loopback_host(const std::string& host)
+    {
+        return host == "localhost" || host == "localhost." || host == "::1" || host.rfind("127.", 0) == 0;
+    }
+
+    bool allows_browser_origin(const httplib::Request& req, const std::string& origin)
+    {
+        const auto request_host = origin_host(origin);
+        const auto api_host = authority_host(req.get_header_value("Host"));
+        if (!request_host || !api_host)
+            return false;
+        return *request_host == *api_host || (is_loopback_host(*request_host) && is_loopback_host(*api_host));
+    }
+
+    void apply_browser_origin_headers(const httplib::Request& req, httplib::Response& res)
+    {
+        const auto origin = req.get_header_value("Origin");
+        if (origin.empty() || !allows_browser_origin(req, origin))
+            return;
+
+        res.set_header("Access-Control-Allow-Origin", origin);
+        res.set_header("Access-Control-Allow-Credentials", "true");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.set_header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+        res.set_header("Vary", "Origin");
     }
 
     bool rejects_unsafe_browser_origin(const httplib::Request& req)
@@ -393,9 +435,7 @@ namespace
         if (origin.empty())
             return false;
 
-        const auto request_authority = origin_authority(origin);
-        const auto host_authority = normalize_authority(req.get_header_value("Host"));
-        return !request_authority || !host_authority || *request_authority != *host_authority;
+        return !allows_browser_origin(req, origin);
     }
 
     std::string hash_password(const std::string& password)
@@ -566,6 +606,9 @@ void ApiServer::setup_routes()
 
     http_->Options(R"(.*)", [](const httplib::Request&, httplib::Response& res) {
         res.status = 204;
+    });
+    http_->set_post_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+        apply_browser_origin_headers(req, res);
     });
 
     http_->Post("/api/login", [this](const httplib::Request& req, httplib::Response& res) {
