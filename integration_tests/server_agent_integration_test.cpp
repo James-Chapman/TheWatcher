@@ -1314,6 +1314,43 @@ SCENARIO("Session and login API enforces authentication and provides accurate se
                     REQUIRE(res->status == 401);
                 }
             }
+
+            AND_WHEN("a browser sends an unsafe authenticated request from another origin")
+            {
+                httplib::Headers headers{
+                    {"Origin", "http://evil.example"}
+                };
+                const auto res =
+                    fx.client.Post("/api/groups", headers, R"({"name":"Cross Origin"})", "application/json");
+
+                THEN("the server rejects the request before it changes state")
+                {
+                    REQUIRE(res);
+                    REQUIRE(res->status == 403);
+
+                    const auto groups = get_json(fx.client, "/api/groups");
+                    REQUIRE(groups.has_value());
+                    for (const auto& group : *groups)
+                    {
+                        REQUIRE(group["name"].get<std::string>() != "Cross Origin");
+                    }
+                }
+            }
+
+            AND_WHEN("the same authenticated request comes from the API host origin")
+            {
+                httplib::Headers headers{
+                    {"Origin", "http://127.0.0.1:" + std::to_string(fx.config.api_port)}
+                };
+                const auto res = fx.client.Post("/api/groups", headers, R"({"name":"Same Origin"})",
+                                                "application/json");
+
+                THEN("the server allows it")
+                {
+                    REQUIRE(res);
+                    REQUIRE(res->status == 200);
+                }
+            }
         }
 
         WHEN("login is attempted with the wrong password")

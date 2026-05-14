@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-14
+
+### Added
+- Added `docs/threat-model.md` covering assets, trust boundaries, STRIDE-style
+  threats, mitigations, and residual risks for the dashboard, API, agents,
+  database, configuration files, and outbound webhooks.
+- Added direct BDD coverage for webhook URL validation, oversized config input,
+  and cross-origin authenticated browser write rejection.
+
+### Changed
+- Hardened REST API responses with baseline browser security headers and reject
+  unsafe authenticated requests when `Origin` or `Referer` does not match
+  `Host`.
+- Replaced duplicated alert/report webhook URL parsing with a shared validator
+  that rejects localhost, private, link-local, multicast, malformed authority,
+  userinfo, invalid-port, and non-HTTP targets before making outbound requests.
+- Bounded server and agent KEY=VALUE config parsing to reject files above 1 MiB
+  or individual lines above 8 KiB before applying settings.
+
 ## [0.6.0] - 2026-05-13
 
 ### Added

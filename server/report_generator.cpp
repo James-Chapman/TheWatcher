@@ -2,72 +2,16 @@
 
 #include "common/SingleLog.hpp"
 #include "status_engine.hpp"
+#include "webhook_security.hpp"
 
 #include <algorithm>
+
 #include <httplib.h>
-#include <string_view>
 
 namespace thewatcher::server
 {
 
 using json = nlohmann::json;
-
-namespace
-{
-    // Reuses the same private-host guard as status_engine.cpp.
-    bool is_report_private_host(const std::string& host)
-    {
-        if (host == "localhost" || host == "::1" || host == "[::1]")
-            return true;
-        auto starts = [&](const char* p) { return host.rfind(p, 0) == 0; };
-        if (starts("127.") || starts("10.") || starts("192.168.") || starts("169.254.") || starts("0."))
-            return true;
-        if (starts("172."))
-        {
-            const auto dot2 = host.find('.', 4);
-            if (dot2 != std::string::npos)
-            {
-                const int octet = std::stoi(host.substr(4, dot2 - 4));
-                if (octet >= 16 && octet <= 31)
-                    return true;
-            }
-        }
-        return false;
-    }
-
-    struct WebhookTarget
-    {
-        std::string host;
-        int port = 80;
-        std::string path = "/";
-    };
-
-    std::optional<WebhookTarget> parse_webhook(const std::string& url)
-    {
-        constexpr std::string_view prefix = "http://";
-        if (url.rfind(prefix, 0) != 0)
-            return std::nullopt;
-        auto rest = url.substr(prefix.size());
-        auto slash = rest.find('/');
-        auto host_port = slash == std::string::npos ? rest : rest.substr(0, slash);
-        WebhookTarget t;
-        t.path = slash == std::string::npos ? "/" : rest.substr(slash);
-        auto colon = host_port.rfind(':');
-        if (colon != std::string::npos)
-        {
-            t.host = host_port.substr(0, colon);
-            t.port = std::stoi(host_port.substr(colon + 1));
-        }
-        else
-        {
-            t.host = host_port;
-        }
-        if (t.host.empty() || is_report_private_host(t.host))
-            return std::nullopt;
-        return t;
-    }
-
-} // namespace
 
 json build_report_json(Store& store, int64_t now_ms)
 {
@@ -118,8 +62,9 @@ json build_report_json(Store& store, int64_t now_ms)
     sorted_agents.reserve(agent_age_map.size());
     for (auto& [id, aa] : agent_age_map)
         sorted_agents.push_back(aa);
-    std::sort(sorted_agents.begin(), sorted_agents.end(),
-              [](const AgentAge& a, const AgentAge& b) { return a.oldest_alert_ms < b.oldest_alert_ms; });
+    std::sort(sorted_agents.begin(), sorted_agents.end(), [](const AgentAge& a, const AgentAge& b) {
+        return a.oldest_alert_ms < b.oldest_alert_ms;
+    });
     if (sorted_agents.size() > 5)
         sorted_agents.resize(5);
 
@@ -132,20 +77,28 @@ json build_report_json(Store& store, int64_t now_ms)
     for (const auto& aa : sorted_agents)
     {
         const int64_t age_seconds = (now_ms - aa.oldest_alert_ms) / 1000;
-        top5.push_back({{"agent_id", aa.agent_id},
-                        {"name", agent_names.count(aa.agent_id) ? agent_names.at(aa.agent_id) : aa.agent_id},
-                        {"alert_count", aa.alert_count},
-                        {"oldest_alert_age_seconds", age_seconds}});
+        top5.push_back({
+            {"agent_id",                 aa.agent_id                                                               },
+            {"name",                     agent_names.count(aa.agent_id) ? agent_names.at(aa.agent_id) : aa.agent_id},
+            {"alert_count",              aa.alert_count                                                            },
+            {"oldest_alert_age_seconds", age_seconds                                                               }
+        });
     }
 
-    return json{{"generated_at", now_ms},
-                {"agents",
-                 {{"total", total}, {"online", total - offline - maintenance}, {"offline", offline},
-                  {"maintenance", maintenance}}},
-                {"alerts",
-                 {{"total", static_cast<int>(alerts.size())}, {"red", red_count}, {"amber", amber_count},
-                  {"yellow", yellow_count}}},
-                {"top_agents_by_alert_age", top5}};
+    return json{
+        {"generated_at",            now_ms},
+        {"agents",
+         {{"total", total},
+          {"online", total - offline - maintenance},
+          {"offline", offline},
+          {"maintenance", maintenance}}   },
+        {"alerts",
+         {{"total", static_cast<int>(alerts.size())},
+          {"red", red_count},
+          {"amber", amber_count},
+          {"yellow", yellow_count}}       },
+        {"top_agents_by_alert_age", top5  }
+    };
 }
 
 bool generate_and_send_report(Store& store, int64_t now_ms)
@@ -157,7 +110,7 @@ bool generate_and_send_report(Store& store, int64_t now_ms)
         return false;
     }
 
-    const auto target = parse_webhook(webhook_url);
+    const auto target = parse_webhook_url(webhook_url);
     if (!target)
     {
         LOGF_WARNING("Reports: invalid or private webhook URL: %s", webhook_url.c_str());

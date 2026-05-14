@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 namespace fs = std::filesystem;
 using namespace thewatcher::agent;
@@ -182,6 +183,49 @@ SCENARIO("Loading an existing config file does not regenerate the agent id or ke
 }
 
 // ── Platform helpers ──────────────────────────────────────────────────────────
+
+SCENARIO("AgentConfig rejects oversized KEY=VALUE config input")
+{
+    GIVEN("an existing agent config with a line above the supported size")
+    {
+        auto path = fs::temp_directory_path() / "TheWatcherAgent-too-long-line.conf";
+        fs::remove(path);
+        {
+            std::ofstream f(path);
+            f << std::string(9 * 1024, 'A') << "\n";
+        }
+
+        WHEN("the config is loaded")
+        {
+            THEN("the parser rejects the line before applying settings")
+            {
+                REQUIRE_THROWS(AgentConfig::load_or_create(path));
+            }
+        }
+
+        fs::remove(path);
+    }
+
+    GIVEN("an existing agent config file above the supported size")
+    {
+        auto path = fs::temp_directory_path() / "TheWatcherAgent-too-large.conf";
+        fs::remove(path);
+        {
+            std::ofstream f(path);
+            f << std::string((1024 * 1024) + 1, 'A');
+        }
+
+        WHEN("the config is loaded")
+        {
+            THEN("the parser rejects the file before reading settings")
+            {
+                REQUIRE_THROWS(AgentConfig::load_or_create(path));
+            }
+        }
+
+        fs::remove(path);
+    }
+}
 
 SCENARIO("get_hostname returns a non-empty string")
 {

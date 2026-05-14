@@ -9,10 +9,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <unordered_set>
 
 #include <httplib.h>
@@ -340,6 +342,62 @@ namespace
         return ct.find("application/json") != std::string::npos;
     }
 
+    bool is_unsafe_method(const std::string& method)
+    {
+        return method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE";
+    }
+
+    std::string lowercase_ascii(std::string value)
+    {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return value;
+    }
+
+    bool contains_forbidden_authority_char(const std::string& authority)
+    {
+        return std::any_of(authority.begin(), authority.end(), [](unsigned char ch) {
+            return std::isspace(ch) || ch == '/' || ch == '\\' || ch == '@';
+        });
+    }
+
+    std::optional<std::string> normalize_authority(const std::string& authority)
+    {
+        if (authority.empty() || contains_forbidden_authority_char(authority))
+            return std::nullopt;
+        return lowercase_ascii(authority);
+    }
+
+    std::optional<std::string> origin_authority(const std::string& origin)
+    {
+        const auto scheme_end = origin.find("://");
+        if (scheme_end == std::string::npos)
+            return std::nullopt;
+
+        const auto authority_start = scheme_end + 3;
+        const auto authority_end = origin.find_first_of("/?#", authority_start);
+        const auto authority = origin.substr(
+            authority_start, authority_end == std::string::npos ? std::string::npos : authority_end - authority_start);
+        return normalize_authority(authority);
+    }
+
+    bool rejects_unsafe_browser_origin(const httplib::Request& req)
+    {
+        if (!is_unsafe_method(req.method))
+            return false;
+
+        auto origin = req.get_header_value("Origin");
+        if (origin.empty())
+            origin = req.get_header_value("Referer");
+        if (origin.empty())
+            return false;
+
+        const auto request_authority = origin_authority(origin);
+        const auto host_authority = normalize_authority(req.get_header_value("Host"));
+        return !request_authority || !host_authority || *request_authority != *host_authority;
+    }
+
     std::string hash_password(const std::string& password)
     {
         char hash[crypto_pwhash_STRBYTES] = {};
@@ -409,6 +467,15 @@ std::optional<SessionRecord> ApiServer::current_session(const httplib::Request& 
 std::optional<SessionRecord> ApiServer::require_role(const httplib::Request& req, httplib::Response& res,
                                                      const std::string& role)
 {
+    if (rejects_unsafe_browser_origin(req))
+    {
+        res.status = 403;
+        set_json(res, json{
+                          {"error", "cross-origin request rejected"}
+        });
+        return std::nullopt;
+    }
+
     auto session = current_session(req);
     if (!session)
     {
@@ -489,12 +556,13 @@ void ApiServer::setup_routes()
 {
     LOG_FUNCTION_TRACE
     http_->set_default_headers({
-        {"Access-Control-Allow-Origin",      "*"                      },
-        {"Access-Control-Allow-Credentials", "true"                   },
-        {"Access-Control-Allow-Headers",     "Content-Type"           },
-        {"Access-Control-Allow-Methods",     "GET,POST,DELETE,OPTIONS"}
+        {"Cache-Control",           "no-store"                                  },
+        {"Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"},
+        {"Referrer-Policy",         "no-referrer"                               },
+        {"X-Content-Type-Options",  "nosniff"                                   },
+        {"X-Frame-Options",         "DENY"                                      }
     });
-    LOG_DEBUG("Default CORS headers configured");
+    LOG_DEBUG("Default HTTP security headers configured");
 
     http_->Options(R"(.*)", [](const httplib::Request&, httplib::Response& res) {
         res.status = 204;
@@ -591,6 +659,15 @@ void ApiServer::setup_routes()
     });
 
     http_->Post("/api/logout", [this](const httplib::Request& req, httplib::Response& res) {
+        if (rejects_unsafe_browser_origin(req))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "cross-origin request rejected"}
+            });
+            return;
+        }
+
         auto token = cookie_value(req, "tw_session");
         if (!token.empty())
             store_.delete_session(token);

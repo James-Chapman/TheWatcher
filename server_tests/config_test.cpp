@@ -1,6 +1,7 @@
 #include "../server/config.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -203,6 +204,45 @@ SCENARIO("Server config round-trips through save and reload")
                 REQUIRE(reloaded.offline_after_seconds == original.offline_after_seconds);
                 REQUIRE(reloaded.server_public_key == original.server_public_key);
                 REQUIRE(reloaded.server_secret_key == original.server_secret_key);
+            }
+        }
+    }
+}
+
+SCENARIO("Server config rejects oversized KEY=VALUE config input")
+{
+    GIVEN("an existing server config with a line above the supported size")
+    {
+        auto dir = unique_temp_dir("server-config-too-long-line");
+        auto path = dir / "server.conf";
+        {
+            std::ofstream f(path);
+            f << std::string(9 * 1024, 'A') << "\n";
+        }
+
+        WHEN("the config is loaded")
+        {
+            THEN("the parser rejects the line before applying settings")
+            {
+                REQUIRE_THROWS(ServerConfig::load_or_create(path));
+            }
+        }
+    }
+
+    GIVEN("an existing server config file above the supported size")
+    {
+        auto dir = unique_temp_dir("server-config-too-large");
+        auto path = dir / "server.conf";
+        {
+            std::ofstream f(path);
+            f << std::string((1024 * 1024) + 1, 'A');
+        }
+
+        WHEN("the config is loaded")
+        {
+            THEN("the parser rejects the file before reading settings")
+            {
+                REQUIRE_THROWS(ServerConfig::load_or_create(path));
             }
         }
     }

@@ -16,7 +16,8 @@ Linux/BSD: /etc/thewatcher/TheWatcherServer.conf
 
 The server uses `--config <path>` when provided. Otherwise it uses the platform
 default path. If the file does not exist, the server creates it and generates a
-CURVE keypair.
+CURVE keypair. Existing config files above 1 MiB, or with any single line above
+8 KiB, are rejected before settings are applied.
 
 Example:
 
@@ -59,7 +60,7 @@ dedicated dashboard controls exist.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `notifications.webhook_url` | empty | Optional HTTP webhook URL. The server posts alert JSON when an alert is generated. `http://` URLs are supported by the current build. |
+| `notifications.webhook_url` | empty | Optional HTTP webhook URL. The server posts alert JSON when an alert is generated. `http://` URLs are supported by the current build. Localhost, private, link-local, multicast, malformed authority, userinfo, and invalid-port targets are rejected before sending. |
 
 ## Per-Agent Collector Configuration
 
@@ -160,6 +161,11 @@ group: Admins
 
 Passwords are stored as libsodium password hashes, not plaintext. Sessions are
 stored in SQLite and returned to the browser as HTTP-only `tw_session` cookies.
+Unsafe authenticated API requests that include an `Origin` or `Referer` header
+must match the request `Host`; cross-origin browser writes are rejected with
+HTTP 403. API responses also send baseline browser hardening headers including
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Cache-Control: no-store`, and a restrictive Content Security Policy.
 
 Roles:
 
@@ -193,6 +199,8 @@ Linux/BSD: ~/.config/thewatcher/TheWatcherAgent.conf
 
 Use `--config <path>` for services and repeatable deployments. If the file does
 not exist, the agent creates it and generates an agent id plus CURVE keypair.
+Existing config files above 1 MiB, or with any single line above 8 KiB, are
+rejected before settings are applied.
 
 Minimal example:
 
