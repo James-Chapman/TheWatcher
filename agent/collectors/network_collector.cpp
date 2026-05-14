@@ -13,9 +13,12 @@
 #include <vector>
 
 #ifdef _WIN32
-#include <iphlpapi.h>
+// clang-format off
 #include <winsock2.h>
+#include <windows.h>
+#include <iphlpapi.h>
 #include <ws2tcpip.h>
+// clang-format on
 #endif
 
 namespace thewatcher::agent
@@ -128,7 +131,6 @@ namespace
 #ifdef _WIN32
     struct WindowsAdapterInfo
     {
-        uint64_t luid = 0;
         unsigned long if_index = 0;
         std::string name;
         std::string description;
@@ -199,7 +201,6 @@ namespace
         for (auto* adapter = adapters; adapter != nullptr; adapter = adapter->Next)
         {
             WindowsAdapterInfo info;
-            info.luid = adapter->Luid.Value;
             info.if_index = adapter->IfIndex;
             info.name = wide_to_utf8(adapter->FriendlyName);
             info.description = wide_to_utf8(adapter->Description);
@@ -260,38 +261,32 @@ void NetworkCollector::update(SystemMetrics& metrics)
     const auto now = std::chrono::steady_clock::now();
     for (const auto& adapter : adapters)
     {
-        MIB_IF_ROW2 row{};
-        row.InterfaceLuid.Value = adapter.luid;
-        if (::GetIfEntry2(&row) != NO_ERROR)
-        {
-            MIB_IF_ROW2 row_by_index{};
-            row_by_index.InterfaceIndex = adapter.if_index;
-            if (::GetIfEntry2(&row_by_index) != NO_ERROR)
-                continue;
-            row = row_by_index;
-        }
+        MIB_IFROW row{};
+        row.dwIndex = adapter.if_index;
+        if (::GetIfEntry(&row) != NO_ERROR)
+            continue;
 
         NetworkMetrics network;
         network.interface_name = adapter.name;
         network.ip_address = adapter.ip_address;
-        network.is_up = row.OperStatus == IfOperStatusUp;
-        network.errors_in = row.InErrors;
-        network.errors_out = row.OutErrors;
-        network.drops_in = row.InDiscards;
-        network.drops_out = row.OutDiscards;
+        network.is_up = row.dwOperStatus == IF_OPER_STATUS_OPERATIONAL;
+        network.errors_in = row.dwInErrors;
+        network.errors_out = row.dwOutErrors;
+        network.drops_in = row.dwInDiscards;
+        network.drops_out = row.dwOutDiscards;
 
-        const auto key = std::to_string(adapter.luid);
+        const auto key = std::to_string(adapter.if_index);
         auto previous = prev_.find(key);
         if (previous != prev_.end())
         {
             const auto elapsed = std::chrono::duration<double>(now - previous->second.sampled_at).count();
-            network.bytes_recv_per_sec = per_second(previous->second.rx_bytes, row.InOctets, elapsed);
-            network.bytes_sent_per_sec = per_second(previous->second.tx_bytes, row.OutOctets, elapsed);
-            network.packets_recv_per_sec = per_second(previous->second.rx_packets, row.InUcastPkts, elapsed);
-            network.packets_sent_per_sec = per_second(previous->second.tx_packets, row.OutUcastPkts, elapsed);
+            network.bytes_recv_per_sec = per_second(previous->second.rx_bytes, row.dwInOctets, elapsed);
+            network.bytes_sent_per_sec = per_second(previous->second.tx_bytes, row.dwOutOctets, elapsed);
+            network.packets_recv_per_sec = per_second(previous->second.rx_packets, row.dwInUcastPkts, elapsed);
+            network.packets_sent_per_sec = per_second(previous->second.tx_packets, row.dwOutUcastPkts, elapsed);
         }
 
-        prev_[key] = {row.InOctets, row.OutOctets, row.InUcastPkts, row.OutUcastPkts, now};
+        prev_[key] = {row.dwInOctets, row.dwOutOctets, row.dwInUcastPkts, row.dwOutUcastPkts, now};
         metrics.networks.push_back(std::move(network));
     }
     LOGF_TRACE("Windows network collector updated interfaces=%zu", metrics.networks.size());

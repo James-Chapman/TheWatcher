@@ -12,7 +12,7 @@ Current capabilities:
 - login/logout with SQLite-backed sessions;
 - monitoring view of agent health and latest metrics;
 - approved-agent-only monitoring;
-- pending enrollment approval/rejection with group assignment;
+- pending enrollment approval/rejection with group assignment on the Agents page;
 - hostname-based alert notifications and alert acknowledgement/delete workflow;
 - six-role user and group access control;
 - per-agent collector configuration for poll interval, process limit, CPU,
@@ -70,13 +70,15 @@ API calls.
 The Monitoring view shows approved agents only. It joins `/api/agents`,
 `/api/metrics`, and `/api/alerts/unacknowledged` by `agent_id`.
 
-Approved agents are grouped by their assigned group names. Administrators see
-all approved agents they can access, with each group rendered as a section
+Approved agents are grouped by their assigned group names. Global account types
+see all approved agents they can access, with each group rendered as a section
 heading above its agents. Agents that belong to multiple groups appear in each
 matching group section. Agents without an assigned or visible group appear in
-the `Ungrouped` section.
+the `Ungrouped` section. Group account types do not get cross-group filters or
+ungrouped options; the API only returns their assigned group data.
 
-The group filter can show all groups, a single group, or only ungrouped agents.
+The group filter can show all groups, a single group, or only ungrouped agents
+for global account types.
 
 Columns:
 
@@ -107,15 +109,29 @@ changes which users can see its alerts.
 
 ### Agents
 
-The Agents view manages approved agents only:
+The Agents view starts with Pending Enrollments for global operators and global
+admins, then shows Agent Management below it.
 
-- approved agents have a Configure button beside the agent identity;
+Pending enrollment rows show unapproved agents awaiting approval. Approving an
+agent accepts a list of group ids; rejecting an agent marks enrollment
+rejected. Approved/rejected buttons disappear from approved agent management
+because decided enrollments are no longer pending.
+
+Agent Management handles approved agents:
+
+- approved agents show command buttons, then Configure, then Delete;
+- approved agent identity shows the hostname, primary non-loopback IP address,
+  and agent id;
 - the Configure modal updates heartbeat interval, poll interval, process sample
   limit, group assignment, per-agent markdown runbook, CPU and memory absolute
   percentage thresholds, fixed disk thresholds, network interface Mbps
   thresholds, process watches, and consecutive-reading counts;
 - each Configure field has an info tooltip that describes the setting;
+- saving the Configure modal persists the whole collector config and closes the
+  modal on success;
 - disk rows are shown by mount point/path with device name in brackets;
+- disk and network rows stack the enable toggle, thresholds, and anomaly inputs
+  vertically for readability;
 - network thresholds are combined receive plus transmit megabits per second per
   selected interface;
 - process watches use exact executable names plus an expected process count;
@@ -123,15 +139,6 @@ The Agents view manages approved agents only:
   optional expiry timestamp;
 - approved agents can restart collectors, request status, or disconnect;
 - any agent row can be deleted.
-
-### Pending Enrollments
-
-The Pending Enrollments view is global-operator-or-admin only. It shows
-unapproved agents awaiting approval. Approving an agent accepts a list of group
-ids; rejecting an agent marks enrollment rejected. Approved/rejected buttons
-disappear from approved agent management because decided enrollments are no
-longer pending. Pending rows show the hostname as primary text and the IP
-address plus agent id as secondary text.
 
 ### Alerts
 
@@ -141,17 +148,20 @@ Monitoring alert dot is green unless the host has an unacknowledged alert, in
 which case it is red. Monitoring alert notifications and Alert rows show the
 known hostname as primary text and the agent id as smaller secondary text.
 Alert rows can display the agent's markdown runbook.
+The Runbook action opens a modal that renders the agent markdown as headings,
+paragraphs, lists, code blocks, and safe links.
 
 ### Users & Groups
 
-The Users & Groups view lists users, roles, groups, and state visible to the
-current user. Global admins can create groups and any role. Group admins can
-create users only inside their own groups and cannot assign global roles.
-Global and group operators have read-only user access.
+The Users & Groups view lists users, account Type values, groups, and state
+visible to the current user. Global admins can create groups and any account
+type. Group admins can create users only inside their own groups and cannot
+assign global account types. Global and group operators have read-only user
+access.
 
-Roles:
+Account types:
 
-| Role | Scope |
+| Type | Scope |
 | --- | --- |
 | `global_admin` | Full access to every agent, view, alert, setting, user, and group. |
 | `global_operator` | Full operational access; users and groups are read-only. |
@@ -163,9 +173,10 @@ Roles:
 ### Views
 
 The Views page supports group assignment when a view is created or edited.
-Global users can see all views. Group users see owned views, public views, and
-views assigned to their groups; agents inside a view are still filtered by the
-same agent visibility rules.
+Global account types can see all views and all group choices. Group account
+types only receive their assigned groups from the API and only see views
+assigned to those groups; public views from other groups are not returned.
+Agents inside a view are still filtered by the same agent visibility rules.
 
 ## API Contract
 

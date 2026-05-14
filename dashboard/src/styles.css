@@ -801,6 +801,10 @@ td {
 }
 
 .management-table th:nth-child(7) {
+  width: 8%;
+}
+
+.management-table th:nth-child(8) {
   width: 5%;
 }
 
@@ -831,6 +835,12 @@ td {
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+}
+
+.embedded-management {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
 }
 
 .button-row {
@@ -1005,8 +1015,8 @@ td {
 }
 
 .config-row {
-  grid-template-columns: minmax(180px, 1fr) minmax(360px, 1.4fr);
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -1234,10 +1244,23 @@ td {
 }
 
 .runbook-link {
-  font-size: 0.8em;
-  margin-left: 0.3em;
-  opacity: 0.8;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 0.4rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.86em;
+  cursor: pointer;
+  opacity: 0.9;
   white-space: nowrap;
+}
+
+.runbook-link:hover {
+  text-decoration: underline;
 }
 
 /* ── Acknowledge modal ──────────────────────────────────────────────────── */
@@ -1288,6 +1311,58 @@ td {
   min-height: 14rem;
   width: 100%;
   resize: vertical;
+}
+
+.runbook-modal {
+  width: min(760px, 100%);
+  max-height: min(82vh, 760px);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.runbook-body {
+  overflow: auto;
+  padding: 16px;
+}
+
+.runbook-markdown {
+  display: grid;
+  gap: 10px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.runbook-markdown h1,
+.runbook-markdown h2,
+.runbook-markdown h3,
+.runbook-markdown p,
+.runbook-markdown ul {
+  margin: 0;
+}
+
+.runbook-markdown h1 {
+  font-size: 20px;
+}
+
+.runbook-markdown h2 {
+  font-size: 16px;
+}
+
+.runbook-markdown h3 {
+  font-size: 14px;
+}
+
+.runbook-markdown ul {
+  padding-left: 20px;
+}
+
+.runbook-markdown pre {
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
 }
 
 .field-hint {

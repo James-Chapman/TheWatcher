@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-05-14
+
+### Changed
+- Moved Pending Enrollments into the top of the Agents page and reordered the
+  top navigation to Monitoring, Views, Alerts, Silences, Maintenance, Agents,
+  Users, and Settings.
+- Renamed dashboard user role presentation to account Type labels so account
+  type is visually distinct from group membership.
+- Tightened group-scoped API responses so group accounts only receive their
+  assigned groups and group-owned views, maintenance windows, and silences.
+- Alert rows now open the alerting agent's markdown runbook in a rendered
+  modal instead of showing raw markdown or linking to legacy runbook URLs.
+- The agent Configure modal now closes after a successful save, includes
+  tooltips on every configurable field, and stacks Disk/Network enablement,
+  threshold, and anomaly controls vertically.
+- Moved the Agent Management Configure action between Commands and Delete.
+
 ## [0.7.2] - 2026-05-14
 
 ### Fixed
