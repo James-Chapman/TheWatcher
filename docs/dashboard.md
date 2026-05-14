@@ -206,6 +206,9 @@ The dashboard consumes:
 | `GET /api/views/:id` | Read a visible view. |
 | `PUT /api/views/:id` | Update a view's name, agents, visibility, or group. |
 | `DELETE /api/views/:id` | Delete an editable view. |
+| `GET /api/runbooks` | List legacy global runbook links. |
+| `POST /api/runbooks` | Create a legacy global runbook link; `global_admin` only. |
+| `DELETE /api/runbooks/:id` | Delete a legacy global runbook link; `global_admin` only. |
 
 Agent rows include:
 

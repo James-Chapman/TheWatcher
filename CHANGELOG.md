@@ -31,6 +31,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - User and group management now follows the new role model: global admins can
   manage users and groups, global/group operators have read-only user access,
   and group admins can create users only inside their own groups.
+- Legacy global runbook create/delete endpoints now require `global_admin`
+  because those runbooks are consumed globally by alert generation.
 - Linux and BSD foreground agents now respond to `Ctrl+C` while waiting for
   enrollment retry loops.
 

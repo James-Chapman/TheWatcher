@@ -1684,5 +1684,54 @@ SCENARIO("Runbooks API supports CRUD and enforces role-based access")
                 REQUIRE(list->is_array());
             }
         }
+
+        WHEN("a group admin tries to mutate global runbooks")
+        {
+            const auto group = post_json(fx.client, "/api/groups",
+                                         {
+                                             {"name", "runbook-group"}
+            });
+            REQUIRE(group.has_value());
+            const auto group_id = (*group)["group_id"].get<int64_t>();
+
+            const auto user_body = json{
+                {"username",  "group_admin_rb"       },
+                {"password",  "adminpw!"             },
+                {"role",      "group_admin"          },
+                {"group_ids", json::array({group_id})}
+            };
+            REQUIRE(post_json(fx.client, "/api/users", user_body).has_value());
+
+            const auto created = post_json_created(fx.client, "/api/runbooks",
+                                                   {
+                                                       {"indicator", "cpu"                                 },
+                                                       {"status",    "red"                                 },
+                                                       {"url",       "https://wiki.example.com/cpu-runbook"},
+            });
+            REQUIRE(created.has_value());
+            const auto runbook_id = (*created)["runbook_id"].get<int64_t>();
+
+            httplib::Client group_admin("127.0.0.1", fx.config.api_port);
+            REQUIRE(login_as(group_admin, "group_admin_rb", "adminpw!"));
+
+            const auto create_res =
+                group_admin.Post("/api/runbooks",
+                                 json{
+                                     {"indicator", "memory"             },
+                                     {"status",    "red"                },
+                                     {"url",       "https://example.com"}
+            }
+                                     .dump(),
+                                 "application/json");
+            const auto delete_res = group_admin.Delete("/api/runbooks/" + std::to_string(runbook_id));
+
+            THEN("the server rejects create and delete with 403")
+            {
+                REQUIRE(create_res);
+                REQUIRE(create_res->status == 403);
+                REQUIRE(delete_res);
+                REQUIRE(delete_res->status == 403);
+            }
+        }
     }
 }

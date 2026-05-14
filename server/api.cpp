@@ -2458,9 +2458,17 @@ void ApiServer::setup_routes()
     http_->Post("/api/runbooks", [this](const httplib::Request& req, httplib::Response& res) {
         try
         {
-            auto session = require_role(req, res, "admin");
+            auto session = require_role(req, res, "viewer");
             if (!session)
                 return;
+            if (normalize_role(session->role) != "global_admin")
+            {
+                res.status = 403;
+                set_json(res, json{
+                                  {"error", "permission denied"}
+                });
+                return;
+            }
             if (!is_json_content_type(req))
             {
                 res.status = 415;
@@ -2501,9 +2509,17 @@ void ApiServer::setup_routes()
     http_->Delete("/api/runbooks/:id", [this](const httplib::Request& req, httplib::Response& res) {
         try
         {
-            auto session = require_role(req, res, "admin");
+            auto session = require_role(req, res, "viewer");
             if (!session)
                 return;
+            if (normalize_role(session->role) != "global_admin")
+            {
+                res.status = 403;
+                set_json(res, json{
+                                  {"error", "permission denied"}
+                });
+                return;
+            }
             const auto id = std::stoll(req.path_params.at("id"));
             store_.delete_runbook(id);
             set_json(res, json{
