@@ -993,6 +993,99 @@ SCENARIO("Group management API supports create and list with name validation")
 
 // ── Views API ─────────────────────────────────────────────────────────────────
 
+SCENARIO("Group scoped accounts only see their assigned group and views")
+{
+    GIVEN("a running server with two groups and an authenticated group operator in one group")
+    {
+        ServerFixture fx;
+        REQUIRE(fx.startup.wait().started);
+        REQUIRE(fx.login());
+
+        const auto ops_group = post_json(fx.client, "/api/groups",
+                                         {
+                                             {"name", "ops-visible"}
+        });
+        const auto db_group = post_json(fx.client, "/api/groups",
+                                        {
+                                            {"name", "db-hidden"}
+        });
+        REQUIRE(ops_group.has_value());
+        REQUIRE(db_group.has_value());
+        const auto ops_group_id = (*ops_group)["group_id"].get<int64_t>();
+        const auto db_group_id = (*db_group)["group_id"].get<int64_t>();
+
+        REQUIRE(post_json(fx.client, "/api/users",
+                          {
+                              {"username",  "ops_operator"             },
+                              {"password",  "operatorpw!"              },
+                              {"role",      "group_operator"           },
+                              {"group_ids", json::array({ops_group_id})}
+        })
+                    .has_value());
+
+        const auto ops_view = post_json_created(
+            fx.client, "/api/views",
+            {
+                {"name",      "Ops view"   },
+                {"is_public", true         },
+                {"group_id",  ops_group_id },
+                {"agent_ids", json::array()}
+        });
+        const auto db_view = post_json_created(
+            fx.client, "/api/views",
+            {
+                {"name",      "DB view"    },
+                {"is_public", true         },
+                {"group_id",  db_group_id  },
+                {"agent_ids", json::array()}
+        });
+        REQUIRE(ops_view.has_value());
+        REQUIRE(db_view.has_value());
+
+        httplib::Client ops("http://127.0.0.1:" + std::to_string(fx.config.api_port));
+        ops.set_connection_timeout(5, 0);
+        ops.set_read_timeout(5, 0);
+        REQUIRE(login_as(ops, "ops_operator", "operatorpw!"));
+
+        WHEN("the group operator lists groups")
+        {
+            const auto groups = get_json(ops, "/api/groups");
+
+            THEN("only the operator's assigned group is returned")
+            {
+                REQUIRE(groups.has_value());
+                REQUIRE(groups->size() == 1);
+                REQUIRE(groups->at(0)["group_id"].get<int64_t>() == ops_group_id);
+                REQUIRE(groups->at(0)["name"].get<std::string>() == "ops-visible");
+            }
+        }
+
+        WHEN("the group operator lists views")
+        {
+            const auto views = get_json(ops, "/api/views");
+
+            THEN("only views assigned to the operator's group are returned")
+            {
+                REQUIRE(views.has_value());
+                REQUIRE(views->size() == 1);
+                REQUIRE(views->at(0)["view_id"].get<int64_t>() == (*ops_view)["view_id"].get<int64_t>());
+                REQUIRE(views->at(0)["name"].get<std::string>() == "Ops view");
+            }
+        }
+
+        WHEN("the group operator opens a public view from another group")
+        {
+            const auto res = ops.Get("/api/views/" + std::to_string((*db_view)["view_id"].get<int64_t>()));
+
+            THEN("the server rejects access")
+            {
+                REQUIRE(res);
+                REQUIRE(res->status == 403);
+            }
+        }
+    }
+}
+
 SCENARIO("Views API supports full CRUD and enforces public/private visibility between users")
 {
     GIVEN("a running server with an authenticated admin")
@@ -1120,18 +1213,27 @@ SCENARIO("Views API supports full CRUD and enforces public/private visibility be
 
         WHEN("a public view is created another user can read it")
         {
+            const auto shared_group = post_json(fx.client, "/api/groups",
+                                                {
+                                                    {"name", "shared-view-group"}
+            });
+            REQUIRE(shared_group.has_value());
+            const auto shared_group_id = (*shared_group)["group_id"].get<int64_t>();
+
             const auto bob_result = post_json(fx.client, "/api/users",
                                               {
-                                                  {"username", "bob_view"    },
-                                                  {"password", "bobpw!"      },
-                                                  {"role",     "group_viewer"},
+                                                  {"username",  "bob_view"                    },
+                                                  {"password",  "bobpw!"                      },
+                                                  {"role",      "group_viewer"                },
+                                                  {"group_ids", json::array({shared_group_id})}
             });
             REQUIRE(bob_result.has_value());
 
             const auto created = post_json_created(fx.client, "/api/views",
                                                    {
-                                                       {"name",      "Public Fleet"},
-                                                       {"is_public", true          },
+                                                       {"name",      "Public Fleet" },
+                                                       {"is_public", true           },
+                                                       {"group_id",  shared_group_id},
             });
             REQUIRE(created.has_value());
             const auto view_id = (*created)["view_id"].get<int64_t>();

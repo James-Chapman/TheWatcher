@@ -616,6 +616,23 @@ namespace
         return normalize_role(role) == "global_admin";
     }
 
+    std::unordered_set<int64_t> user_group_set(Store& store, int64_t user_id)
+    {
+        std::unordered_set<int64_t> groups;
+        for (const auto group_id : store.get_user_groups(user_id))
+            groups.insert(group_id);
+        return groups;
+    }
+
+    bool group_visible_to_session(Store& store, const SessionRecord& session, int64_t group_id)
+    {
+        if (is_global_role(session.role))
+            return true;
+        if (group_id <= 0)
+            return false;
+        return user_group_set(store, session.user_id).contains(group_id);
+    }
+
     void set_json(httplib::Response& res, const json& body)
     {
         res.set_content(body.dump(), "application/json");
@@ -867,12 +884,16 @@ void ApiServer::setup_routes()
     // ── Agents ────────────────────────────────────────────────────────────────
 
     http_->Get("/api/groups", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "viewer"))
+        auto session = require_role(req, res, "viewer");
+        if (!session)
             return;
         auto groups = store_.list_groups();
         json arr = json::array();
         for (const auto& group : groups)
-            arr.push_back(group_to_json(group));
+        {
+            if (group_visible_to_session(store_, *session, group.group_id))
+                arr.push_back(group_to_json(group));
+        }
         set_json(res, arr);
     });
 
@@ -1952,12 +1973,16 @@ void ApiServer::setup_routes()
 
     // GET /api/maintenance-windows — list all maintenance windows
     http_->Get("/api/maintenance-windows", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "viewer"))
+        auto session = require_role(req, res, "viewer");
+        if (!session)
             return;
         auto windows = store_.list_maintenance_windows();
         json arr = json::array();
         for (const auto& w : windows)
-            arr.push_back(maintenance_window_to_json(w));
+        {
+            if (is_global_role(session->role) || (w.agent_id != "*" && can_access_agent(*session, w.agent_id)))
+                arr.push_back(maintenance_window_to_json(w));
+        }
         set_json(res, arr);
     });
 
@@ -1982,6 +2007,17 @@ void ApiServer::setup_routes()
             rec.start_ms = body.at("start_ms").get<int64_t>();
             rec.end_ms = body.at("end_ms").get<int64_t>();
             rec.reason = body.value("reason", std::string(""));
+            if (!is_global_role(session->role))
+            {
+                if (rec.agent_id == "*" || !can_access_agent(*session, rec.agent_id))
+                {
+                    res.status = 403;
+                    set_json(res, json{
+                                      {"error", "maintenance window is outside the user's groups"}
+                    });
+                    return;
+                }
+            }
             if (rec.reason.size() > 1024)
                 throw std::runtime_error("reason must be 1024 characters or fewer");
             rec.created_by = session->username;
@@ -2004,11 +2040,33 @@ void ApiServer::setup_routes()
 
     // DELETE /api/maintenance-windows/:id — delete a maintenance window
     http_->Delete("/api/maintenance-windows/:id", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "operator"))
+        auto session = require_role(req, res, "operator");
+        if (!session)
             return;
         try
         {
             const auto window_id = std::stoll(req.path_params.at("id"));
+            if (!is_global_role(session->role))
+            {
+                bool allowed = false;
+                for (const auto& window : store_.list_maintenance_windows())
+                {
+                    if (window.window_id == window_id && window.agent_id != "*" &&
+                        can_access_agent(*session, window.agent_id))
+                    {
+                        allowed = true;
+                        break;
+                    }
+                }
+                if (!allowed)
+                {
+                    res.status = 403;
+                    set_json(res, json{
+                                      {"error", "maintenance window is outside the user's groups"}
+                    });
+                    return;
+                }
+            }
             store_.delete_maintenance_window(window_id);
             set_json(res, json{
                               {"ok", true}
@@ -2372,12 +2430,16 @@ void ApiServer::setup_routes()
 
     // GET /api/silences — list active and future silence rules (operator+)
     http_->Get("/api/silences", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "operator"))
+        auto session = require_role(req, res, "operator");
+        if (!session)
             return;
         auto silences = store_.list_silences();
         json arr = json::array();
         for (const auto& s : silences)
-            arr.push_back(silence_to_json(s));
+        {
+            if (is_global_role(session->role) || (s.agent_id != "*" && can_access_agent(*session, s.agent_id)))
+                arr.push_back(silence_to_json(s));
+        }
         set_json(res, arr);
     });
 
@@ -2401,6 +2463,17 @@ void ApiServer::setup_routes()
             rec.agent_id = body.value("agent_id", std::string("*"));
             rec.indicator = body.value("indicator", std::string("*"));
             rec.reason = body.value("reason", std::string(""));
+            if (!is_global_role(session->role))
+            {
+                if (rec.agent_id == "*" || !can_access_agent(*session, rec.agent_id))
+                {
+                    res.status = 403;
+                    set_json(res, json{
+                                      {"error", "silence is outside the user's groups"}
+                    });
+                    return;
+                }
+            }
             if (rec.reason.size() > 1024)
                 throw std::runtime_error("reason must be 1024 characters or fewer");
             rec.until_ms = body.at("until_ms").get<int64_t>();
@@ -2427,11 +2500,33 @@ void ApiServer::setup_routes()
 
     // DELETE /api/silences/:id — remove a silence rule (operator+)
     http_->Delete("/api/silences/:id", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "operator"))
+        auto session = require_role(req, res, "operator");
+        if (!session)
             return;
         try
         {
             const auto silence_id = std::stoll(req.path_params.at("id"));
+            if (!is_global_role(session->role))
+            {
+                bool allowed = false;
+                for (const auto& silence : store_.list_silences())
+                {
+                    if (silence.silence_id == silence_id && silence.agent_id != "*" &&
+                        can_access_agent(*session, silence.agent_id))
+                    {
+                        allowed = true;
+                        break;
+                    }
+                }
+                if (!allowed)
+                {
+                    res.status = 403;
+                    set_json(res, json{
+                                      {"error", "silence is outside the user's groups"}
+                    });
+                    return;
+                }
+            }
             store_.delete_silence(silence_id);
             set_json(res, json{
                               {"ok", true}
@@ -2496,7 +2591,10 @@ void ApiServer::setup_routes()
             auto rows = store_.list_views(is_global_role(session->role) ? 0 : session->user_id);
             json arr = json::array();
             for (const auto& v : rows)
-                arr.push_back(view_to_json(v));
+            {
+                if (group_visible_to_session(store_, *session, v.group_id))
+                    arr.push_back(view_to_json(v));
+            }
             set_json(res, arr);
         }
         catch (const std::exception& e)
@@ -2566,9 +2664,7 @@ void ApiServer::setup_routes()
                 });
                 return;
             }
-            auto groups = store_.get_user_groups(session->user_id);
-            const auto in_group = std::find(groups.begin(), groups.end(), v->group_id) != groups.end();
-            if (!v->is_public && v->owner_user_id != session->user_id && !is_global_role(session->role) && !in_group)
+            if (!group_visible_to_session(store_, *session, v->group_id))
             {
                 res.status = 403;
                 set_json(res, json{

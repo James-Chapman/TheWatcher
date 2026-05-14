@@ -130,8 +130,8 @@ Collector fields:
 validated independently from `collection_interval`; valid values are 1 through
 60, and the default is 5. `group_ids` is accepted only from global roles and
 replaces the approved agent's group membership. `runbook_markdown` stores the
-agent-specific markdown runbook displayed with alerts and edited from the
-Configure modal.
+agent-specific markdown runbook edited from the Configure modal and rendered in
+the Alerts page Runbook modal.
 
 Thresholds must be ordered `warning < degraded < critical`. Percent thresholds
 must be no higher than 100 for the critical level. Consecutive-reading counters
@@ -171,9 +171,9 @@ arbitrary cross-site writes. API responses also send baseline browser hardening
 headers including `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
 `Cache-Control: no-store`, and a restrictive Content Security Policy.
 
-Roles:
+Account types:
 
-| Role | Permissions |
+| Type | Permissions |
 | --- | --- |
 | `global_admin` | Full unrestricted access to all groups, agents, views, users, settings, and commands. |
 | `global_operator` | Same operational access as `global_admin`, but users and groups are read-only. |
@@ -182,10 +182,15 @@ Roles:
 | `group_operator` | Same group-scoped operational access as `group_admin`, but users are read-only. |
 | `group_viewer` | Read-only access to agents, views, alerts, metrics, and users visible through their groups. |
 
-Users can belong to multiple groups. Agents are assigned to groups on approval
-and global users can replace an approved agent's group membership from the
-agent Configure modal. Moving an agent to a different group also moves alert
-visibility to that new group.
+Users can belong to multiple groups. Global account types can list every group
+and group-scoped record. Group account types only receive their assigned groups
+from list APIs and cannot see other groups in dashboard drop-down lists, views,
+maintenance windows, or silence rules. Agents are assigned to groups on
+approval and global users can replace an approved agent's group membership from
+the agent Configure modal. Moving an agent to a different group also moves
+alert visibility to that new group. Group operators can create maintenance
+windows and silences only for agents inside their groups; global wildcard
+maintenance windows and silences are global-account-only operations.
 
 ## Agent Config
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { Archive, Check, CheckSquare, LogOut, Pause, Play, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Square, Trash2, X } from 'lucide-react';
+import { Archive, BookOpen, Check, CheckSquare, LogOut, Pause, Play, Plus, RefreshCw, RotateCw, Search, SlidersHorizontal, Square, Trash2, X } from 'lucide-react';
 import { canManageAgent, maintenanceAction, maintenanceActionLabel } from './agentActions';
 import {
   acknowledgeAlert,
@@ -81,11 +81,13 @@ import {
   toDisplayAlerts,
   type OverviewGroupFilter,
 } from './status';
+import { NAV_ITEMS, accountTypeLabel, parseMarkdownBlocks, safeMarkdownHref, type DashboardView } from './uiLogic';
 import './styles.css';
 
 const COMPONENT_LABELS = ['CPU', 'Memory', 'Disk', 'Network', 'Proc', 'Heartbeat'];
 
-type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users' | 'maintenance' | 'silences' | 'runbooks' | 'settings' | 'views';
+type View = DashboardView;
+type RunAction = (key: string, action: () => Promise<void>) => Promise<boolean>;
 
 function isGlobal(role: SessionInfo['role']): boolean {
   return role.startsWith('global_');
@@ -190,8 +192,10 @@ function Dashboard() {
         setError(null);
         await action();
         await refresh();
+        return true;
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Action failed');
+        return false;
       } finally {
         setBusyAction(null);
       }
@@ -218,22 +222,19 @@ function Dashboard() {
           THEWATCHER
         </div>
         <nav className="nav-tabs" aria-label="Dashboard views">
-          <Tab view={view} target="monitoring" setView={setView} label="Monitoring" />
-          <Tab view={view} target="views" setView={setView} label={`Views${customViews.length > 0 ? ` (${customViews.length})` : ''}`} />
-          <Tab view={view} target="agents" setView={setView} label="Agents" />
-          {global && operator ? <Tab view={view} target="pending" setView={setView} label="Pending" /> : null}
-          <Tab view={view} target="alerts" setView={setView} label="Alerts" />
-          {operator ? <Tab view={view} target="maintenance" setView={setView} label="Maintenance" /> : null}
-          {operator ? <Tab view={view} target="silences" setView={setView} label="Silences" /> : null}
-          <Tab view={view} target="users" setView={setView} label="Users" />
-          {global && operator ? <Tab view={view} target="settings" setView={setView} label="Settings" /> : null}
+          {NAV_ITEMS.map((item) => {
+            if (item.requiresOperator && !operator) return null;
+            if (item.requiresGlobalOperator && !(global && operator)) return null;
+            const label = item.view === 'views' ? `Views${customViews.length > 0 ? ` (${customViews.length})` : ''}` : item.label;
+            return <Tab key={item.view} view={view} target={item.view} setView={setView} label={label} />;
+          })}
         </nav>
         <div className="topbar-meta">
           <span>
             <strong>{loadedAt ? loadedAt.toUTCString().replace('GMT', 'UTC') : 'Not synced'}</strong>
           </span>
           <span>
-            {session.username} <strong>{session.role}</strong>
+            {session.username} <strong>{accountTypeLabel(session.role)}</strong>
           </span>
           <button className="icon-button" onClick={() => void refresh()} aria-label="Refresh dashboard">
             <RefreshCw size={14} />
@@ -295,6 +296,7 @@ function Dashboard() {
             expanded={expanded}
             groupFilter={overviewGroupFilter}
             groups={groups}
+            global={global}
             loading={loading}
             setExpanded={setExpanded}
             setGroupFilter={setOverviewGroupFilter}
@@ -322,6 +324,8 @@ function Dashboard() {
           loading={loading}
           operator={operator}
           onConfigure={setConfigAgentId}
+          pending={global && operator ? pending : []}
+          showPending={global && operator}
           runAction={runAction}
         />
       ) : null}
@@ -336,17 +340,14 @@ function Dashboard() {
           runAction={runAction}
         />
       ) : null}
-      {view === 'pending' ? (
-        <PendingEnrollments agents={pending} busyAction={busyAction} groups={groups} runAction={runAction} />
-      ) : null}
       {view === 'alerts' ? (
         <AlertsPage agents={agents} alerts={toDisplayAlerts(allAlerts, agents)} busyAction={busyAction} operator={operator} runAction={runAction} />
       ) : null}
       {view === 'maintenance' ? (
-        <MaintenanceWindowsPage agents={agents} busyAction={busyAction} groups={groups} operator={operator} runAction={runAction} windows={maintenanceWindows} />
+        <MaintenanceWindowsPage agents={agents} busyAction={busyAction} global={global} groups={groups} operator={operator} runAction={runAction} windows={maintenanceWindows} />
       ) : null}
       {view === 'silences' ? (
-        <SilencesPage agents={agents} busyAction={busyAction} operator={operator} runAction={runAction} silences={silences} />
+        <SilencesPage agents={agents} busyAction={busyAction} global={global} operator={operator} runAction={runAction} silences={silences} />
       ) : null}
       {view === 'users' ? <UsersPage busyAction={busyAction} groups={groups} runAction={runAction} session={session} users={users} /> : null}
       {view === 'settings' ? <SettingsPage runAction={runAction} /> : null}
@@ -412,6 +413,7 @@ function MonitoringTable({
   agents,
   error,
   expanded,
+  global,
   groupFilter,
   groups,
   loading,
@@ -421,6 +423,7 @@ function MonitoringTable({
   agents: DashboardAgent[];
   error: string | null;
   expanded: Set<string>;
+  global: boolean;
   groupFilter: OverviewGroupFilter;
   groups: GroupRecord[];
   loading: boolean;
@@ -454,19 +457,21 @@ function MonitoringTable({
       {!loading && agents.length === 0 ? <div className="banner">No approved agents are reporting yet.</div> : null}
       {!loading && agents.length > 0 && visibleAgentCount === 0 ? <div className="banner">No agents match this group filter.</div> : null}
 
-      <div className="overview-toolbar">
-        <label>
-          <SlidersHorizontal size={14} />
-          <span>Group</span>
-          <select value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}>
-            <option value="all">All groups</option>
-            {groups.map((group) => (
-              <option key={group.group_id} value={String(group.group_id)}>{group.name}</option>
-            ))}
-            <option value="ungrouped">Ungrouped</option>
-          </select>
-        </label>
-      </div>
+      {global ? (
+        <div className="overview-toolbar">
+          <label>
+            <SlidersHorizontal size={14} />
+            <span>Group</span>
+            <select value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}>
+              <option value="all">All groups</option>
+              {groups.map((group) => (
+                <option key={group.group_id} value={String(group.group_id)}>{group.name}</option>
+              ))}
+              <option value="ungrouped">Ungrouped</option>
+            </select>
+          </label>
+        </div>
+      ) : null}
 
       <div className="table-container">
         <table>
@@ -675,6 +680,8 @@ function AgentManagement({
   loading,
   onConfigure,
   operator,
+  pending,
+  showPending,
   runAction,
 }: {
   agents: DashboardAgent[];
@@ -684,7 +691,9 @@ function AgentManagement({
   loading: boolean;
   onConfigure: (agentId: string) => void;
   operator: boolean;
-  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  pending: DashboardAgent[];
+  showPending: boolean;
+  runAction: RunAction;
 }) {
   const [descDrafts, setDescDrafts] = React.useState<Record<string, string>>({});
 
@@ -692,6 +701,7 @@ function AgentManagement({
     <main className="table-wrap management-wrap">
       {error ? <div className="banner error">API error: {error}</div> : null}
       {loading ? <div className="banner">Loading dashboard data...</div> : null}
+      {showPending ? <PendingEnrollments agents={pending} busyAction={busyAction} groups={groups} runAction={runAction} /> : null}
       <div className="management-header"><h1>Agent Management</h1></div>
       <div className="table-container">
         <table className="management-table">
@@ -703,6 +713,7 @@ function AgentManagement({
               <th>Last Seen</th>
               <th>Groups</th>
               <th>Commands</th>
+              <th>Configure</th>
               <th>Delete</th>
             </tr>
           </thead>
@@ -716,13 +727,6 @@ function AgentManagement({
                   <td>
                     <div className="agent-config-cell">
                       <AgentIdentity id={agent.id} name={agent.name} secondary={`${agent.ipAddress || 'IP unknown'} / ${agent.id}`} />
-                      <ActionButton
-                        busy={busyAction === `${agent.id}:configure`}
-                        disabled={!manageable}
-                        icon={<SlidersHorizontal size={14} />}
-                        label="Configure"
-                        onClick={() => onConfigure(agent.id)}
-                      />
                       <div className="settings-grid desc-settings">
                         <input
                           disabled={!operator}
@@ -750,6 +754,15 @@ function AgentManagement({
                       <ActionButton busy={busyAction === `${agent.id}:restart`} disabled={!manageable} icon={<RotateCw size={14} />} label="Restart" onClick={() => runAction(`${agent.id}:restart`, () => restartAgentCollectors(agent.id))} />
                       <ActionButton busy={busyAction === `${agent.id}:status`} disabled={!manageable} icon={<Search size={14} />} label="Status" onClick={() => runAction(`${agent.id}:status`, () => requestAgentStatus(agent.id))} />
                     </div>
+                  </td>
+                  <td>
+                    <ActionButton
+                      busy={busyAction === `${agent.id}:configure`}
+                      disabled={!manageable}
+                      icon={<SlidersHorizontal size={14} />}
+                      label="Configure"
+                      onClick={() => onConfigure(agent.id)}
+                    />
                   </td>
                   <td><ActionButton busy={busyAction === `${agent.id}:delete`} danger disabled={!manageable} icon={<Trash2 size={14} />} label="Delete" onClick={() => runAction(`${agent.id}:delete`, () => deleteAgent(agent.id))} /></td>
                 </tr>
@@ -833,7 +846,7 @@ function AgentConfigModal({
   groups: GroupRecord[];
   onClose: () => void;
   operator: boolean;
-  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  runAction: RunAction;
 }) {
   // Snapshot the agent locally. The parent polls every 5s and rebuilds
   // `agents` with new object references, which would otherwise re-render
@@ -896,7 +909,9 @@ function AgentConfigModal({
         className="config-modal"
         onSubmit={(event) => {
           event.preventDefault();
-          void runAction(`${agent.id}:collector_config`, () => setAgentCollectorConfig(agent.id, draft));
+          void runAction(`${agent.id}:collector_config`, () => setAgentCollectorConfig(agent.id, draft)).then((saved) => {
+            if (saved) onClose();
+          });
         }}
       >
         <div className="modal-header">
@@ -972,7 +987,7 @@ function AgentConfigModal({
             <div className="config-list">
               {draft.collector_config.disks.map((disk, index) => (
                 <div className="config-row" key={disk.mount_point}>
-                  <label className="toggle-line">
+                  <label className="toggle-line" title="Enables or disables monitoring for this disk without removing its saved thresholds.">
                     <input type="checkbox" checked={disk.enabled} onChange={(event) => updateDisk(index, (current) => ({ ...current, enabled: event.target.checked }))} />
                     <span>{disk.device ? `${disk.mount_point} (${disk.device})` : disk.mount_point}</span>
                   </label>
@@ -995,7 +1010,7 @@ function AgentConfigModal({
             <div className="config-list">
               {draft.collector_config.networks.map((network, index) => (
                 <div className="config-row" key={network.interface_name}>
-                  <label className="toggle-line">
+                  <label className="toggle-line" title="Enables or disables monitoring for this network interface without removing its saved thresholds.">
                     <input type="checkbox" checked={network.enabled} onChange={(event) => updateNetwork(index, (current) => ({ ...current, enabled: event.target.checked }))} />
                     <span>{network.interface_name}</span>
                   </label>
@@ -1035,12 +1050,12 @@ function AgentConfigModal({
                 // change the key, forcing React to unmount/remount the row
                 // and dropping the input's focus on every keystroke.
                 <div className="process-row" key={`process:${index}`}>
-                  <label className="toggle-line">
+                  <label className="toggle-line" title="Enables or disables this process watch without deleting it.">
                     <input type="checkbox" checked={process.enabled} onChange={(event) => updateProcess(index, (current) => ({ ...current, enabled: event.target.checked }))} />
                     <span>Enabled</span>
                   </label>
-                  <input value={process.name} placeholder="exact executable name" onChange={(event) => updateProcess(index, (current) => ({ ...current, name: event.target.value }))} />
-                  <NumberField label="Expected" min={1} value={process.expected_count} onChange={(value) => updateProcess(index, (current) => ({ ...current, expected_count: value }))} />
+                  <input title="Exact executable or process name expected to be running on this agent." value={process.name} placeholder="exact executable name" onChange={(event) => updateProcess(index, (current) => ({ ...current, name: event.target.value }))} />
+                  <NumberField help="Expected number of matching processes. Alerts are raised when fewer are running." label="Expected" min={1} value={process.expected_count} onChange={(value) => updateProcess(index, (current) => ({ ...current, expected_count: value }))} />
                   <ActionButton busy={false} danger icon={<Trash2 size={14} />} label="Remove" onClick={() => updateConfig((config) => ({ ...config, processes: config.processes.filter((_, currentIndex) => currentIndex !== index) }))} />
                 </div>
               ))}
@@ -1066,14 +1081,14 @@ function AgentConfigModal({
             <div className="config-list">
               {(draft.collector_config.logs ?? []).map((log, index) => (
                 <div className="process-row" key={`log:${index}`}>
-                  <label className="toggle-line">
+                  <label className="toggle-line" title="Enables or disables this log watch without deleting it.">
                     <input type="checkbox" checked={log.enabled} onChange={(event) => updateLog(index, (current) => ({ ...current, enabled: event.target.checked }))} />
                     <span>Enabled</span>
                   </label>
-                  <input value={log.path} placeholder="/var/log/syslog" onChange={(event) => updateLog(index, (current) => ({ ...current, path: event.target.value }))} />
-                  <input value={log.pattern} placeholder="regex pattern" onChange={(event) => updateLog(index, (current) => ({ ...current, pattern: event.target.value }))} />
-                  <input value={log.indicator_name} placeholder="indicator name" onChange={(event) => updateLog(index, (current) => ({ ...current, indicator_name: event.target.value }))} />
-                  <select value={log.severity} onChange={(event) => updateLog(index, (current) => ({ ...current, severity: event.target.value as LogMonitorConfig['severity'] }))}>
+                  <input title="Absolute path to the log file the agent should scan." value={log.path} placeholder="/var/log/syslog" onChange={(event) => updateLog(index, (current) => ({ ...current, path: event.target.value }))} />
+                  <input title="Regular expression pattern that identifies matching log lines." value={log.pattern} placeholder="regex pattern" onChange={(event) => updateLog(index, (current) => ({ ...current, pattern: event.target.value }))} />
+                  <input title="Dashboard indicator name to use when this log pattern matches." value={log.indicator_name} placeholder="indicator name" onChange={(event) => updateLog(index, (current) => ({ ...current, indicator_name: event.target.value }))} />
+                  <select title="Alert severity raised when this log pattern matches." value={log.severity} onChange={(event) => updateLog(index, (current) => ({ ...current, severity: event.target.value as LogMonitorConfig['severity'] }))}>
                     <option value="yellow">Warning</option>
                     <option value="amber">Degraded</option>
                     <option value="red">Critical</option>
@@ -1129,8 +1144,8 @@ function AnomalyInputs({
 }) {
   return (
     <div className="anomaly-inputs">
-      <NumberField label="Anomaly multiplier (0=off)" min={0} step={0.1} value={anomaly.multiplier} onChange={(value) => onChange('multiplier', value)} />
-      <NumberField label="Baseline hours" min={1} value={anomaly.baseline_window_hours} onChange={(value) => onChange('baseline_window_hours', value)} />
+      <NumberField help="Multiplier above the learned baseline required before anomaly status is raised. Zero disables anomaly detection." label="Anomaly multiplier (0=off)" min={0} step={0.1} value={anomaly.multiplier} onChange={(value) => onChange('multiplier', value)} />
+      <NumberField help="Number of hours of recent samples used to calculate the normal baseline for anomaly detection." label="Baseline hours" min={1} value={anomaly.baseline_window_hours} onChange={(value) => onChange('baseline_window_hours', value)} />
     </div>
   );
 }
@@ -1144,9 +1159,9 @@ function ThresholdInputs({
 }) {
   return (
     <div className="threshold-inputs">
-      <NumberField label="Warn" min={1} value={thresholds.warning_percent} onChange={(value) => onChange('warning_percent', value)} />
-      <NumberField label="Degrade" min={1} value={thresholds.degraded_percent} onChange={(value) => onChange('degraded_percent', value)} />
-      <NumberField label="Critical" min={1} value={thresholds.critical_percent} onChange={(value) => onChange('critical_percent', value)} />
+      <NumberField help="Usage percent that raises warning status for this item." label="Warn" min={1} value={thresholds.warning_percent} onChange={(value) => onChange('warning_percent', value)} />
+      <NumberField help="Usage percent that raises degraded status for this item." label="Degrade" min={1} value={thresholds.degraded_percent} onChange={(value) => onChange('degraded_percent', value)} />
+      <NumberField help="Usage percent that raises critical status for this item." label="Critical" min={1} value={thresholds.critical_percent} onChange={(value) => onChange('critical_percent', value)} />
     </div>
   );
 }
@@ -1177,17 +1192,17 @@ function NetworkThresholdInputs({
 }) {
   return (
     <div className="threshold-inputs">
-      <NumberField label="Warn Mb/s" min={1} value={thresholds.warning_mbps} onChange={(value) => onChange('warning_mbps', value)} />
-      <NumberField label="Degrade Mb/s" min={1} value={thresholds.degraded_mbps} onChange={(value) => onChange('degraded_mbps', value)} />
-      <NumberField label="Critical Mb/s" min={1} value={thresholds.critical_mbps} onChange={(value) => onChange('critical_mbps', value)} />
+      <NumberField help="Network throughput in megabits per second that raises warning status." label="Warn Mb/s" min={1} value={thresholds.warning_mbps} onChange={(value) => onChange('warning_mbps', value)} />
+      <NumberField help="Network throughput in megabits per second that raises degraded status." label="Degrade Mb/s" min={1} value={thresholds.degraded_mbps} onChange={(value) => onChange('degraded_mbps', value)} />
+      <NumberField help="Network throughput in megabits per second that raises critical status." label="Critical Mb/s" min={1} value={thresholds.critical_mbps} onChange={(value) => onChange('critical_mbps', value)} />
     </div>
   );
 }
 
-function PendingEnrollments({ agents, busyAction, groups, runAction }: { agents: DashboardAgent[]; busyAction: string | null; groups: GroupRecord[]; runAction: (key: string, action: () => Promise<void>) => Promise<void> }) {
+function PendingEnrollments({ agents, busyAction, groups, runAction }: { agents: DashboardAgent[]; busyAction: string | null; groups: GroupRecord[]; runAction: RunAction }) {
   const defaultGroup = groups[0]?.group_id;
   return (
-    <main className="table-wrap management-wrap">
+    <section className="embedded-management">
       <div className="management-header"><h1>Pending Enrollments</h1></div>
       <div className="table-container">
         <table className="management-table">
@@ -1202,10 +1217,12 @@ function PendingEnrollments({ agents, busyAction, groups, runAction }: { agents:
                 <ActionButton busy={busyAction === `${agent.id}:reject`} icon={<X size={14} />} label="Reject" onClick={() => runAction(`${agent.id}:reject`, () => rejectAgent(agent.id))} />
               </div></td>
             </tr>
-          ))}</tbody>
+          ))}
+          {agents.length === 0 ? <tr><td colSpan={4} className="uptime">No pending enrollments.</td></tr> : null}
+          </tbody>
         </table>
       </div>
-    </main>
+    </section>
   );
 }
 
@@ -1245,6 +1262,69 @@ function AcknowledgeModal({ onClose, onSubmit, bulk }: { onClose: () => void; on
   );
 }
 
+function renderInlineMarkdown(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const linkPattern = /\[([^\]]+)]\(([^)]+)\)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = linkPattern.exec(text)) !== null) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+    const href = safeMarkdownHref(match[2]);
+    nodes.push(
+      href ? (
+        <a href={href} key={`${match.index}:${href}`} rel="noopener noreferrer" target="_blank">
+          {match[1]}
+        </a>
+      ) : (
+        match[1]
+      ),
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
+}
+
+function RunbookMarkdown({ markdown }: { markdown: string }) {
+  const blocks = parseMarkdownBlocks(markdown);
+  if (blocks.length === 0) return <div className="banner">No runbook has been configured for this agent.</div>;
+  return (
+    <div className="runbook-markdown">
+      {blocks.map((block, index) => {
+        if (block.type === 'heading') {
+          const Heading = `h${block.level}` as 'h1' | 'h2' | 'h3';
+          return <Heading key={index}>{renderInlineMarkdown(block.text)}</Heading>;
+        }
+        if (block.type === 'list') {
+          return (
+            <ul key={index}>
+              {block.items.map((item, itemIndex) => <li key={itemIndex}>{renderInlineMarkdown(item)}</li>)}
+            </ul>
+          );
+        }
+        if (block.type === 'code') return <pre key={index}><code>{block.text}</code></pre>;
+        return <p key={index}>{renderInlineMarkdown(block.text)}</p>;
+      })}
+    </div>
+  );
+}
+
+function RunbookModal({ agentName, markdown, onClose }: { agentName: string; markdown: string; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-panel runbook-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <h2>Runbook - {agentName}</h2>
+          <button className="icon-button" onClick={onClose} aria-label="Close runbook"><X size={14} /></button>
+        </div>
+        <div className="runbook-body">
+          <RunbookMarkdown markdown={markdown} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AlertsPage({
   agents,
   alerts,
@@ -1256,7 +1336,7 @@ function AlertsPage({
   alerts: ReturnType<typeof toDisplayAlerts>;
   busyAction: string | null;
   operator: boolean;
-  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  runAction: RunAction;
 }) {
   const [selected, setSelected] = React.useState<Set<number>>(new Set());
   const [showArchived, setShowArchived] = React.useState(false);
@@ -1264,6 +1344,7 @@ function AlertsPage({
   const [agentFilter, setAgentFilter] = React.useState('');
   const [statusFilter, setStatusFilter] = React.useState('');
   const [ackTarget, setAckTarget] = React.useState<number | 'bulk' | null>(null);
+  const [runbookTarget, setRunbookTarget] = React.useState<{ agentName: string; markdown: string } | null>(null);
 
   // Re-fetch archived alerts whenever the live alerts list refreshes (proxy for parent refresh)
   React.useEffect(() => {
@@ -1314,6 +1395,13 @@ function AlertsPage({
       {ackTarget !== null ? (
         <AcknowledgeModal bulk={ackTarget === 'bulk'} onClose={() => setAckTarget(null)} onSubmit={handleAckSubmit} />
       ) : null}
+      {runbookTarget ? (
+        <RunbookModal
+          agentName={runbookTarget.agentName}
+          markdown={runbookTarget.markdown}
+          onClose={() => setRunbookTarget(null)}
+        />
+      ) : null}
       <div className="management-header">
         <h1>Alerts</h1>
         <div className="header-controls">
@@ -1358,6 +1446,8 @@ function AlertsPage({
           <tbody>{displayed.map((alert) => {
             const isAcknowledged = alert.acknowledged_at > 0;
             const isArchived = alert.deleted_at > 0;
+            const agent = agents.find((candidate) => candidate.id === alert.agentId);
+            const runbookMarkdown = alert.runbook_markdown || agent?.runbookMarkdown || '';
             return (
               <tr key={alert.alert_id} className={isArchived ? 'row-archived' : ''}>
                 <td className="col-check">
@@ -1371,8 +1461,14 @@ function AlertsPage({
                 <td className="uptime">{new Date(alert.created_at).toLocaleString()}</td>
                 <td>
                   {alert.message}
-                  {alert.runbook_url ? (
-                    <a href={alert.runbook_url} target="_blank" rel="noopener noreferrer" className="runbook-link"> [Runbook&#8599;]</a>
+                  {runbookMarkdown.trim() ? (
+                    <button
+                      className="runbook-link"
+                      onClick={() => setRunbookTarget({ agentName: alert.agentName, markdown: runbookMarkdown })}
+                      type="button"
+                    >
+                      <BookOpen size={12} /> Runbook
+                    </button>
                   ) : null}
                 </td>
                 <td className="uptime">
@@ -1411,6 +1507,7 @@ function AlertsPage({
 function MaintenanceWindowsPage({
   agents,
   busyAction,
+  global,
   groups,
   operator,
   runAction,
@@ -1418,9 +1515,10 @@ function MaintenanceWindowsPage({
 }: {
   agents: DashboardAgent[];
   busyAction: string | null;
+  global: boolean;
   groups: GroupRecord[];
   operator: boolean;
-  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  runAction: RunAction;
   windows: MaintenanceWindowRecord[];
 }) {
   const [agentId, setAgentId] = React.useState('*');
@@ -1430,6 +1528,10 @@ function MaintenanceWindowsPage({
   const [durationHours, setDurationHours] = React.useState(1);
 
   const fmt = (ms: number) => new Date(ms).toLocaleString();
+
+  React.useEffect(() => {
+    if (!global && agentId === '*' && agents.length > 0) setAgentId(agents[0].id);
+  }, [agentId, agents, global]);
 
   return (
     <main className="table-wrap management-wrap">
@@ -1449,7 +1551,7 @@ function MaintenanceWindowsPage({
           }}
         >
           <select aria-label="Agent" value={agentId} onChange={(event) => setAgentId(event.target.value)}>
-            <option value="*">All agents</option>
+            {global ? <option value="*">All agents</option> : null}
             {agents.map((a) => <option key={a.id} value={a.id}>{a.name || a.id}</option>)}
           </select>
           <input
@@ -1535,20 +1637,26 @@ function MaintenanceWindowsPage({
 function SilencesPage({
   agents,
   busyAction,
+  global,
   operator,
   runAction,
   silences,
 }: {
   agents: DashboardAgent[];
   busyAction: string | null;
+  global: boolean;
   operator: boolean;
-  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  runAction: RunAction;
   silences: SilenceRecord[];
 }) {
   const [agentId, setAgentId] = React.useState('*');
   const [indicator, setIndicator] = React.useState('*');
   const [reason, setReason] = React.useState('');
   const [hours, setHours] = React.useState(1);
+
+  React.useEffect(() => {
+    if (!global && agentId === '*' && agents.length > 0) setAgentId(agents[0].id);
+  }, [agentId, agents, global]);
 
   return (
     <main className="table-wrap management-wrap">
@@ -1568,7 +1676,7 @@ function SilencesPage({
             <label>
               Agent
               <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
-                <option value="*">All agents</option>
+                {global ? <option value="*">All agents</option> : null}
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>{a.name || a.id}</option>
                 ))}
@@ -1658,7 +1766,7 @@ function UsersPage({
 }: {
   busyAction: string | null;
   groups: GroupRecord[];
-  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  runAction: RunAction;
   session: SessionInfo;
   users: UserRecord[];
 }) {
@@ -1672,7 +1780,14 @@ function UsersPage({
 
   const admin = canManageUsers(session.role);
   const globalAdmin = session.role === 'global_admin';
+  const globalAccount = isGlobal(session.role);
   const currentUser = users.find((u) => u.username === session.username);
+
+  React.useEffect(() => {
+    if (!globalAccount && groups.length > 0 && !groups.some((group) => group.group_id === groupId)) {
+      setGroupId(groups[0].group_id);
+    }
+  }, [globalAccount, groupId, groups]);
 
   return (
     <main className="table-wrap management-wrap">
@@ -1737,16 +1852,16 @@ function UsersPage({
         >
           <input aria-label="Username" placeholder="Username" value={username} onChange={(event) => setUsername(event.target.value)} />
           <input aria-label="Password" placeholder="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          <select aria-label="Role" value={role} onChange={(event) => setRole(event.target.value as UserRecord['role'])}>
-            {isGlobal(session.role) ? <option value="global_admin">Global admin</option> : null}
-            {isGlobal(session.role) ? <option value="global_operator">Global operator</option> : null}
-            {isGlobal(session.role) ? <option value="global_viewer">Global viewer</option> : null}
-            <option value="group_admin">Group admin</option>
-            <option value="group_operator">Group operator</option>
-            <option value="group_viewer">Group viewer</option>
+          <select aria-label="Account type" value={role} onChange={(event) => setRole(event.target.value as UserRecord['role'])}>
+            {globalAccount ? <option value="global_admin">{accountTypeLabel('global_admin')}</option> : null}
+            {globalAccount ? <option value="global_operator">{accountTypeLabel('global_operator')}</option> : null}
+            {globalAccount ? <option value="global_viewer">{accountTypeLabel('global_viewer')}</option> : null}
+            <option value="group_admin">{accountTypeLabel('group_admin')}</option>
+            <option value="group_operator">{accountTypeLabel('group_operator')}</option>
+            <option value="group_viewer">{accountTypeLabel('group_viewer')}</option>
           </select>
           <select aria-label="Group" value={groupId} onChange={(event) => setGroupId(Number(event.target.value))}>
-            <option value={0}>No group</option>
+            {globalAccount ? <option value={0}>No group</option> : null}
             {groups.map((group) => (
               <option key={group.group_id} value={group.group_id}>{group.name}</option>
             ))}
@@ -1756,13 +1871,13 @@ function UsersPage({
       </div>
       <div className="table-container">
         <table className="management-table">
-          <thead><tr><th>User</th><th>Role</th><th>Groups</th><th>State</th><th>Actions</th></tr></thead>
+          <thead><tr><th>User</th><th>Type</th><th>Groups</th><th>State</th><th>Actions</th></tr></thead>
           <tbody>{users.map((user) => {
             const canChangePw = admin || currentUser?.user_id === user.user_id;
             return (
               <tr key={user.user_id} className={user.disabled ? 'row-archived' : ''}>
                 <td>{user.username}</td>
-                <td>{user.role}</td>
+                <td>{accountTypeLabel(user.role)}</td>
                 <td>{user.group_ids.map((id) => groups.find((group) => group.group_id === id)?.name ?? id).join(', ')}</td>
                 <td>{user.disabled ? 'Disabled' : 'Active'}</td>
                 <td>
@@ -1815,7 +1930,7 @@ function UsersPage({
 function RunbooksPage({
   runAction,
 }: {
-  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  runAction: RunAction;
 }) {
   const [runbooks, setRunbooks] = React.useState<RunbookRecord[]>([]);
   const [indicator, setIndicator] = React.useState('*');
@@ -1923,7 +2038,7 @@ function RunbooksPage({
 function SettingsPage({
   runAction,
 }: {
-  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  runAction: RunAction;
 }) {
   const [draft, setDraft] = React.useState<ServerSettings>({ webhook_url: '', offline_after_seconds: 120, escalation_timeout_seconds: 300, metrics_retention_days: 30, reports_enabled: false, reports_schedule: 'daily', reports_hour: 8, reports_day_of_week: 1, reports_webhook_url: '' });
   const [loaded, setLoaded] = React.useState(false);
@@ -2116,7 +2231,7 @@ function ViewsPage({
   agents: DashboardAgent[];
   busyAction: string | null;
   operator: boolean;
-  runAction: (key: string, action: () => Promise<void>) => Promise<void>;
+  runAction: RunAction;
   session: SessionInfo;
   views: ViewRecord[];
   onOpenView: (viewId: number) => void;
@@ -2131,6 +2246,19 @@ function ViewsPage({
   const [editPublic, setEditPublic] = React.useState(false);
   const [editGroupId, setEditGroupId] = React.useState(0);
   const [editAgentIds, setEditAgentIds] = React.useState<string[]>([]);
+  const globalAccount = isGlobal(session.role);
+
+  React.useEffect(() => {
+    if (!globalAccount && groups.length > 0 && !groups.some((group) => group.group_id === newGroupId)) {
+      setNewGroupId(groups[0].group_id);
+    }
+  }, [globalAccount, groups, newGroupId]);
+
+  React.useEffect(() => {
+    if (!globalAccount && editId !== null && groups.length > 0 && !groups.some((group) => group.group_id === editGroupId)) {
+      setEditGroupId(groups[0].group_id);
+    }
+  }, [editGroupId, editId, globalAccount, groups]);
 
   const startEdit = (v: ViewRecord) => {
     setEditId(v.view_id);
@@ -2175,7 +2303,7 @@ function ViewsPage({
                           {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                         </select>
                         <select value={editGroupId} onChange={(e) => setEditGroupId(Number(e.target.value))}>
-                          <option value={0}>No group</option>
+                          {globalAccount ? <option value={0}>No group</option> : null}
                           {groups.map((group) => <option key={group.group_id} value={group.group_id}>{group.name}</option>)}
                         </select>
                       </div>
@@ -2239,7 +2367,7 @@ function ViewsPage({
               {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
             <select value={newGroupId} onChange={(e) => setNewGroupId(Number(e.target.value))}>
-              <option value={0}>No group</option>
+              {globalAccount ? <option value={0}>No group</option> : null}
               {groups.map((group) => <option key={group.group_id} value={group.group_id}>{group.name}</option>)}
             </select>
             <button className="text-button" type="submit" disabled={busyAction === 'view:create' || !newName}>
