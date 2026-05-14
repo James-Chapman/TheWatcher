@@ -1,7 +1,7 @@
 #define AppName "TheWatcher"
 #define AppVersion GetEnv("THEWATCHER_VERSION")
 #if AppVersion == ""
-#define AppVersion "0.7.3"
+#define AppVersion "0.7.4"
 #endif
 
 [Setup]

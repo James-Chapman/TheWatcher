@@ -225,6 +225,7 @@ namespace
             col(r, row, 10),       // note
             col_int64(r, row, 11), // escalated_at
             col(r, row, 12),       // runbook_url
+            {},                    // runbook_markdown
         };
     }
 

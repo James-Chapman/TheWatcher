@@ -21,17 +21,6 @@ using json = nlohmann::json;
 
 namespace
 {
-    double max_percent(const std::vector<double>& values)
-    {
-        double result = 0.0;
-        for (auto value : values)
-        {
-            if (std::isfinite(value))
-                result = std::max(result, value);
-        }
-        return result;
-    }
-
     double network_mbps(const NetworkMetrics& network)
     {
         return static_cast<double>(network.bytes_recv_per_sec + network.bytes_sent_per_sec) * 8.0 / 1'000'000.0;

@@ -3,10 +3,12 @@
 #include "common/crypto.hpp"
 #include "common/protocol.hpp"
 
-#include <atomic>
 #include <catch2/catch_test_macros.hpp>
+
+#include <atomic>
 #include <chrono>
 #include <thread>
+
 #include <zmq.hpp>
 
 using namespace thewatcher::agent;
@@ -19,7 +21,9 @@ namespace
 void send_enroll_response(zmq::socket_t& rep, const std::string& agent_id, bool approved,
                           const std::string& server_public_key = {})
 {
-    EnrollResponse resp{approved, approved ? "approved" : "pending approval"};
+    EnrollResponse resp;
+    resp.approved = approved;
+    resp.message = approved ? "approved" : "pending approval";
     if (approved)
     {
         resp.server_public_key_z85 = server_public_key;

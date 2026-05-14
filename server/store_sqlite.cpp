@@ -161,7 +161,8 @@ namespace
                 sqlite3_column_int64(s, 9),
                 text_col(s, 10),
                 sqlite3_column_int64(s, 11),
-                text_col(s, 12)};
+                text_col(s, 12),
+                {}};
     }
 
     MaintenanceWindowRecord row_to_maintenance_window(sqlite3_stmt* s)

@@ -1,18 +1,39 @@
 project(
   'thewatcher',
   ['c', 'cpp'],
-  version: '0.7.3',
+  version: '0.7.4',
   default_options: [
     'cpp_std=c++20',
     'default_library=static',
     'prefer_static=true',
-    'warning_level=2',
+    'warning_level=3',
+    'werror=true',
+    'libcbor:warning_level=0',
+    'libcbor:werror=false',
+    'sqlite3:warning_level=0',
+    'sqlite3:werror=false',
+    'nlohmann_json:warning_level=0',
+    'nlohmann_json:werror=false',
+    'cpp-httplib:warning_level=0',
+    'cpp-httplib:werror=false',
+    'catch2:warning_level=0',
+    'catch2:werror=false',
+    'cppzmq:warning_level=0',
+    'cppzmq:werror=false',
+    'libsodium:warning_level=0',
+    'libsodium:werror=false',
+    'libzmq:warning_level=0',
+    'libzmq:werror=false',
     'force_fallback_for=libcbor,sqlite3,nlohmann_json,cpp-httplib,catch2-with-main,cppzmq',
   ],
 )
 
 cpp = meson.get_compiler('cpp')
 root_inc = include_directories('.')
+third_party_default_options = [
+  'warning_level=0',
+  'werror=false',
+]
 
 add_project_arguments(
   '-DCBOR_BUILD_STATIC=1',
@@ -56,9 +77,12 @@ endif
 
 # Local static deps: subprojects/<name>.wrap downloads source archives and builds
 # the libraries in this build tree. System/vcpkg packages are not used.
-cbor_dep   = dependency('libcbor',          fallback: ['libcbor',       'libcbor_dep'])
-sqlite_dep = dependency('sqlite3',          fallback: ['sqlite3',       'sqlite3_dep'])
-json_dep   = dependency('nlohmann_json',    fallback: ['nlohmann_json', 'nlohmann_json_dep'])
+cbor_dep   = dependency('libcbor',          fallback: ['libcbor',       'libcbor_dep'],
+                        default_options: third_party_default_options)
+sqlite_dep = dependency('sqlite3',          fallback: ['sqlite3',       'sqlite3_dep'],
+                        default_options: third_party_default_options)
+json_dep   = dependency('nlohmann_json',    fallback: ['nlohmann_json', 'nlohmann_json_dep'],
+                        default_options: third_party_default_options)
 # cpp-httplib's meson_options.txt defaults `tls`, `zstd`, and `brotli` to
 # `auto`, so on a host with libssl-dev / libzstd-dev / libbrotli-dev it
 # silently links those libraries into our server. We use plain HTTP only
@@ -66,8 +90,10 @@ json_dep   = dependency('nlohmann_json',    fallback: ['nlohmann_json', 'nlohman
 # the auto-discovered OpenSSL is what drags libjitterentropy.a in on
 # Ubuntu 24.04+ where libcrypto.a gained that transitive dep.
 http_dep   = dependency('cpp-httplib',      fallback: ['cpp-httplib',   'cpp_httplib_dep'],
-                        default_options: ['tls=disabled', 'zstd=disabled', 'brotli=disabled'])
-catch2_dep = dependency('catch2-with-main', fallback: ['catch2',        'catch2_with_main_dep'])
+                        default_options: third_party_default_options +
+                          ['tls=disabled', 'zstd=disabled', 'brotli=disabled'])
+catch2_dep = dependency('catch2-with-main', fallback: ['catch2',        'catch2_with_main_dep'],
+                        default_options: third_party_default_options)
 
 # Prefer system-installed zeromq + libsodium (e.g. FreeBSD pkg install zeromq libsodium)
 # and fall back to building from source via cmake subproject when not available.
@@ -84,7 +110,7 @@ if zmq_system.found() and sodium_system.found()
 else
   libsodium_project = subproject(
     'libsodium',
-    default_options: ['default_library=static'],
+    default_options: third_party_default_options + ['default_library=static'],
   )
   sodium_dep = libsodium_project.get_variable('libsodium_dep')
   libsodium_cmake_include_path = meson.current_build_dir() / 'subprojects' / 'zeromq-4.3.5' / 'libsodium-include'
@@ -100,6 +126,8 @@ else
 
   cmake = import('cmake')
   libzmq_options = cmake.subproject_options()
+  libzmq_options.set_override_option('warning_level', '0')
+  libzmq_options.set_override_option('werror', 'false')
   libzmq_options.add_cmake_defines({
     'BUILD_SHARED': 'OFF',
     'BUILD_STATIC': 'ON',
@@ -128,7 +156,8 @@ else
   meson.override_dependency('libzmq', zmq_dep)
   meson.override_dependency('zeromq', zmq_dep)
 
-  cppzmq_dep = dependency('cppzmq', fallback: ['cppzmq', 'cppzmq_dep'])
+  cppzmq_dep = dependency('cppzmq', fallback: ['cppzmq', 'cppzmq_dep'],
+                          default_options: third_party_default_options)
 endif
 
 subdir('common')

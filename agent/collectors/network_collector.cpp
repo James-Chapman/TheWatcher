@@ -64,6 +64,8 @@ namespace detail
 namespace
 {
 
+#if defined(__linux__) || defined(_WIN32)
+
     uint64_t per_second(uint64_t previous, uint64_t current, double elapsed_seconds)
     {
         if (elapsed_seconds <= 0.0 || current < previous)
@@ -72,6 +74,8 @@ namespace
         }
         return static_cast<uint64_t>(static_cast<double>(current - previous) / elapsed_seconds);
     }
+
+#endif
 
 #ifdef __linux__
 

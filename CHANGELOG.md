@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-05-14
+
+### Changed
+- Raised first-party Meson builds to `warning_level=3` with `werror=true`
+  while explicitly keeping third-party fallback dependencies outside that
+  warnings-as-errors policy.
+
 ## [0.7.3] - 2026-05-14
 
 ### Changed

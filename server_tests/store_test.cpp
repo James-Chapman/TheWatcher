@@ -2899,7 +2899,14 @@ SCENARIO("insert_alert persists runbook_url and list_alerts returns it")
     {
         SqliteStore store(unique_store_path("runbook-alert.db").string());
 
-        store.upsert_agent({"agent-rb", "host", "linux", "key", true, false, true});
+        AgentRecord agent;
+        agent.agent_id = "agent-rb";
+        agent.hostname = "host";
+        agent.platform = "linux";
+        agent.curve_public_key_z85 = "key";
+        agent.approved = true;
+        agent.connected = true;
+        store.upsert_agent(agent);
 
         RunbookRecord rb;
         rb.indicator = "cpu";

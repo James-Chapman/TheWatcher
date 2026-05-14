@@ -4,17 +4,19 @@
 
 #include <array>
 #include <chrono>
+
 #include <sodium.h>
 
 namespace thewatcher::server
 {
 
 ZapHandler::ZapHandler(zmq::context_t& ctx)
-    : ctx_(ctx), thread_([this](std::stop_token st) {
-          run(st);
-      }){LOG_FUNCTION_TRACE}
+    : ctx_(ctx)
+    , thread_([this](std::stop_token st) {
+        run(st);
+    }){LOG_FUNCTION_TRACE}
 
-      ZapHandler::~ZapHandler()
+    ZapHandler::~ZapHandler()
 {
     LOG_FUNCTION_TRACE
     thread_.request_stop();
@@ -63,7 +65,11 @@ void ZapHandler::run(std::stop_token st)
         while (more)
         {
             parts.emplace_back();
-            zap.recv(parts.back(), zmq::recv_flags::none);
+            if (!zap.recv(parts.back(), zmq::recv_flags::none))
+            {
+                parts.pop_back();
+                break;
+            }
             more = zap.get(zmq::sockopt::rcvmore) != 0;
         }
 

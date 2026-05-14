@@ -92,6 +92,11 @@ meson compile -C builddir-release
 meson test    -C builddir-release --print-errorlogs
 ```
 
+The root Meson project builds TheWatcher code with `warning_level=3` and
+`werror=true`. Meson fallback dependencies are configured separately with
+`warning_level=0` and `werror=false` so third-party warnings do not fail local
+or CI builds.
+
 Run the full server-agent integration path directly with:
 
 ```bash

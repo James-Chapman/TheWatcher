@@ -7,7 +7,9 @@
 #include <stdexcept>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #endif
 
@@ -172,6 +174,7 @@ int install_windows_service(const WindowsServiceDefinition& definition)
     std::cout << "Command: " << definition.command_line << "\n";
     return 0;
 #else
+    static_cast<void>(definition);
     std::cerr << "Windows service installation is only available on Windows.\n";
     return 1;
 #endif
@@ -216,6 +219,7 @@ int uninstall_windows_service(const std::string& name)
     std::cout << "Uninstalled service: " << name << "\n";
     return 0;
 #else
+    static_cast<void>(name);
     std::cerr << "Windows service uninstallation is only available on Windows.\n";
     return 1;
 #endif
@@ -242,10 +246,9 @@ int run_windows_service(const std::string& name, const std::function<void()>& ru
     }
     return 0;
 #else
-        (void)
-        name;
-    (void)run;
-    (void)stop;
+    static_cast<void>(name);
+    static_cast<void>(run);
+    static_cast<void>(stop);
     std::cerr << "Windows service mode is only available on Windows.\n";
     return 1;
 #endif
