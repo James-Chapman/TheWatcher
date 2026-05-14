@@ -4,8 +4,15 @@
 #include <array>
 #include <cctype>
 #include <charconv>
-#include <initializer_list>
+#include <cstdint>
+#include <optional>
 #include <string_view>
+
+#ifdef _WIN32
+#include <WS2tcpip.h>
+#else
+#include <arpa/inet.h>
+#endif
 
 namespace thewatcher::server
 {
@@ -105,29 +112,65 @@ namespace
         return ip[0] == 255 && ip[1] == 255 && ip[2] == 255 && ip[3] == 255;
     }
 
-    bool starts_with_any(std::string_view value, std::initializer_list<std::string_view> prefixes)
+    std::optional<std::array<std::uint8_t, 16>> parse_ipv6_literal(const std::string& host)
     {
-        return std::any_of(prefixes.begin(), prefixes.end(), [&](std::string_view prefix) {
-            return value.rfind(prefix, 0) == 0;
-        });
+        std::array<std::uint8_t, 16> bytes{};
+#ifdef _WIN32
+        if (InetPtonA(AF_INET6, host.c_str(), bytes.data()) != 1)
+            return std::nullopt;
+#else
+        if (inet_pton(AF_INET6, host.c_str(), bytes.data()) != 1)
+            return std::nullopt;
+#endif
+        return bytes;
     }
 
     bool is_restricted_ipv6_literal(const std::string& host)
     {
-        const auto value = lowercase_ascii(host);
-        if (value == "::" || value == "::1")
-            return true;
-        if (starts_with_any(value, {"fc", "fd", "ff"}))
-            return true;
-        if (starts_with_any(value, {"fe8", "fe9", "fea", "feb"}))
+        const auto bytes = parse_ipv6_literal(host);
+        if (!bytes)
             return true;
 
-        const auto mapped = value.rfind(':');
-        if (mapped != std::string::npos)
+        const auto all_zero = std::all_of(bytes->begin(), bytes->end(), [](std::uint8_t value) {
+            return value == 0;
+        });
+        if (all_zero)
+            return true;
+
+        const auto first_15_zero = std::all_of(bytes->begin(), bytes->begin() + 15, [](std::uint8_t value) {
+            return value == 0;
+        });
+        if (first_15_zero && bytes->at(15) == 1)
+            return true;
+
+        if ((bytes->at(0) & 0xfe) == 0xfc)
+            return true;
+        if (bytes->at(0) == 0xfe && (bytes->at(1) & 0xc0) == 0x80)
+            return true;
+        if (bytes->at(0) == 0xff)
+            return true;
+        if (bytes->at(0) == 0x20 && bytes->at(1) == 0x01 && bytes->at(2) == 0x0d && bytes->at(3) == 0xb8)
+            return true;
+        if (bytes->at(0) == 0x20 && bytes->at(1) == 0x01 && bytes->at(2) == 0x00 && bytes->at(3) == 0x02 &&
+            bytes->at(4) == 0x00 && bytes->at(5) == 0x00)
         {
-            const auto ipv4_tail = value.substr(mapped + 1);
-            if (const auto ipv4 = parse_ipv4_literal(ipv4_tail))
-                return is_restricted_ipv4_literal(*ipv4);
+            return true;
+        }
+
+        const auto ipv4_mapped = std::all_of(bytes->begin(), bytes->begin() + 10,
+                                             [](std::uint8_t value) {
+                                                 return value == 0;
+                                             }) &&
+                                 bytes->at(10) == 0xff && bytes->at(11) == 0xff;
+        if (ipv4_mapped)
+        {
+            const std::array<int, 4> ipv4_tail{
+                static_cast<int>(bytes->at(12)),
+                static_cast<int>(bytes->at(13)),
+                static_cast<int>(bytes->at(14)),
+                static_cast<int>(bytes->at(15)),
+            };
+            return is_restricted_ipv4_literal(ipv4_tail);
         }
 
         return false;

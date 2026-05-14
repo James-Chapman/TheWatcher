@@ -31,6 +31,11 @@ field remains in `SystemMetrics` so older agents and stored rows can still be
 decoded, but current agents do not populate it and the status engine does not
 raise temperature alerts.
 
+On Windows, the network collector reports IP Helper adapters that line up with
+`ipconfig` output. Lower-layer devices such as packet schedulers, WFP native MAC
+layer filters, Hyper-V virtual switch plumbing, 6to4/tunnel adapters, and bridge
+devices are filtered before metrics are emitted.
+
 The agent also fills static system fields in `Agent::fill_static_info()`:
 
 ```text

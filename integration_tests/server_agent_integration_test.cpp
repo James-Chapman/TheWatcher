@@ -1282,12 +1282,21 @@ SCENARIO("Session and login API enforces authentication and provides accurate se
             httplib::Client unauth("http://127.0.0.1:" + std::to_string(fx.config.api_port));
             unauth.set_connection_timeout(5, 0);
             unauth.set_read_timeout(5, 0);
-            const auto res = unauth.Get("/api/session");
+            std::optional<int> status;
 
             THEN("the server returns 401")
             {
-                REQUIRE(res);
-                REQUIRE(res->status == 401);
+                REQUIRE(eventually(
+                    [&] {
+                        const auto res = unauth.Get("/api/session");
+                        if (!res)
+                            return false;
+                        status = res->status;
+                        return true;
+                    },
+                    5s));
+                REQUIRE(status.has_value());
+                REQUIRE(*status == 401);
             }
         }
 
@@ -1349,6 +1358,40 @@ SCENARIO("Session and login API enforces authentication and provides accurate se
                 {
                     REQUIRE(res);
                     REQUIRE(res->status == 200);
+                }
+            }
+
+            AND_WHEN("a proxied HTTPS request uses an origin with an implicit default port")
+            {
+                httplib::Headers headers{
+                    {"Host",              "watcher.example.com:443"    },
+                    {"Origin",            "https://watcher.example.com"},
+                    {"X-Forwarded-Proto", "https"                      }
+                };
+                const auto res =
+                    fx.client.Post("/api/groups", headers, R"({"name":"Default Port Origin"})", "application/json");
+
+                THEN("the server normalizes the default HTTPS port and allows it")
+                {
+                    REQUIRE(res);
+                    REQUIRE(res->status == 200);
+                }
+            }
+
+            AND_WHEN("a proxied HTTPS request receives an HTTP origin on the same host")
+            {
+                httplib::Headers headers{
+                    {"Host",              "watcher.example.com"       },
+                    {"Origin",            "http://watcher.example.com"},
+                    {"X-Forwarded-Proto", "https"                     }
+                };
+                const auto res =
+                    fx.client.Post("/api/groups", headers, R"({"name":"Wrong Scheme Origin"})", "application/json");
+
+                THEN("the server rejects it as a different browser origin")
+                {
+                    REQUIRE(res);
+                    REQUIRE(res->status == 403);
                 }
             }
 

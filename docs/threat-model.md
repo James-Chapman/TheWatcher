@@ -87,7 +87,9 @@ working document for audit, design review, and regression testing.
 
 - Role checks distinguish global and group-scoped privileges.
 - Browser-origin checks reject credentialed cross-origin unsafe methods when an
-  `Origin` or absolute `Referer` header is present.
+  `Origin` or absolute `Referer` header is present. The comparison uses the
+  browser origin tuple of scheme, host, and default-normalized port; local
+  loopback dashboard ports are the only allowed different-port exception.
 - Legacy global runbook mutations require `global_admin` because those runbooks
   are consumed by all alert generation.
 
@@ -97,6 +99,8 @@ Alert and report webhook URLs are parsed by a shared validator. It accepts only
 plain HTTP URLs supported by the current httplib build and rejects malformed
 authorities, userinfo, invalid ports, localhost, loopback, private, link-local,
 multicast, documentation, benchmark, and other non-public literal IP ranges.
+IPv6 literals are parsed before range checks so alternate textual forms of the
+same restricted address are handled consistently.
 
 Hostname targets that resolve to private IPs after DNS lookup remain a residual
 risk. Deployments should restrict outbound egress at the host or network layer

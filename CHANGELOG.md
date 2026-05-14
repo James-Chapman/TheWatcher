@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-05-14
+
+### Fixed
+- Fixed Linux/BSD integration-test startup timing by waiting until the REST API
+  accepts a session request before asserting the unauthenticated response.
+- Normalized browser-origin checks to compare scheme, host, and effective
+  default ports so HTTPS reverse-proxy requests are not rejected when one side
+  omits `:443`, while HTTP origins on HTTPS API hosts remain blocked.
+- Hardened webhook IPv6 literal filtering by parsing IPv6 addresses before
+  rejecting loopback, unspecified, documentation, benchmark, multicast,
+  link-local, unique-local, and IPv4-mapped restricted targets.
+- Filtered Windows network collection to IP Helper adapters that correspond to
+  `ipconfig` output instead of lower-layer NDIS, bridge, tunnel, scheduler, and
+  filter devices.
+
 ## [0.7.1] - 2026-05-14
 
 ### Fixed
