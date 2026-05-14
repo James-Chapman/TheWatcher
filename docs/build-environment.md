@@ -107,6 +107,13 @@ That test starts the server, enrolls and approves an agent, verifies collected
 metrics reach the server, sends a disconnect command, and shuts both sides
 down.
 
+## CI Build Artifacts
+
+Each CI platform job archives its `builddir-release/` directory as a GitHub
+Actions artifact, even when the build or tests fail. The Linux, Windows, and
+FreeBSD jobs also publish a download link in the job summary so the archived
+build output can be opened directly from the workflow run page.
+
 Build the dashboard separately with npm:
 
 ```powershell
