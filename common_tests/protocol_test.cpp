@@ -269,6 +269,7 @@ SCENARIO("ConfigUpdate carries collector configuration")
 
         ConfigUpdate update;
         update.interval_seconds = 15;
+        update.heartbeat_interval_seconds = 7;
         update.process_limit = 20;
         update.collector_config = collector_config;
 
@@ -279,6 +280,7 @@ SCENARIO("ConfigUpdate carries collector configuration")
             THEN("interval and process limit are preserved")
             {
                 REQUIRE(unpacked.interval_seconds == 15);
+                REQUIRE(unpacked.heartbeat_interval_seconds == 7);
                 REQUIRE(unpacked.process_limit == 20);
             }
 

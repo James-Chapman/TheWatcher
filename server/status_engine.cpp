@@ -4,14 +4,16 @@
 #include "common/metrics.hpp"
 #include "common/protocol.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cmath>
-#include <httplib.h>
-#include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
+
+#include <httplib.h>
 
 namespace thewatcher::server
 {
@@ -29,15 +31,6 @@ namespace
                 result = std::max(result, value);
         }
         return result;
-    }
-
-    double temp_percent(const SystemMetrics& metrics)
-    {
-        std::vector<double> values;
-        values.reserve(metrics.temperatures.size());
-        for (const auto& temp : metrics.temperatures)
-            values.push_back(temp.temperature_celsius);
-        return max_percent(values);
     }
 
     double network_mbps(const NetworkMetrics& network)
@@ -107,11 +100,16 @@ namespace
         auto starts = [&](const char* prefix) {
             return host.rfind(prefix, 0) == 0;
         };
-        if (starts("127."))  return true;  // 127.0.0.0/8  loopback
-        if (starts("10."))   return true;  // 10.0.0.0/8   RFC-1918
-        if (starts("192.168.")) return true; // 192.168.0.0/16 RFC-1918
-        if (starts("169.254.")) return true; // 169.254.0.0/16 link-local
-        if (starts("0."))    return true;  // 0.0.0.0/8
+        if (starts("127."))
+            return true; // 127.0.0.0/8  loopback
+        if (starts("10."))
+            return true; // 10.0.0.0/8   RFC-1918
+        if (starts("192.168."))
+            return true; // 192.168.0.0/16 RFC-1918
+        if (starts("169.254."))
+            return true; // 169.254.0.0/16 link-local
+        if (starts("0."))
+            return true; // 0.0.0.0/8
         // 172.16.0.0/12 — covers 172.16.x.x through 172.31.x.x
         if (starts("172."))
         {
@@ -171,14 +169,14 @@ namespace
         }
 
         json payload = {
-            {"alert_id",    alert_id           },
-            {"agent_id",    alert.agent_id     },
-            {"indicator",   alert.indicator    },
-            {"old_status",  alert.old_status   },
-            {"new_status",  alert.new_status   },
-            {"message",     alert.message      },
-            {"created_at",  alert.created_at   },
-            {"runbook_url", alert.runbook_url  },
+            {"alert_id",    alert_id         },
+            {"agent_id",    alert.agent_id   },
+            {"indicator",   alert.indicator  },
+            {"old_status",  alert.old_status },
+            {"new_status",  alert.new_status },
+            {"message",     alert.message    },
+            {"created_at",  alert.created_at },
+            {"runbook_url", alert.runbook_url},
         };
 
         httplib::Client client(target->host, target->port);
@@ -238,7 +236,8 @@ bool is_worse_status(IndicatorStatus previous, IndicatorStatus current)
     return static_cast<int>(current) > static_cast<int>(previous);
 }
 
-StatusEngine::StatusEngine(Store& store) : store_(store)
+StatusEngine::StatusEngine(Store& store)
+    : store_(store)
 {
 }
 
@@ -309,8 +308,8 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
         const auto confirmed = confirm_numeric_status(agent_id, indicator, previous, raw, config.disk_readings);
-        const auto anomaly = maybe_anomaly_status(confirmed, agent_id, indicator, disk.usage_percent, anomaly_cfg,
-                                                  timestamp_ms);
+        const auto anomaly =
+            maybe_anomaly_status(confirmed, agent_id, indicator, disk.usage_percent, anomaly_cfg, timestamp_ms);
         const auto next = maybe_stale_status(anomaly, agent_id, indicator, disk.usage_percent,
                                              config.stale_after_seconds, timestamp_ms);
         record_transition(agent_id, indicator, next,
@@ -340,13 +339,12 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
         const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
         const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
         const auto confirmed = confirm_numeric_status(agent_id, indicator, previous, raw, config.network_readings);
-        const auto anomaly = network.is_up
-                                 ? maybe_anomaly_status(confirmed, agent_id, indicator, value, anomaly_cfg, timestamp_ms)
-                                 : confirmed;
-        const auto next = network.is_up
-                              ? maybe_stale_status(anomaly, agent_id, indicator, value,
-                                                   config.stale_after_seconds, timestamp_ms)
-                              : anomaly;
+        const auto anomaly =
+            network.is_up ? maybe_anomaly_status(confirmed, agent_id, indicator, value, anomaly_cfg, timestamp_ms)
+                          : confirmed;
+        const auto next = network.is_up ? maybe_stale_status(anomaly, agent_id, indicator, value,
+                                                             config.stale_after_seconds, timestamp_ms)
+                                        : anomaly;
         record_transition(agent_id, indicator, next,
                           transition_message("network " + network.interface_name, previous, next, value, "Mbps"),
                           timestamp_ms);
@@ -382,16 +380,6 @@ void StatusEngine::evaluate_metrics(const std::string& agent_id, const SystemMet
                              " found=" + std::to_string(seen);
         record_transition(agent_id, indicator, next, message, timestamp_ms);
     }
-
-    {
-        const auto indicator = std::string("temperature");
-        const auto value = temp_percent(metrics);
-        const auto next = classify_percent(value, PercentThresholds{});
-        const auto previous_row = store_.latest_status_for_indicator(agent_id, indicator);
-        const auto previous = previous_row ? status_from_string(previous_row->new_status) : IndicatorStatus::Grey;
-        record_transition(agent_id, indicator, next, transition_message(indicator, previous, next, value, "C"),
-                          timestamp_ms);
-    }
 }
 
 void StatusEngine::enter_maintenance(const std::string& agent_id, const std::string& reason, int64_t until_ms,
@@ -399,7 +387,7 @@ void StatusEngine::enter_maintenance(const std::string& agent_id, const std::str
 {
     store_.set_agent_maintenance(agent_id, true, reason, until_ms);
     store_.clear_active_alerts_for_agent(agent_id, now_ms);
-    for (const auto& indicator : {"cpu", "memory", "disk", "network", "temperature", "processes"})
+    for (const auto& indicator : {"cpu", "memory", "disk", "network", "processes"})
         record_transition(agent_id, indicator, IndicatorStatus::Blue, "maintenance mode", now_ms);
 }
 
@@ -471,8 +459,8 @@ IndicatorStatus StatusEngine::process_status_for_count(int missing_count, int re
     return IndicatorStatus::Yellow;
 }
 
-double StatusEngine::compute_metric_mean(const std::string& agent_id, const std::string& indicator,
-                                          int baseline_hours, int64_t now_ms)
+double StatusEngine::compute_metric_mean(const std::string& agent_id, const std::string& indicator, int baseline_hours,
+                                         int64_t now_ms)
 {
     const int64_t since_ms = now_ms - static_cast<int64_t>(baseline_hours) * 3'600'000LL;
     const auto rows = store_.get_metrics_in_window(agent_id, since_ms, now_ms);
@@ -538,8 +526,8 @@ double StatusEngine::compute_metric_mean(const std::string& agent_id, const std:
 }
 
 IndicatorStatus StatusEngine::maybe_anomaly_status(IndicatorStatus threshold_status, const std::string& agent_id,
-                                                    const std::string& indicator, double current_value,
-                                                    const AnomalyConfig& anomaly_cfg, int64_t now_ms)
+                                                   const std::string& indicator, double current_value,
+                                                   const AnomalyConfig& anomaly_cfg, int64_t now_ms)
 {
     if (anomaly_cfg.multiplier <= 0.0 || !std::isfinite(current_value) || current_value < 0.0)
         return threshold_status;
@@ -558,8 +546,8 @@ IndicatorStatus StatusEngine::maybe_anomaly_status(IndicatorStatus threshold_sta
 
     if (current_value >= entry.mean * anomaly_cfg.multiplier)
     {
-        LOGF_DEBUG("Anomaly detected agent_id=%s indicator=%s value=%.2f mean=%.2f multiplier=%.2f",
-                   agent_id.c_str(), indicator.c_str(), current_value, entry.mean, anomaly_cfg.multiplier);
+        LOGF_DEBUG("Anomaly detected agent_id=%s indicator=%s value=%.2f mean=%.2f multiplier=%.2f", agent_id.c_str(),
+                   indicator.c_str(), current_value, entry.mean, anomaly_cfg.multiplier);
         // Upgrade at least to Yellow; don't downgrade if threshold already says worse
         if (static_cast<int>(threshold_status) < static_cast<int>(IndicatorStatus::Yellow))
             return IndicatorStatus::Yellow;
@@ -569,8 +557,8 @@ IndicatorStatus StatusEngine::maybe_anomaly_status(IndicatorStatus threshold_sta
 }
 
 IndicatorStatus StatusEngine::maybe_stale_status(IndicatorStatus threshold_status, const std::string& agent_id,
-                                                  const std::string& indicator, double current_value,
-                                                  int stale_after_seconds, int64_t now_ms)
+                                                 const std::string& indicator, double current_value,
+                                                 int stale_after_seconds, int64_t now_ms)
 {
     if (stale_after_seconds <= 0 || !std::isfinite(current_value))
         return threshold_status;
@@ -589,8 +577,8 @@ IndicatorStatus StatusEngine::maybe_stale_status(IndicatorStatus threshold_statu
     const int64_t stale_ms = now_ms - entry.value_since_ms;
     if (stale_ms >= static_cast<int64_t>(stale_after_seconds) * 1000LL)
     {
-        LOGF_DEBUG("Stale metric agent_id=%s indicator=%s unchanged_seconds=%lld", agent_id.c_str(),
-                   indicator.c_str(), static_cast<long long>(stale_ms / 1000));
+        LOGF_DEBUG("Stale metric agent_id=%s indicator=%s unchanged_seconds=%lld", agent_id.c_str(), indicator.c_str(),
+                   static_cast<long long>(stale_ms / 1000));
         if (static_cast<int>(threshold_status) < static_cast<int>(IndicatorStatus::Yellow))
             return IndicatorStatus::Yellow;
     }

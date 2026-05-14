@@ -129,15 +129,13 @@ function networkMbps(network) {
     return ((network.bytes_recv_per_sec + network.bytes_sent_per_sec) * 8) / 1_000_000;
 }
 function maintenanceComponents() {
-    return ['cpu', 'memory', 'disk', 'network', 'temperature', 'processes', 'heartbeat'].map((key) => ({
+    return ['cpu', 'memory', 'disk', 'network', 'processes', 'heartbeat'].map((key) => ({
         key: key,
-        label: key === 'temperature'
-            ? 'Temp'
-            : key === 'processes'
-                ? 'Proc'
-                : key === 'heartbeat'
-                    ? 'Heartbeat'
-                    : key[0].toUpperCase() + key.slice(1),
+        label: key === 'processes'
+            ? 'Proc'
+            : key === 'heartbeat'
+                ? 'Heartbeat'
+                : key[0].toUpperCase() + key.slice(1),
         color: 'blue',
         value: 'maintenance',
         detail: 'Maintenance mode',
@@ -167,7 +165,6 @@ function noDataComponents(agent) {
         { key: 'memory', label: 'Memory', color: 'grey', value: 'no data', detail: 'Awaiting metrics' },
         { key: 'disk', label: 'Disk', color: 'grey', value: 'no data', detail: 'Awaiting metrics' },
         { key: 'network', label: 'Network', color: 'grey', value: 'no data', detail: 'Awaiting metrics' },
-        { key: 'temperature', label: 'Temp', color: 'grey', value: 'no data', detail: 'Awaiting metrics' },
         { key: 'processes', label: 'Proc', color: 'grey', value: 'no data', detail: 'Awaiting metrics' },
         heartbeatComponent(agent),
     ];
@@ -185,7 +182,6 @@ function metricComponents(agent, metrics) {
     const diskStatuses = monitoredDisks.map((disk) => classifyPercent(disk.usage_percent, diskConfigByMount.get(disk.mount_point)?.thresholds ?? DEFAULT_PERCENT_THRESHOLDS));
     const diskUsage = maxPercent(monitoredDisks.map((disk) => disk.usage_percent));
     const hottestDisk = monitoredDisks.reduce((current, disk) => (disk.usage_percent > (current?.usage_percent ?? Number.NEGATIVE_INFINITY) ? disk : current), undefined);
-    const maxTemp = maxPercent(metrics.temperatures.map((sensor) => sensor.temperature_celsius));
     const networkConfigByName = new Map(config.networks.map((network) => [network.interface_name, network]));
     const monitoredNetworks = config.networks.length === 0
         ? metrics.networks.filter((network) => network.interface_name !== 'lo')
@@ -245,14 +241,6 @@ function metricComponents(agent, metrics) {
             detail: networkErrors > 0 ? `${networkErrors} errors/drops` : `${monitoredNetworks.length} interface(s)`,
         },
         {
-            key: 'temperature',
-            label: 'Temp',
-            color: metrics.temperatures.length === 0 ? 'grey' : classifyPercent(maxTemp),
-            value: metrics.temperatures.length === 0 ? 'n/a' : `${maxTemp.toFixed(0)}C`,
-            detail: `${metrics.temperatures.length} sensor(s)`,
-            percent: metrics.temperatures.length === 0 ? undefined : Math.min(maxTemp, 100),
-        },
-        {
             key: 'processes',
             label: 'Proc',
             color: processColor,
@@ -270,6 +258,13 @@ function metricComponents(agent, metrics) {
         },
         heartbeatComponent(agent),
     ];
+}
+export function primaryIpAddress(metrics) {
+    const candidates = metrics?.networks.filter((network) => {
+        const ip = network.ip_address?.trim();
+        return ip && ip !== '127.0.0.1' && ip !== '::1' && network.interface_name !== 'lo';
+    }) ?? [];
+    return candidates[0]?.ip_address ?? '';
 }
 export function toDashboardAgents(agents, snapshots, alerts = []) {
     const latest = new Map(snapshots.map((snapshot) => [snapshot.agent_id, snapshot]));
@@ -290,6 +285,7 @@ export function toDashboardAgents(agents, snapshots, alerts = []) {
             maintenanceReason: agent.maintenance_reason ?? '',
             maintenanceUntil: agent.maintenance_until ?? 0,
             collectionInterval: agent.collection_interval,
+            heartbeatInterval: agent.heartbeat_interval ?? 5,
             processLimit: agent.process_limit,
             thresholds: agent.thresholds ?? DEFAULT_THRESHOLDS,
             collectorConfig: collectorConfigWithDefaults(agent.collector_config),
@@ -302,7 +298,9 @@ export function toDashboardAgents(agents, snapshots, alerts = []) {
             alertColor: unacked.has(agent.agent_id) ? 'red' : 'green',
             components,
             metrics,
+            ipAddress: primaryIpAddress(metrics),
             description: agent.description ?? '',
+            runbookMarkdown: agent.runbook_markdown ?? '',
         };
         row.status = hostStatus(row);
         return row;

@@ -128,9 +128,9 @@ Run the end-to-end integration test:
 meson test -C builddir-release server_agent_integration_test --print-errorlogs
 ```
 
-That test starts an isolated server, enrolls and approves an agent, verifies CPU,
-memory, disk, temperature, process, network, OS, host, platform, and uptime data
-reach the server, disconnects the agent, and shuts down.
+That test starts an isolated server, enrolls and approves an agent, verifies
+CPU, memory, disk, process, network, OS, host, platform, and uptime data reach
+the server, disconnects the agent, and shuts down.
 
 ## Offline Behavior
 

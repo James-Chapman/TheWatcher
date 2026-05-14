@@ -1283,6 +1283,13 @@ td {
   border-color: var(--accent, #4a9eff);
 }
 
+.runbook-editor {
+  box-sizing: border-box;
+  min-height: 14rem;
+  width: 100%;
+  resize: vertical;
+}
+
 .field-hint {
   font-size: 10px;
   color: var(--muted);

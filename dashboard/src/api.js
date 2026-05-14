@@ -80,6 +80,9 @@ export async function deleteAgent(agentId) {
 export async function setAgentGroups(agentId, groupIds) {
     await jsonPost(`/api/agents/${encodeURIComponent(agentId)}/groups`, { group_ids: groupIds });
 }
+export async function setAgentRunbook(agentId, markdown) {
+    await jsonPost(`/api/agents/${encodeURIComponent(agentId)}/runbook`, { markdown });
+}
 export async function setAgentInterval(agentId, intervalSeconds) {
     await jsonPost(`/api/agents/${encodeURIComponent(agentId)}/set_interval`, {
         interval_seconds: intervalSeconds,
@@ -202,13 +205,13 @@ export async function fetchLogMatches(agentId, limit = 200) {
 export async function fetchViews() {
     return fetchJson('/api/views');
 }
-export async function createView(name, agentIds, isPublic) {
-    return jsonPost('/api/views', { name, agent_ids: agentIds, is_public: isPublic });
+export async function createView(name, agentIds, isPublic, groupId) {
+    return jsonPost('/api/views', { name, agent_ids: agentIds, is_public: isPublic, group_id: groupId });
 }
-export async function updateView(viewId, name, agentIds, isPublic) {
+export async function updateView(viewId, name, agentIds, isPublic, groupId) {
     return mutateJson(`/api/views/${viewId}`, {
         method: 'PUT',
-        body: JSON.stringify({ name, agent_ids: agentIds, is_public: isPublic }),
+        body: JSON.stringify({ name, agent_ids: agentIds, is_public: isPublic, group_id: groupId }),
         headers: { 'Content-Type': 'application/json' },
     });
 }

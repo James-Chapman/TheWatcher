@@ -4,8 +4,9 @@
 
 #include "store.hpp"
 
-#include <libpq-fe.h>
 #include <string>
+
+#include <libpq-fe.h>
 
 namespace thewatcher::server
 {
@@ -60,8 +61,8 @@ public:
     std::vector<StatusHistoryRow> list_status_history(const std::string& agent_id, int limit) override;
     std::optional<PendingStatusRecord> get_pending_status(const std::string& agent_id,
                                                           const std::string& indicator) override;
-    void set_pending_status(const std::string& agent_id, const std::string& indicator,
-                            const std::string& target_status, int count) override;
+    void set_pending_status(const std::string& agent_id, const std::string& indicator, const std::string& target_status,
+                            int count) override;
     void clear_pending_status(const std::string& agent_id, const std::string& indicator) override;
     int64_t insert_alert(const AlertRecord& alert) override;
     std::vector<AlertRecord> list_alerts(bool include_deleted) override;
@@ -74,6 +75,7 @@ public:
     void bulk_soft_delete_alerts(const std::vector<int64_t>& alert_ids, int64_t deleted_at) override;
     void clear_active_alerts_for_agent(const std::string& agent_id, int64_t cleared_at) override;
     void set_agent_description(const std::string& agent_id, const std::string& description) override;
+    void set_agent_runbook(const std::string& agent_id, const std::string& markdown) override;
     std::vector<std::string> get_offline_unalerted_agent_ids() override;
     void archive_heartbeat_alerts_for_agent(const std::string& agent_id, int64_t deleted_at) override;
     void escalate_old_alerts(int64_t cutoff_ms, int64_t now_ms) override;

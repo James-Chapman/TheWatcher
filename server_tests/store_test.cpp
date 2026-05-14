@@ -1,7 +1,8 @@
 #include "../server/store_sqlite.hpp"
 
-#include <algorithm>
 #include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
 #include <filesystem>
 
 using namespace thewatcher;
@@ -501,7 +502,7 @@ SCENARIO("A new store bootstraps the default admin user and Admins group")
             THEN("the default admin user exists without storing the plaintext password")
             {
                 REQUIRE(user.has_value());
-                REQUIRE(user->role == "admin");
+                REQUIRE(user->role == "global_admin");
                 REQUIRE(user->built_in == true);
                 REQUIRE(user->password_hash != "look_at_me");
             }
@@ -827,8 +828,12 @@ SCENARIO("Unacknowledged alerts older than the cutoff are escalated")
             {
                 auto alerts = store.list_alerts(false);
                 REQUIRE(alerts.size() == 2);
-                auto it_old = std::find_if(alerts.begin(), alerts.end(), [](const AlertRecord& a) { return a.indicator == "cpu"; });
-                auto it_recent = std::find_if(alerts.begin(), alerts.end(), [](const AlertRecord& a) { return a.indicator == "memory"; });
+                auto it_old = std::find_if(alerts.begin(), alerts.end(), [](const AlertRecord& a) {
+                    return a.indicator == "cpu";
+                });
+                auto it_recent = std::find_if(alerts.begin(), alerts.end(), [](const AlertRecord& a) {
+                    return a.indicator == "memory";
+                });
                 REQUIRE(it_old != alerts.end());
                 REQUIRE(it_recent != alerts.end());
                 REQUIRE(it_old->escalated_at == 10000);
@@ -970,7 +975,6 @@ SCENARIO("Maintenance windows can be created, listed, and deleted")
     }
 }
 
-
 SCENARIO("Bulk soft-deleting alerts hides all specified alerts from active queries")
 {
     GIVEN("a store with an agent and four alerts")
@@ -1033,11 +1037,11 @@ SCENARIO("get_offline_unalerted_agent_ids returns only offline approved agents w
             store.upsert_agent(r);
         };
 
-        make_agent("agent-online",      true,  true,  false); // online — excluded
-        make_agent("agent-offline-ok",  true,  false, false); // offline, no alert — should appear
+        make_agent("agent-online", true, true, false);           // online — excluded
+        make_agent("agent-offline-ok", true, false, false);      // offline, no alert — should appear
         make_agent("agent-offline-alerted", true, false, false); // offline, has alert — excluded
-        make_agent("agent-pending",     false, false, false); // not approved — excluded
-        make_agent("agent-maintenance", true,  false, true);  // maintenance — excluded
+        make_agent("agent-pending", false, false, false);        // not approved — excluded
+        make_agent("agent-maintenance", true, false, true);      // maintenance — excluded
 
         AlertRecord alert;
         alert.agent_id = "agent-offline-alerted";
@@ -1177,8 +1181,9 @@ SCENARIO("set_agent_description stores a description against a known agent")
             THEN("the description is returned when the agent is listed")
             {
                 auto agents = store.list_agents();
-                auto it = std::find_if(agents.begin(), agents.end(),
-                    [](const AgentRecord& r) { return r.agent_id == "desc-agent"; });
+                auto it = std::find_if(agents.begin(), agents.end(), [](const AgentRecord& r) {
+                    return r.agent_id == "desc-agent";
+                });
                 REQUIRE(it != agents.end());
                 REQUIRE(it->description == "Primary database server");
             }
@@ -1192,8 +1197,9 @@ SCENARIO("set_agent_description stores a description against a known agent")
             THEN("the latest value is stored")
             {
                 auto agents = store.list_agents();
-                auto it = std::find_if(agents.begin(), agents.end(),
-                    [](const AgentRecord& r) { return r.agent_id == "desc-agent"; });
+                auto it = std::find_if(agents.begin(), agents.end(), [](const AgentRecord& r) {
+                    return r.agent_id == "desc-agent";
+                });
                 REQUIRE(it != agents.end());
                 REQUIRE(it->description == "second");
             }
@@ -1210,8 +1216,9 @@ SCENARIO("disable_user and enable_user toggle the disabled flag")
         store.create_user("operator1", "hash", "operator");
 
         auto users = store.list_users();
-        auto it = std::find_if(users.begin(), users.end(),
-            [](const UserRecord& r) { return r.username == "operator1"; });
+        auto it = std::find_if(users.begin(), users.end(), [](const UserRecord& r) {
+            return r.username == "operator1";
+        });
         REQUIRE(it != users.end());
         int64_t uid = it->user_id;
 
@@ -1222,8 +1229,9 @@ SCENARIO("disable_user and enable_user toggle the disabled flag")
             THEN("list_users shows the user as disabled")
             {
                 auto updated = store.list_users();
-                auto u = std::find_if(updated.begin(), updated.end(),
-                    [](const UserRecord& r) { return r.username == "operator1"; });
+                auto u = std::find_if(updated.begin(), updated.end(), [](const UserRecord& r) {
+                    return r.username == "operator1";
+                });
                 REQUIRE(u != updated.end());
                 REQUIRE(u->disabled == true);
             }
@@ -1237,8 +1245,9 @@ SCENARIO("disable_user and enable_user toggle the disabled flag")
             THEN("list_users shows the user as active again")
             {
                 auto updated = store.list_users();
-                auto u = std::find_if(updated.begin(), updated.end(),
-                    [](const UserRecord& r) { return r.username == "operator1"; });
+                auto u = std::find_if(updated.begin(), updated.end(), [](const UserRecord& r) {
+                    return r.username == "operator1";
+                });
                 REQUIRE(u != updated.end());
                 REQUIRE(u->disabled == false);
             }
@@ -1256,8 +1265,9 @@ SCENARIO("delete_user removes a non-built-in user")
         store.create_user("to-keep", "h2", "viewer");
 
         auto before = store.list_users();
-        auto it = std::find_if(before.begin(), before.end(),
-            [](const UserRecord& r) { return r.username == "to-delete"; });
+        auto it = std::find_if(before.begin(), before.end(), [](const UserRecord& r) {
+            return r.username == "to-delete";
+        });
         REQUIRE(it != before.end());
         int64_t del_uid = it->user_id;
 
@@ -1268,12 +1278,14 @@ SCENARIO("delete_user removes a non-built-in user")
             THEN("the user no longer appears in list_users")
             {
                 auto after = store.list_users();
-                auto gone = std::find_if(after.begin(), after.end(),
-                    [](const UserRecord& r) { return r.username == "to-delete"; });
+                auto gone = std::find_if(after.begin(), after.end(), [](const UserRecord& r) {
+                    return r.username == "to-delete";
+                });
                 REQUIRE(gone == after.end());
 
-                auto kept = std::find_if(after.begin(), after.end(),
-                    [](const UserRecord& r) { return r.username == "to-keep"; });
+                auto kept = std::find_if(after.begin(), after.end(), [](const UserRecord& r) {
+                    return r.username == "to-keep";
+                });
                 REQUIRE(kept != after.end());
             }
         }
@@ -1289,8 +1301,9 @@ SCENARIO("update_user_password changes the stored credential hash")
         store.create_user("pwuser", "old-hash", "viewer");
 
         auto users = store.list_users();
-        auto it = std::find_if(users.begin(), users.end(),
-            [](const UserRecord& r) { return r.username == "pwuser"; });
+        auto it = std::find_if(users.begin(), users.end(), [](const UserRecord& r) {
+            return r.username == "pwuser";
+        });
         REQUIRE(it != users.end());
         int64_t uid = it->user_id;
 
@@ -1301,8 +1314,9 @@ SCENARIO("update_user_password changes the stored credential hash")
             THEN("the stored password_hash reflects the new value")
             {
                 auto updated = store.list_users();
-                auto u = std::find_if(updated.begin(), updated.end(),
-                    [](const UserRecord& r) { return r.username == "pwuser"; });
+                auto u = std::find_if(updated.begin(), updated.end(), [](const UserRecord& r) {
+                    return r.username == "pwuser";
+                });
                 REQUIRE(u != updated.end());
                 REQUIRE(u->password_hash == "new-hash");
                 REQUIRE(u->password_hash != "old-hash");
@@ -1375,7 +1389,7 @@ SCENARIO("session lifecycle: create, retrieve by token, and expire")
             session.token = "tok-abc";
             session.user_id = 1;
             session.username = "thewatcher";
-            session.role = "admin";
+            session.role = "global_admin";
             session.created_at = 1000;
             session.expires_at = 9999;
             store.create_session(session);
@@ -1386,7 +1400,7 @@ SCENARIO("session lifecycle: create, retrieve by token, and expire")
             {
                 REQUIRE(result.has_value());
                 REQUIRE(result->username == "thewatcher");
-                REQUIRE(result->role == "admin");
+                REQUIRE(result->role == "global_admin");
                 REQUIRE(result->expires_at == 9999);
             }
         }
@@ -1397,7 +1411,7 @@ SCENARIO("session lifecycle: create, retrieve by token, and expire")
             session.token = "tok-expired";
             session.user_id = 1;
             session.username = "thewatcher";
-            session.role = "admin";
+            session.role = "global_admin";
             session.created_at = 1000;
             session.expires_at = 2000;
             store.create_session(session);
@@ -1416,7 +1430,7 @@ SCENARIO("session lifecycle: create, retrieve by token, and expire")
             session.token = "tok-delete";
             session.user_id = 1;
             session.username = "thewatcher";
-            session.role = "admin";
+            session.role = "global_admin";
             session.created_at = 1000;
             session.expires_at = 99999;
             store.create_session(session);
@@ -1847,13 +1861,13 @@ SCENARIO("Silence rules can be created, listed, and deleted")
         WHEN("a global silence rule is created")
         {
             SilenceRecord rec;
-            rec.agent_id   = "*";
-            rec.indicator  = "*";
-            rec.reason     = "planned maintenance";
-            rec.until_ms   = now + 3'600'000;
+            rec.agent_id = "*";
+            rec.indicator = "*";
+            rec.reason = "planned maintenance";
+            rec.until_ms = now + 3'600'000;
             rec.created_by = "admin";
             rec.created_at = now;
-            const auto id  = store.create_silence(rec);
+            const auto id = store.create_silence(rec);
 
             THEN("the rule is returned by list_silences")
             {
@@ -1897,10 +1911,10 @@ SCENARIO("Silence rules support wildcard and specific matching")
     GIVEN("a silence rule scoped to a specific agent")
     {
         SilenceRecord rec;
-        rec.agent_id   = "agent-alpha";
-        rec.indicator  = "*";
-        rec.reason     = "agent-specific";
-        rec.until_ms   = future;
+        rec.agent_id = "agent-alpha";
+        rec.indicator = "*";
+        rec.reason = "agent-specific";
+        rec.until_ms = future;
         rec.created_by = "op";
         rec.created_at = now;
         store.create_silence(rec);
@@ -1919,10 +1933,10 @@ SCENARIO("Silence rules support wildcard and specific matching")
     GIVEN("a silence rule scoped to a specific indicator")
     {
         SilenceRecord rec;
-        rec.agent_id   = "*";
-        rec.indicator  = "memory";
-        rec.reason     = "memory spike expected";
-        rec.until_ms   = future;
+        rec.agent_id = "*";
+        rec.indicator = "memory";
+        rec.reason = "memory spike expected";
+        rec.until_ms = future;
         rec.created_by = "op";
         rec.created_at = now;
         store.create_silence(rec);
@@ -1954,19 +1968,19 @@ SCENARIO("prune_metrics_before removes old metrics rows")
         store.upsert_agent(agent);
 
         MetricsRow r1;
-        r1.agent_id    = "agent-prune";
+        r1.agent_id = "agent-prune";
         r1.timestamp_ms = 1000;
         r1.metrics_cbor = {0x01};
         store.insert_metrics(r1);
 
         MetricsRow r2;
-        r2.agent_id    = "agent-prune";
+        r2.agent_id = "agent-prune";
         r2.timestamp_ms = 2000;
         r2.metrics_cbor = {0x02};
         store.insert_metrics(r2);
 
         MetricsRow r3;
-        r3.agent_id    = "agent-prune";
+        r3.agent_id = "agent-prune";
         r3.timestamp_ms = 3000;
         r3.metrics_cbor = {0x03};
         store.insert_metrics(r3);
@@ -2044,10 +2058,12 @@ SCENARIO("Acknowledged alerts are not escalated by escalate_old_alerts")
             THEN("only the unacknowledged alert is escalated")
             {
                 auto alerts = store.list_alerts(false);
-                auto cpu_it = std::find_if(alerts.begin(), alerts.end(),
-                    [](const AlertRecord& a) { return a.indicator == "cpu"; });
-                auto mem_it = std::find_if(alerts.begin(), alerts.end(),
-                    [](const AlertRecord& a) { return a.indicator == "memory"; });
+                auto cpu_it = std::find_if(alerts.begin(), alerts.end(), [](const AlertRecord& a) {
+                    return a.indicator == "cpu";
+                });
+                auto mem_it = std::find_if(alerts.begin(), alerts.end(), [](const AlertRecord& a) {
+                    return a.indicator == "memory";
+                });
 
                 REQUIRE(cpu_it != alerts.end());
                 REQUIRE(mem_it != alerts.end());
@@ -2075,12 +2091,12 @@ SCENARIO("Log matches can be inserted and retrieved by agent")
         WHEN("a log match is inserted for that agent")
         {
             LogMatchRecord rec;
-            rec.agent_id       = "log-agent";
+            rec.agent_id = "log-agent";
             rec.indicator_name = "log:error";
-            rec.path           = "/var/log/app.log";
-            rec.matched_line   = "ERROR: connection refused";
-            rec.severity       = "red";
-            rec.created_at     = 5000;
+            rec.path = "/var/log/app.log";
+            rec.matched_line = "ERROR: connection refused";
+            rec.severity = "red";
+            rec.created_at = 5000;
             store.insert_log_match(rec);
 
             THEN("list_log_matches returns it")
@@ -2101,12 +2117,12 @@ SCENARIO("Log matches can be inserted and retrieved by agent")
             for (int i = 0; i < 5; ++i)
             {
                 LogMatchRecord rec;
-                rec.agent_id       = "log-agent";
+                rec.agent_id = "log-agent";
                 rec.indicator_name = "log:warn";
-                rec.path           = "/var/log/app.log";
-                rec.matched_line   = "WARN line " + std::to_string(i);
-                rec.severity       = "yellow";
-                rec.created_at     = 1000 + i;
+                rec.path = "/var/log/app.log";
+                rec.matched_line = "WARN line " + std::to_string(i);
+                rec.severity = "yellow";
+                rec.created_at = 1000 + i;
                 store.insert_log_match(rec);
             }
 
@@ -2138,18 +2154,18 @@ SCENARIO("Log matches are isolated per agent")
         for (auto id : {"agent-A", "agent-B"})
         {
             AgentRecord r;
-            r.agent_id  = id;
-            r.hostname  = id;
-            r.approved  = true;
+            r.agent_id = id;
+            r.hostname = id;
+            r.approved = true;
             store.upsert_agent(r);
 
             LogMatchRecord rec;
-            rec.agent_id       = id;
+            rec.agent_id = id;
             rec.indicator_name = "log:error";
-            rec.path           = "/var/log/app.log";
-            rec.matched_line   = std::string("line from ") + id;
-            rec.severity       = "red";
-            rec.created_at     = 1000;
+            rec.path = "/var/log/app.log";
+            rec.matched_line = std::string("line from ") + id;
+            rec.severity = "red";
+            rec.created_at = 1000;
             store.insert_log_match(rec);
         }
 
@@ -2179,12 +2195,12 @@ SCENARIO("Views can be created, retrieved, updated, and deleted")
         WHEN("a private view is created for that user")
         {
             ViewRecord v;
-            v.owner_user_id  = uid;
+            v.owner_user_id = uid;
             v.owner_username = "view-owner";
-            v.name           = "My Servers";
-            v.is_public      = false;
-            v.agent_ids      = {"agent-1", "agent-2"};
-            v.created_at     = 1000;
+            v.name = "My Servers";
+            v.is_public = false;
+            v.agent_ids = {"agent-1", "agent-2"};
+            v.created_at = 1000;
             const auto view_id = store.create_view(v);
 
             THEN("get_view returns the record")
@@ -2210,7 +2226,7 @@ SCENARIO("Views can be created, retrieved, updated, and deleted")
             {
                 auto rec = store.get_view(view_id);
                 REQUIRE(rec.has_value());
-                rec->name      = "Renamed View";
+                rec->name = "Renamed View";
                 rec->agent_ids = {"agent-3"};
                 rec->is_public = true;
                 store.update_view(*rec);
@@ -2253,27 +2269,27 @@ SCENARIO("list_views returns own views and public views but not other users' pri
         const int64_t uid_b = store.create_user("user-b", "hb", "operator");
 
         ViewRecord priv_a;
-        priv_a.owner_user_id  = uid_a;
+        priv_a.owner_user_id = uid_a;
         priv_a.owner_username = "user-a";
-        priv_a.name           = "Private A";
-        priv_a.is_public      = false;
-        priv_a.created_at     = 1000;
+        priv_a.name = "Private A";
+        priv_a.is_public = false;
+        priv_a.created_at = 1000;
         store.create_view(priv_a);
 
         ViewRecord priv_b;
-        priv_b.owner_user_id  = uid_b;
+        priv_b.owner_user_id = uid_b;
         priv_b.owner_username = "user-b";
-        priv_b.name           = "Private B";
-        priv_b.is_public      = false;
-        priv_b.created_at     = 2000;
+        priv_b.name = "Private B";
+        priv_b.is_public = false;
+        priv_b.created_at = 2000;
         store.create_view(priv_b);
 
         ViewRecord pub_b;
-        pub_b.owner_user_id  = uid_b;
+        pub_b.owner_user_id = uid_b;
         pub_b.owner_username = "user-b";
-        pub_b.name           = "Public B";
-        pub_b.is_public      = true;
-        pub_b.created_at     = 3000;
+        pub_b.name = "Public B";
+        pub_b.is_public = true;
+        pub_b.created_at = 3000;
         store.create_view(pub_b);
 
         WHEN("list_views is called for user-a")
@@ -2286,8 +2302,10 @@ SCENARIO("list_views returns own views and public views but not other users' pri
                 bool saw_priv_a = false, saw_pub_b = false;
                 for (const auto& v : views)
                 {
-                    if (v.name == "Private A") saw_priv_a = true;
-                    if (v.name == "Public B")  saw_pub_b  = true;
+                    if (v.name == "Private A")
+                        saw_priv_a = true;
+                    if (v.name == "Public B")
+                        saw_pub_b = true;
                 }
                 REQUIRE(saw_priv_a);
                 REQUIRE(saw_pub_b);
@@ -2349,7 +2367,7 @@ SCENARIO("get_metrics_in_window uses inclusive boundaries and returns only rows 
         for (int64_t ts : {1000LL, 2000LL, 3000LL, 4000LL})
         {
             MetricsRow r;
-            r.agent_id     = "win-agent";
+            r.agent_id = "win-agent";
             r.timestamp_ms = ts;
             r.metrics_cbor = {0xA0};
             store.insert_metrics(r);
@@ -2365,8 +2383,10 @@ SCENARIO("get_metrics_in_window uses inclusive boundaries and returns only rows 
                 bool has_2000 = false, has_3000 = false;
                 for (const auto& r : rows)
                 {
-                    if (r.timestamp_ms == 2000) has_2000 = true;
-                    if (r.timestamp_ms == 3000) has_3000 = true;
+                    if (r.timestamp_ms == 2000)
+                        has_2000 = true;
+                    if (r.timestamp_ms == 3000)
+                        has_3000 = true;
                 }
                 REQUIRE(has_2000);
                 REQUIRE(has_3000);
@@ -2470,15 +2490,16 @@ SCENARIO("get_session respects the expiry timestamp and rejects disabled users")
 
         // Use the bootstrapped admin user (user_id=1, username="thewatcher").
         auto users = store.list_users();
-        auto admin_it = std::find_if(users.begin(), users.end(),
-            [](const UserRecord& u) { return u.built_in; });
+        auto admin_it = std::find_if(users.begin(), users.end(), [](const UserRecord& u) {
+            return u.built_in;
+        });
         REQUIRE(admin_it != users.end());
 
         SessionRecord session;
-        session.token      = "tok-expiry";
-        session.user_id    = admin_it->user_id;
-        session.username   = admin_it->username;
-        session.role       = admin_it->role;
+        session.token = "tok-expiry";
+        session.user_id = admin_it->user_id;
+        session.username = admin_it->username;
+        session.role = admin_it->role;
         session.created_at = 1000;
         session.expires_at = 5000;
         store.create_session(session);
@@ -2526,10 +2547,10 @@ SCENARIO("get_session returns nullopt when the user account is disabled")
         const int64_t uid = store.create_user("locked-user", "hash", "operator");
 
         SessionRecord session;
-        session.token      = "tok-disabled";
-        session.user_id    = uid;
-        session.username   = "locked-user";
-        session.role       = "operator";
+        session.token = "tok-disabled";
+        session.user_id = uid;
+        session.username = "locked-user";
+        session.role = "operator";
         session.created_at = 1000;
         session.expires_at = 9999999;
         store.create_session(session);
@@ -2561,26 +2582,26 @@ SCENARIO("Deleting an agent cascades to remove its metrics, alerts, and status h
         agent.hostname = "cascade-host";
         agent.approved = true;
         agent.first_seen = 1;
-        agent.last_seen  = 1;
+        agent.last_seen = 1;
         store.upsert_agent(agent);
 
         MetricsRow row;
-        row.agent_id     = "cascade-agent";
+        row.agent_id = "cascade-agent";
         row.timestamp_ms = 1000;
         row.metrics_cbor = {0xA0};
         store.insert_metrics(row);
 
         AlertRecord alert;
-        alert.agent_id   = "cascade-agent";
-        alert.indicator  = "cpu";
+        alert.agent_id = "cascade-agent";
+        alert.indicator = "cpu";
         alert.old_status = "green";
         alert.new_status = "red";
         alert.created_at = 2000;
         store.insert_alert(alert);
 
         StatusHistoryRow history;
-        history.agent_id   = "cascade-agent";
-        history.indicator  = "cpu";
+        history.agent_id = "cascade-agent";
+        history.indicator = "cpu";
         history.old_status = "green";
         history.new_status = "red";
         history.created_at = 2000;
@@ -2624,8 +2645,8 @@ SCENARIO("mark_agents_offline_before is a no-op when all agents are within the c
         SqliteStore store(":memory:");
 
         AgentRecord agent;
-        agent.agent_id  = "fresh-agent";
-        agent.approved  = true;
+        agent.agent_id = "fresh-agent";
+        agent.approved = true;
         agent.connected = true;
         agent.last_seen = 9000;
         agent.first_seen = 1;
@@ -2657,12 +2678,12 @@ SCENARIO("A view with an empty agent list is stored and retrieved correctly")
         WHEN("a view is created with no agent ids")
         {
             ViewRecord v;
-            v.owner_user_id  = uid;
+            v.owner_user_id = uid;
             v.owner_username = "empty-view-owner";
-            v.name           = "Empty View";
-            v.is_public      = false;
-            v.agent_ids      = {};
-            v.created_at     = 1000;
+            v.name = "Empty View";
+            v.is_public = false;
+            v.agent_ids = {};
+            v.created_at = 1000;
             const auto view_id = store.create_view(v);
 
             THEN("get_view returns the record with an empty agent list")
@@ -2685,10 +2706,10 @@ SCENARIO("is_silenced uses strict less-than on until_ms so expiry is exact")
         SqliteStore store(":memory:");
 
         SilenceRecord rec;
-        rec.agent_id   = "*";
-        rec.indicator  = "*";
-        rec.reason     = "test";
-        rec.until_ms   = 10'000;
+        rec.agent_id = "*";
+        rec.indicator = "*";
+        rec.reason = "test";
+        rec.until_ms = 10'000;
         rec.created_by = "admin";
         rec.created_at = 0;
         store.create_silence(rec);
@@ -2720,12 +2741,12 @@ SCENARIO("approve_agent on a rejected agent clears the rejected flag and approve
         SqliteStore store(":memory:");
 
         AgentRecord agent;
-        agent.agent_id  = "rejected-agent";
-        agent.hostname  = "bad-host";
-        agent.approved  = false;
-        agent.rejected  = false;
+        agent.agent_id = "rejected-agent";
+        agent.hostname = "bad-host";
+        agent.approved = false;
+        agent.rejected = false;
         agent.first_seen = 1;
-        agent.last_seen  = 1;
+        agent.last_seen = 1;
         store.upsert_agent(agent);
         store.reject_agent("rejected-agent");
 
@@ -2759,11 +2780,11 @@ SCENARIO("list_views returns empty for a user who owns no views and there are no
         const int64_t uid_b = store.create_user("user-no-views-b", "hb", "operator");
 
         ViewRecord priv_b;
-        priv_b.owner_user_id  = uid_b;
+        priv_b.owner_user_id = uid_b;
         priv_b.owner_username = "user-no-views-b";
-        priv_b.name           = "B Private";
-        priv_b.is_public      = false;
-        priv_b.created_at     = 1000;
+        priv_b.name = "B Private";
+        priv_b.is_public = false;
+        priv_b.created_at = 1000;
         store.create_view(priv_b);
 
         WHEN("list_views is called for user-a who has no views")
@@ -2797,10 +2818,10 @@ SCENARIO("Runbooks can be created, listed, and deleted")
         WHEN("a runbook is created for indicator=cpu status=red")
         {
             RunbookRecord rec;
-            rec.indicator  = "cpu";
-            rec.status     = "red";
-            rec.url        = "https://wiki.example.com/cpu-runbook";
-            rec.notes      = "Check top processes";
+            rec.indicator = "cpu";
+            rec.status = "red";
+            rec.url = "https://wiki.example.com/cpu-runbook";
+            rec.notes = "Check top processes";
             rec.created_by = "admin";
             rec.created_at = 1000;
             const auto id = store.create_runbook(rec);
@@ -2837,16 +2858,16 @@ SCENARIO("get_runbook returns exact indicator match before wildcard")
         SqliteStore store(unique_store_path("runbook-lookup.db").string());
 
         RunbookRecord wildcard;
-        wildcard.indicator  = "*";
-        wildcard.status     = "red";
-        wildcard.url        = "https://wiki.example.com/generic-red";
+        wildcard.indicator = "*";
+        wildcard.status = "red";
+        wildcard.url = "https://wiki.example.com/generic-red";
         wildcard.created_at = 1000;
         store.create_runbook(wildcard);
 
         RunbookRecord exact;
-        exact.indicator  = "cpu";
-        exact.status     = "red";
-        exact.url        = "https://wiki.example.com/cpu-red";
+        exact.indicator = "cpu";
+        exact.status = "red";
+        exact.url = "https://wiki.example.com/cpu-red";
         exact.created_at = 2000;
         store.create_runbook(exact);
 
@@ -2881,21 +2902,21 @@ SCENARIO("insert_alert persists runbook_url and list_alerts returns it")
         store.upsert_agent({"agent-rb", "host", "linux", "key", true, false, true});
 
         RunbookRecord rb;
-        rb.indicator  = "cpu";
-        rb.status     = "red";
-        rb.url        = "https://wiki.example.com/cpu-runbook";
+        rb.indicator = "cpu";
+        rb.status = "red";
+        rb.url = "https://wiki.example.com/cpu-runbook";
         rb.created_at = 1000;
         store.create_runbook(rb);
 
         WHEN("an alert is inserted with the runbook URL already populated")
         {
             AlertRecord alert;
-            alert.agent_id    = "agent-rb";
-            alert.indicator   = "cpu";
-            alert.old_status  = "green";
-            alert.new_status  = "red";
-            alert.message     = "cpu went red";
-            alert.created_at  = 5000;
+            alert.agent_id = "agent-rb";
+            alert.indicator = "cpu";
+            alert.old_status = "green";
+            alert.new_status = "red";
+            alert.message = "cpu went red";
+            alert.created_at = 5000;
             alert.runbook_url = rb.url;
             const auto id = store.insert_alert(alert);
 

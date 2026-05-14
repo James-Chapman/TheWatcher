@@ -5,15 +5,18 @@
 #include "common/protocol.hpp"
 #include "report_generator.hpp"
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <httplib.h>
-#include <nlohmann/json.hpp>
 #include <optional>
-#include <sodium.h>
 #include <stdexcept>
 #include <unordered_set>
+
+#include <httplib.h>
+#include <sodium.h>
 
 namespace thewatcher::server
 {
@@ -23,7 +26,11 @@ using json = nlohmann::json;
 // ── Construction ──────────────────────────────────────────────────────────────
 
 ApiServer::ApiServer(Store& store, ZapHandler& zap, const std::string& host, int port)
-    : store_(store), zap_(zap), host_(host), port_(port), http_(std::make_unique<httplib::Server>())
+    : store_(store)
+    , zap_(zap)
+    , host_(host)
+    , port_(port)
+    , http_(std::make_unique<httplib::Server>())
 {
     LOG_FUNCTION_TRACE
     LOGF_DEBUG("Constructing API server host=%s port=%d", host_.c_str(), port_);
@@ -95,10 +102,12 @@ namespace
             {"maintenance_reason",   a.maintenance_reason                },
             {"maintenance_until",    a.maintenance_until                 },
             {"collection_interval",  a.collection_interval               },
+            {"heartbeat_interval",   a.heartbeat_interval                },
             {"process_limit",        a.process_limit                     },
             {"first_seen",           a.first_seen                        },
             {"last_seen",            a.last_seen                         },
             {"description",          a.description                       },
+            {"runbook_markdown",     a.runbook_markdown                  },
             {"collector_config",     a.collector_config                  },
             {"thresholds",
              {{"cpu",
@@ -220,32 +229,35 @@ namespace
     json alert_to_json(const AlertRecord& alert)
     {
         return {
-            {"alert_id",        alert.alert_id       },
-            {"agent_id",        alert.agent_id       },
-            {"indicator",       alert.indicator      },
-            {"old_status",      alert.old_status     },
-            {"new_status",      alert.new_status     },
-            {"message",         alert.message        },
-            {"created_at",      alert.created_at     },
-            {"acknowledged_by", alert.acknowledged_by},
-            {"acknowledged_at", alert.acknowledged_at},
-            {"deleted_at",      alert.deleted_at     },
-            {"note",            alert.note           },
-            {"escalated_at",    alert.escalated_at   },
-            {"runbook_url",     alert.runbook_url    }
+            {"alert_id",         alert.alert_id        },
+            {"agent_id",         alert.agent_id        },
+            {"indicator",        alert.indicator       },
+            {"old_status",       alert.old_status      },
+            {"new_status",       alert.new_status      },
+            {"message",          alert.message         },
+            {"created_at",       alert.created_at      },
+            {"acknowledged_by",  alert.acknowledged_by },
+            {"acknowledged_at",  alert.acknowledged_at },
+            {"deleted_at",       alert.deleted_at      },
+            {"note",             alert.note            },
+            {"escalated_at",     alert.escalated_at    },
+            {"runbook_url",      alert.runbook_url     },
+            {"runbook_markdown", alert.runbook_markdown}
         };
     }
 
     json runbook_to_json(const RunbookRecord& r)
     {
         return {
-            {"runbook_id",  r.runbook_id},
-            {"indicator",   r.indicator },
-            {"status",      r.status    },
-            {"url",         r.url       },
-            {"notes",       r.notes     },
-            {"created_by",  r.created_by},
-            {"created_at",  r.created_at}
+            {"runbook_id", r.runbook_id},
+            {"agent_id",   r.agent_id  },
+            {"indicator",  r.indicator },
+            {"status",     r.status    },
+            {"url",        r.url       },
+            {"markdown",   r.markdown  },
+            {"notes",      r.notes     },
+            {"created_by", r.created_by},
+            {"created_at", r.created_at}
         };
     }
 
@@ -337,6 +349,48 @@ namespace
         return hash;
     }
 
+    std::string normalize_role(const std::string& role)
+    {
+        if (role == "admin")
+            return "global_admin";
+        if (role == "operator")
+            return "global_operator";
+        if (role == "viewer")
+            return "global_viewer";
+        return role;
+    }
+
+    bool is_valid_role(const std::string& role)
+    {
+        const auto normalized = normalize_role(role);
+        return normalized == "global_admin" || normalized == "global_operator" || normalized == "global_viewer" ||
+               normalized == "group_admin" || normalized == "group_operator" || normalized == "group_viewer";
+    }
+
+    bool is_global_role(const std::string& role)
+    {
+        const auto normalized = normalize_role(role);
+        return normalized == "global_admin" || normalized == "global_operator" || normalized == "global_viewer";
+    }
+
+    bool can_operate(const std::string& role)
+    {
+        const auto normalized = normalize_role(role);
+        return normalized == "global_admin" || normalized == "global_operator" || normalized == "group_admin" ||
+               normalized == "group_operator";
+    }
+
+    bool can_administer_users(const std::string& role)
+    {
+        const auto normalized = normalize_role(role);
+        return normalized == "global_admin" || normalized == "group_admin";
+    }
+
+    bool can_manage_groups(const std::string& role)
+    {
+        return normalize_role(role) == "global_admin";
+    }
+
     void set_json(httplib::Response& res, const json& body)
     {
         res.set_content(body.dump(), "application/json");
@@ -355,16 +409,6 @@ std::optional<SessionRecord> ApiServer::current_session(const httplib::Request& 
 std::optional<SessionRecord> ApiServer::require_role(const httplib::Request& req, httplib::Response& res,
                                                      const std::string& role)
 {
-    auto role_rank = [](const std::string& value) {
-        if (value == "admin")
-            return 3;
-        if (value == "operator")
-            return 2;
-        if (value == "viewer")
-            return 1;
-        return 0;
-    };
-
     auto session = current_session(req);
     if (!session)
     {
@@ -374,7 +418,15 @@ std::optional<SessionRecord> ApiServer::require_role(const httplib::Request& req
         });
         return std::nullopt;
     }
-    if (role_rank(session->role) < role_rank(role))
+    session->role = normalize_role(session->role);
+
+    const auto needed = normalize_role(role);
+    const bool allowed =
+        needed == "viewer" || needed == "global_viewer" || needed == "group_viewer" ? is_valid_role(session->role)
+        : needed == "operator" || needed == "global_operator" || needed == "group_operator" ? can_operate(session->role)
+        : needed == "admin" || needed == "global_admin" || needed == "group_admin" ? can_administer_users(session->role)
+                                                                                   : false;
+    if (!allowed)
     {
         res.status = 403;
         set_json(res, json{
@@ -387,7 +439,7 @@ std::optional<SessionRecord> ApiServer::require_role(const httplib::Request& req
 
 bool ApiServer::can_access_agent(const SessionRecord& session, const std::string& agent_id)
 {
-    if (session.role == "admin")
+    if (is_global_role(session.role))
         return true;
 
     std::unordered_set<int64_t> user_groups;
@@ -454,7 +506,9 @@ void ApiServer::setup_routes()
             if (!is_json_content_type(req))
             {
                 res.status = 415;
-                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                set_json(res, json{
+                                  {"error", "Content-Type must be application/json"}
+                });
                 return;
             }
             auto body = json::parse(req.body);
@@ -465,7 +519,9 @@ void ApiServer::setup_routes()
             if (username.size() > 64 || password.size() > 256)
             {
                 res.status = 400;
-                set_json(res, json{{"error", "username or password too long"}});
+                set_json(res, json{
+                                  {"error", "username or password too long"}
+                });
                 return;
             }
 
@@ -480,7 +536,9 @@ void ApiServer::setup_routes()
                 {
                     res.status = 429;
                     res.set_header("Retry-After", "900");
-                    set_json(res, json{{"error", "too many failed login attempts; try again later"}});
+                    set_json(res, json{
+                                      {"error", "too many failed login attempts; try again later"}
+                    });
                     return;
                 }
             }
@@ -516,11 +574,11 @@ void ApiServer::setup_routes()
             session.created_at = now;
             session.expires_at = now + (8LL * 60LL * 60LL * 1000LL);
             store_.create_session(session);
-            res.set_header("Set-Cookie",
-                           "tw_session=" + session.token + "; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=28800");
+            res.set_header("Set-Cookie", "tw_session=" + session.token +
+                                             "; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=28800");
             set_json(res, json{
-                              {"username", user->username},
-                              {"role",     user->role    }
+                              {"username", user->username            },
+                              {"role",     normalize_role(user->role)}
             });
         }
         catch (const std::exception& e)
@@ -553,8 +611,8 @@ void ApiServer::setup_routes()
             return;
         }
         set_json(res, json{
-                          {"username", session->username},
-                          {"role",     session->role    }
+                          {"username", session->username            },
+                          {"role",     normalize_role(session->role)}
         });
     });
 
@@ -571,14 +629,25 @@ void ApiServer::setup_routes()
     });
 
     http_->Post("/api/groups", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "viewer");
+        if (!session)
             return;
+        if (!can_manage_groups(session->role))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         try
         {
             if (!is_json_content_type(req))
             {
                 res.status = 415;
-                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                set_json(res, json{
+                                  {"error", "Content-Type must be application/json"}
+                });
                 return;
             }
             auto body = json::parse(req.body);
@@ -600,44 +669,79 @@ void ApiServer::setup_routes()
     });
 
     http_->Get("/api/users", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "viewer");
+        if (!session)
             return;
         auto users = store_.list_users();
+        const auto session_groups = store_.get_user_groups(session->user_id);
         json arr = json::array();
         for (const auto& user : users)
-            arr.push_back(user_to_json(user, store_.get_user_groups(user.user_id)));
+        {
+            const auto user_groups = store_.get_user_groups(user.user_id);
+            bool visible = is_global_role(session->role);
+            for (const auto group_id : user_groups)
+            {
+                visible = visible ||
+                          std::find(session_groups.begin(), session_groups.end(), group_id) != session_groups.end();
+            }
+            if (visible || user.user_id == session->user_id)
+                arr.push_back(user_to_json(user, user_groups));
+        }
         set_json(res, arr);
     });
 
     http_->Post("/api/users", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "viewer");
+        if (!session)
             return;
+        if (!can_administer_users(session->role))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         try
         {
             if (!is_json_content_type(req))
             {
                 res.status = 415;
-                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                set_json(res, json{
+                                  {"error", "Content-Type must be application/json"}
+                });
                 return;
             }
             auto body = json::parse(req.body);
             const auto username = body.at("username").get<std::string>();
             const auto password = body.at("password").get<std::string>();
-            const auto role = body.value("role", "viewer");
+            const auto role = body.value("role", "group_viewer");
             if (username.empty() || password.empty())
                 throw std::runtime_error("username and password are required");
             if (username.size() > 64)
                 throw std::runtime_error("username must be 64 characters or fewer");
             if (password.size() > 256)
                 throw std::runtime_error("password must be 256 characters or fewer");
-            if (role != "admin" && role != "operator" && role != "viewer")
-                throw std::runtime_error("role must be admin, operator, or viewer");
+            if (!is_valid_role(role))
+                throw std::runtime_error("invalid role");
 
             std::vector<int64_t> group_ids;
             if (body.contains("group_ids"))
                 group_ids = body.at("group_ids").get<std::vector<int64_t>>();
+            if (!is_global_role(session->role))
+            {
+                const auto allowed_groups = store_.get_user_groups(session->user_id);
+                for (const auto group_id : group_ids)
+                {
+                    if (std::find(allowed_groups.begin(), allowed_groups.end(), group_id) == allowed_groups.end())
+                        throw std::runtime_error("group admins can only assign users to their own groups");
+                }
+                const auto normalized = normalize_role(role);
+                if (normalized == "global_admin" || normalized == "global_operator" || normalized == "global_viewer")
+                    throw std::runtime_error("group admins can only create group-scoped users");
+            }
 
-            const auto user_id = store_.create_user(username, hash_password(password), role);
+            const auto user_id = store_.create_user(username, hash_password(password), normalize_role(role));
             store_.set_user_groups(user_id, group_ids);
             LOGF_INFO("Created user username=%s role=%s group_count=%zu", username.c_str(), role.c_str(),
                       group_ids.size());
@@ -664,7 +768,12 @@ void ApiServer::setup_routes()
         for (const auto& alert : alerts)
         {
             if (can_access_agent(*session, alert.agent_id))
-                arr.push_back(alert_to_json(alert));
+            {
+                auto item = alert;
+                if (auto agent = store_.get_agent(alert.agent_id))
+                    item.runbook_markdown = agent->runbook_markdown;
+                arr.push_back(alert_to_json(item));
+            }
         }
         set_json(res, arr);
     });
@@ -678,7 +787,12 @@ void ApiServer::setup_routes()
         for (const auto& alert : alerts)
         {
             if (can_access_agent(*session, alert.agent_id))
-                arr.push_back(alert_to_json(alert));
+            {
+                auto item = alert;
+                if (auto agent = store_.get_agent(alert.agent_id))
+                    item.runbook_markdown = agent->runbook_markdown;
+                arr.push_back(alert_to_json(item));
+            }
         }
         set_json(res, arr);
     });
@@ -694,7 +808,9 @@ void ApiServer::setup_routes()
         if (!allowed)
         {
             res.status = 403;
-            set_json(res, json{{"error", "alert is outside the user's groups"}});
+            set_json(res, json{
+                              {"error", "alert is outside the user's groups"}
+            });
             return;
         }
         std::string note;
@@ -710,10 +826,14 @@ void ApiServer::setup_routes()
                         note.resize(4096);
                 }
             }
-            catch (...) {}
+            catch (...)
+            {
+            }
         }
         store_.acknowledge_alert(alert_id, session->username, now_ms(), note);
-        set_json(res, json{{"ok", true}});
+        set_json(res, json{
+                          {"ok", true}
+        });
     });
 
     http_->Post("/api/alerts/bulk-ack", [this](const httplib::Request& req, httplib::Response& res) {
@@ -723,29 +843,42 @@ void ApiServer::setup_routes()
         if (req.body.empty())
         {
             res.status = 400;
-            set_json(res, json{{"error", "body required"}});
+            set_json(res, json{
+                              {"error", "body required"}
+            });
             return;
         }
         json body;
-        try { body = json::parse(req.body); }
-        catch (...) { res.status = 400; set_json(res, json{{"error", "invalid JSON"}}); return; }
+        try
+        {
+            body = json::parse(req.body);
+        }
+        catch (...)
+        {
+            res.status = 400;
+            set_json(res, json{
+                              {"error", "invalid JSON"}
+            });
+            return;
+        }
 
         if (!body.contains("alert_ids") || !body["alert_ids"].is_array())
         {
             res.status = 400;
-            set_json(res, json{{"error", "alert_ids array required"}});
+            set_json(res, json{
+                              {"error", "alert_ids array required"}
+            });
             return;
         }
-        std::string note = (body.contains("note") && body["note"].is_string())
-                              ? body["note"].get<std::string>()
-                              : "";
+        std::string note = (body.contains("note") && body["note"].is_string()) ? body["note"].get<std::string>() : "";
         if (note.size() > 4096)
             note.resize(4096);
         const auto all_alerts = store_.list_alerts(false);
         std::vector<int64_t> allowed_ids;
         for (const auto& id_val : body["alert_ids"])
         {
-            if (!id_val.is_number_integer()) continue;
+            if (!id_val.is_number_integer())
+                continue;
             const auto id = id_val.get<int64_t>();
             for (const auto& alert : all_alerts)
             {
@@ -757,7 +890,10 @@ void ApiServer::setup_routes()
             }
         }
         store_.bulk_acknowledge_alerts(allowed_ids, session->username, now_ms(), note);
-        set_json(res, json{{"ok", true}, {"count", allowed_ids.size()}});
+        set_json(res, json{
+                          {"ok",    true              },
+                          {"count", allowed_ids.size()}
+        });
     });
 
     http_->Post("/api/alerts/bulk-archive", [this](const httplib::Request& req, httplib::Response& res) {
@@ -767,24 +903,39 @@ void ApiServer::setup_routes()
         if (req.body.empty())
         {
             res.status = 400;
-            set_json(res, json{{"error", "body required"}});
+            set_json(res, json{
+                              {"error", "body required"}
+            });
             return;
         }
         json body;
-        try { body = json::parse(req.body); }
-        catch (...) { res.status = 400; set_json(res, json{{"error", "invalid JSON"}}); return; }
+        try
+        {
+            body = json::parse(req.body);
+        }
+        catch (...)
+        {
+            res.status = 400;
+            set_json(res, json{
+                              {"error", "invalid JSON"}
+            });
+            return;
+        }
 
         if (!body.contains("alert_ids") || !body["alert_ids"].is_array())
         {
             res.status = 400;
-            set_json(res, json{{"error", "alert_ids array required"}});
+            set_json(res, json{
+                              {"error", "alert_ids array required"}
+            });
             return;
         }
         const auto all_alerts = store_.list_alerts(false);
         std::vector<int64_t> allowed_ids;
         for (const auto& id_val : body["alert_ids"])
         {
-            if (!id_val.is_number_integer()) continue;
+            if (!id_val.is_number_integer())
+                continue;
             const auto id = id_val.get<int64_t>();
             for (const auto& alert : all_alerts)
             {
@@ -796,7 +947,10 @@ void ApiServer::setup_routes()
             }
         }
         store_.bulk_soft_delete_alerts(allowed_ids, now_ms());
-        set_json(res, json{{"ok", true}, {"count", allowed_ids.size()}});
+        set_json(res, json{
+                          {"ok",    true              },
+                          {"count", allowed_ids.size()}
+        });
     });
 
     http_->Delete("/api/alerts/:id", [this](const httplib::Request& req, httplib::Response& res) {
@@ -822,8 +976,17 @@ void ApiServer::setup_routes()
     });
 
     http_->Get("/api/pending-enrollments", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "operator");
+        if (!session)
             return;
+        if (!is_global_role(session->role))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         auto agents = store_.list_pending_agents();
         json arr = json::array();
         for (auto& a : agents)
@@ -866,8 +1029,17 @@ void ApiServer::setup_routes()
 
     // POST /api/agents/:id/approve — approve an agent
     http_->Post("/api/agents/:id/approve", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "operator");
+        if (!session)
             return;
+        if (!is_global_role(session->role))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         try
         {
             auto id = req.path_params.at("id");
@@ -921,8 +1093,17 @@ void ApiServer::setup_routes()
 
     // POST /api/agents/:id/reject — reject an agent enrollment
     http_->Post("/api/agents/:id/reject", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "operator");
+        if (!session)
             return;
+        if (!is_global_role(session->role))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         try
         {
             auto id = req.path_params.at("id");
@@ -956,8 +1137,17 @@ void ApiServer::setup_routes()
 
     // DELETE /api/agents/:id — remove agent
     http_->Post("/api/agents/:id/groups", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "operator");
+        if (!session)
             return;
+        if (!is_global_role(session->role))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         try
         {
             auto id = req.path_params.at("id");
@@ -983,7 +1173,8 @@ void ApiServer::setup_routes()
         try
         {
             auto id = req.path_params.at("id");
-            if (!require_agent_access(req, res, "operator", id))
+            auto session = require_agent_access(req, res, "operator", id);
+            if (!session)
                 return;
             LOGF_INFO("Deleting agent id=%s", id.c_str());
             auto rec = store_.get_agent(id);
@@ -1030,9 +1221,9 @@ void ApiServer::setup_routes()
                 if (!can_access_agent(*session, r.agent_id))
                     continue;
                 arr.push_back({
-                    {"agent_id",     r.agent_id                                                       },
-                    {"timestamp_ms", r.timestamp_ms                                                   },
-                    {"metrics",      json(thewatcher::proto::unpack<SystemMetrics>(r.metrics_cbor))   }
+                    {"agent_id",     r.agent_id                                                    },
+                    {"timestamp_ms", r.timestamp_ms                                                },
+                    {"metrics",      json(thewatcher::proto::unpack<SystemMetrics>(r.metrics_cbor))}
                 });
             }
             res.set_content(arr.dump(), "application/json");
@@ -1067,9 +1258,9 @@ void ApiServer::setup_routes()
             for (auto& r : rows)
             {
                 arr.push_back({
-                    {"agent_id",     r.agent_id                                                       },
-                    {"timestamp_ms", r.timestamp_ms                                                   },
-                    {"metrics",      json(thewatcher::proto::unpack<SystemMetrics>(r.metrics_cbor))   }
+                    {"agent_id",     r.agent_id                                                    },
+                    {"timestamp_ms", r.timestamp_ms                                                },
+                    {"metrics",      json(thewatcher::proto::unpack<SystemMetrics>(r.metrics_cbor))}
                 });
             }
             res.set_content(arr.dump(), "application/json");
@@ -1295,7 +1486,8 @@ void ApiServer::setup_routes()
         try
         {
             auto id = req.path_params.at("id");
-            if (!require_agent_access(req, res, "operator", id))
+            auto session = require_agent_access(req, res, "operator", id);
+            if (!session)
                 return;
 
             auto rec = store_.get_agent(id);
@@ -1310,9 +1502,12 @@ void ApiServer::setup_routes()
 
             auto body = json::parse(req.body);
             const auto interval = body.at("collection_interval").get<int>();
+            const auto heartbeat_interval = body.value("heartbeat_interval", rec->heartbeat_interval);
             const auto process_limit = body.at("process_limit").get<int>();
             if (interval <= 0)
                 throw std::runtime_error("collection_interval must be greater than zero");
+            if (heartbeat_interval < 1 || heartbeat_interval > 60)
+                throw std::runtime_error("heartbeat_interval must be between 1 and 60");
             if (process_limit <= 0)
                 throw std::runtime_error("process_limit must be greater than zero");
 
@@ -1320,15 +1515,24 @@ void ApiServer::setup_routes()
             validate_collector_config(config);
 
             rec->collection_interval = interval;
+            rec->heartbeat_interval = heartbeat_interval;
             rec->process_limit = process_limit;
             rec->collector_config = config;
+            if (body.contains("runbook_markdown"))
+                rec->runbook_markdown = body.at("runbook_markdown").get<std::string>().substr(0, 65536);
             store_.upsert_agent(*rec);
             store_.set_agent_collector_config(id, config);
-            LOGF_INFO(
-                "Updated collector config id=%s interval=%d process_limit=%d disk_configs=%zu network_configs=%zu "
-                "process_watches=%zu",
-                id.c_str(), interval, process_limit, config.disks.size(), config.networks.size(),
-                config.processes.size());
+            if (body.contains("group_ids"))
+            {
+                auto group_ids = body.at("group_ids").get<std::vector<int64_t>>();
+                if (is_global_role(session->role))
+                    store_.set_agent_groups(id, group_ids);
+            }
+            LOGF_INFO("Updated collector config id=%s interval=%d heartbeat_interval=%d process_limit=%d "
+                      "disk_configs=%zu network_configs=%zu "
+                      "process_watches=%zu",
+                      id.c_str(), interval, heartbeat_interval, process_limit, config.disks.size(),
+                      config.networks.size(), config.processes.size());
             set_json(res, json{
                               {"ok", true}
             });
@@ -1434,13 +1638,13 @@ void ApiServer::setup_routes()
             for (const auto& r : rows)
             {
                 arr.push_back({
-                    {"match_id", r.match_id},
-                    {"agent_id", r.agent_id},
+                    {"match_id",       r.match_id      },
+                    {"agent_id",       r.agent_id      },
                     {"indicator_name", r.indicator_name},
-                    {"path", r.path},
-                    {"matched_line", r.matched_line},
-                    {"severity", r.severity},
-                    {"created_at", r.created_at},
+                    {"path",           r.path          },
+                    {"matched_line",   r.matched_line  },
+                    {"severity",       r.severity      },
+                    {"created_at",     r.created_at    },
                 });
             }
             res.set_content(arr.dump(), "application/json");
@@ -1476,8 +1680,11 @@ void ApiServer::setup_routes()
             const int64_t since = now - (static_cast<int64_t>(days) * 86400LL * 1000LL);
             const int64_t actual = store_.count_metrics_in_window(id, since, now);
             const int64_t window_ms = now - std::max(since, agent->first_seen);
-            const int64_t expected = window_ms > 0 ? window_ms / (static_cast<int64_t>(agent->collection_interval) * 1000LL) : 0;
-            const double pct = expected > 0 ? std::min(100.0, (static_cast<double>(actual) / static_cast<double>(expected)) * 100.0) : 0.0;
+            const int64_t expected =
+                window_ms > 0 ? window_ms / (static_cast<int64_t>(agent->collection_interval) * 1000LL) : 0;
+            const double pct =
+                expected > 0 ? std::min(100.0, (static_cast<double>(actual) / static_cast<double>(expected)) * 100.0)
+                             : 0.0;
             json resp_body = json::object();
             resp_body["agent_id"] = id;
             resp_body["days"] = days;
@@ -1490,7 +1697,7 @@ void ApiServer::setup_routes()
         {
             res.status = 400;
             set_json(res, json{
-                                  {"error", e.what()}
+                              {"error", e.what()}
             });
         }
     });
@@ -1516,7 +1723,9 @@ void ApiServer::setup_routes()
             if (!is_json_content_type(req))
             {
                 res.status = 415;
-                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                set_json(res, json{
+                                  {"error", "Content-Type must be application/json"}
+                });
                 return;
             }
             auto body = json::parse(req.body);
@@ -1579,7 +1788,9 @@ void ApiServer::setup_routes()
             if (!is_json_content_type(req))
             {
                 res.status = 415;
-                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                set_json(res, json{
+                                  {"error", "Content-Type must be application/json"}
+                });
                 return;
             }
             const auto body = json::parse(req.body);
@@ -1588,19 +1799,68 @@ void ApiServer::setup_routes()
                 throw std::runtime_error("description must be 4096 characters or fewer");
             store_.set_agent_description(id, description);
             LOGF_INFO("Set agent description agent_id=%s by=%s", id.c_str(), session->username.c_str());
-            set_json(res, json{{"ok", true}});
+            set_json(res, json{
+                              {"ok", true}
+            });
         }
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
     // GET /api/settings — return configurable server settings (admin only)
-    http_->Get("/api/settings", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+    http_->Post("/api/agents/:id/runbook", [this](const httplib::Request& req, httplib::Response& res) {
+        auto session = require_role(req, res, "operator");
+        if (!session)
             return;
+        try
+        {
+            const auto id = req.path_params.at("id");
+            if (!require_agent_access(req, res, "operator", id))
+                return;
+            if (!is_json_content_type(req))
+            {
+                res.status = 415;
+                set_json(res, json{
+                                  {"error", "Content-Type must be application/json"}
+                });
+                return;
+            }
+            const auto body = json::parse(req.body);
+            const auto markdown = body.value("markdown", std::string(""));
+            if (markdown.size() > 65536)
+                throw std::runtime_error("markdown must be 65536 characters or fewer");
+            store_.set_agent_runbook(id, markdown);
+            LOGF_INFO("Set agent runbook agent_id=%s by=%s", id.c_str(), session->username.c_str());
+            set_json(res, json{
+                              {"ok", true}
+            });
+        }
+        catch (const std::exception& e)
+        {
+            res.status = 400;
+            set_json(res, json{
+                              {"error", e.what()}
+            });
+        }
+    });
+
+    http_->Get("/api/settings", [this](const httplib::Request& req, httplib::Response& res) {
+        auto session = require_role(req, res, "operator");
+        if (!session)
+            return;
+        if (!is_global_role(session->role))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         json out = json::object();
         out["webhook_url"] = store_.get_setting("notifications.webhook_url", "");
         out["offline_after_seconds"] = std::stoi(store_.get_setting("offline_after_seconds", "120"));
@@ -1616,8 +1876,17 @@ void ApiServer::setup_routes()
 
     // PUT /api/settings — update configurable server settings (admin only)
     http_->Put("/api/settings", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "operator");
+        if (!session)
             return;
+        if (!is_global_role(session->role))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         try
         {
             const auto body = json::parse(req.body);
@@ -1670,19 +1939,32 @@ void ApiServer::setup_routes()
             if (body.contains("reports_webhook_url"))
                 store_.set_setting("reports.webhook_url",
                                    body.at("reports_webhook_url").get<std::string>().substr(0, 2048));
-            set_json(res, json{{"ok", true}});
+            set_json(res, json{
+                              {"ok", true}
+            });
         }
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
     // POST /api/reports/send — immediately generate and send a fleet digest (admin only)
     http_->Post("/api/reports/send", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "operator");
+        if (!session)
             return;
+        if (!is_global_role(session->role))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         const auto ts = now_ms();
         const auto payload = build_report_json(store_, ts);
         const bool sent = generate_and_send_report(store_, ts);
@@ -1694,55 +1976,94 @@ void ApiServer::setup_routes()
 
     // PUT /api/users/:id/disable — disable a user account (admin only, not built-in)
     http_->Put("/api/users/:id/disable", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "viewer");
+        if (!session)
             return;
+        if (normalize_role(session->role) != "global_admin")
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         try
         {
             const auto user_id = std::stoll(req.path_params.at("id"));
             store_.disable_user(user_id);
             LOGF_INFO("Disabled user user_id=%lld", static_cast<long long>(user_id));
-            set_json(res, json{{"ok", true}});
+            set_json(res, json{
+                              {"ok", true}
+            });
         }
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
     // PUT /api/users/:id/enable — re-enable a user account (admin only)
     http_->Put("/api/users/:id/enable", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "viewer");
+        if (!session)
             return;
+        if (normalize_role(session->role) != "global_admin")
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         try
         {
             const auto user_id = std::stoll(req.path_params.at("id"));
             store_.enable_user(user_id);
             LOGF_INFO("Enabled user user_id=%lld", static_cast<long long>(user_id));
-            set_json(res, json{{"ok", true}});
+            set_json(res, json{
+                              {"ok", true}
+            });
         }
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
     // DELETE /api/users/:id — delete a user (admin only, not built-in)
     http_->Delete("/api/users/:id", [this](const httplib::Request& req, httplib::Response& res) {
-        if (!require_role(req, res, "admin"))
+        auto session = require_role(req, res, "viewer");
+        if (!session)
             return;
+        if (normalize_role(session->role) != "global_admin")
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "permission denied"}
+            });
+            return;
+        }
         try
         {
             const auto user_id = std::stoll(req.path_params.at("id"));
             store_.delete_user(user_id);
             LOGF_INFO("Deleted user user_id=%lld", static_cast<long long>(user_id));
-            set_json(res, json{{"ok", true}});
+            set_json(res, json{
+                              {"ok", true}
+            });
         }
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -1763,16 +2084,20 @@ void ApiServer::setup_routes()
             if (!target_user)
                 throw std::runtime_error("user not found");
             // Non-admins can only change their own password
-            if (session->role != "admin" && target_user->username != session->username)
+            if (normalize_role(session->role) != "global_admin" && target_user->username != session->username)
             {
                 res.status = 403;
-                set_json(res, json{{"error", "forbidden"}});
+                set_json(res, json{
+                                  {"error", "forbidden"}
+                });
                 return;
             }
             if (!is_json_content_type(req))
             {
                 res.status = 415;
-                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                set_json(res, json{
+                                  {"error", "Content-Type must be application/json"}
+                });
                 return;
             }
             const auto body = json::parse(req.body);
@@ -1784,12 +2109,16 @@ void ApiServer::setup_routes()
             store_.update_user_password(user_id, hash_password(password));
             LOGF_INFO("Changed password for user_id=%lld by=%s", static_cast<long long>(user_id),
                       session->username.c_str());
-            set_json(res, json{{"ok", true}});
+            set_json(res, json{
+                              {"ok", true}
+            });
         }
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -1814,31 +2143,37 @@ void ApiServer::setup_routes()
             if (!is_json_content_type(req))
             {
                 res.status = 415;
-                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                set_json(res, json{
+                                  {"error", "Content-Type must be application/json"}
+                });
                 return;
             }
             const auto body = json::parse(req.body);
             SilenceRecord rec;
-            rec.agent_id   = body.value("agent_id",  std::string("*"));
-            rec.indicator  = body.value("indicator", std::string("*"));
-            rec.reason     = body.value("reason",    std::string(""));
+            rec.agent_id = body.value("agent_id", std::string("*"));
+            rec.indicator = body.value("indicator", std::string("*"));
+            rec.reason = body.value("reason", std::string(""));
             if (rec.reason.size() > 1024)
                 throw std::runtime_error("reason must be 1024 characters or fewer");
-            rec.until_ms   = body.at("until_ms").get<int64_t>();
+            rec.until_ms = body.at("until_ms").get<int64_t>();
             rec.created_by = session->username;
             rec.created_at = now_ms();
             if (rec.until_ms <= rec.created_at)
                 throw std::runtime_error("until_ms must be in the future");
             const auto silence_id = store_.create_silence(rec);
             LOGF_INFO("Created silence silence_id=%lld agent_id=%s indicator=%s by=%s",
-                      static_cast<long long>(silence_id), rec.agent_id.c_str(),
-                      rec.indicator.c_str(), session->username.c_str());
-            set_json(res, json{{"silence_id", silence_id}});
+                      static_cast<long long>(silence_id), rec.agent_id.c_str(), rec.indicator.c_str(),
+                      session->username.c_str());
+            set_json(res, json{
+                              {"silence_id", silence_id}
+            });
         }
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -1850,12 +2185,16 @@ void ApiServer::setup_routes()
         {
             const auto silence_id = std::stoll(req.path_params.at("id"));
             store_.delete_silence(silence_id);
-            set_json(res, json{{"ok", true}});
+            set_json(res, json{
+                              {"ok", true}
+            });
         }
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -1878,7 +2217,9 @@ void ApiServer::setup_routes()
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -1891,6 +2232,7 @@ void ApiServer::setup_routes()
             {"owner_user_id",  v.owner_user_id },
             {"owner_username", v.owner_username},
             {"is_public",      v.is_public     },
+            {"group_id",       v.group_id      },
             {"agent_ids",      v.agent_ids     },
             {"created_at",     v.created_at    },
         };
@@ -1901,8 +2243,9 @@ void ApiServer::setup_routes()
         try
         {
             auto session = require_role(req, res, "viewer");
-            if (!session) return;
-            auto rows = store_.list_views(session->user_id);
+            if (!session)
+                return;
+            auto rows = store_.list_views(is_global_role(session->role) ? 0 : session->user_id);
             json arr = json::array();
             for (const auto& v : rows)
                 arr.push_back(view_to_json(v));
@@ -1912,7 +2255,9 @@ void ApiServer::setup_routes()
         {
             LOGF_WARNING("GET /api/views failed: %s", e.what());
             res.status = 500;
-            set_json(res, json{{"error", "internal error"}});
+            set_json(res, json{
+                              {"error", "internal error"}
+            });
         }
     });
 
@@ -1921,7 +2266,8 @@ void ApiServer::setup_routes()
         try
         {
             auto session = require_role(req, res, "operator");
-            if (!session) return;
+            if (!session)
+                return;
             auto body = json::parse(req.body);
             ViewRecord rec;
             rec.name = body.at("name").get<std::string>();
@@ -1929,6 +2275,13 @@ void ApiServer::setup_routes()
                 throw std::runtime_error("name is required");
             rec.owner_user_id = session->user_id;
             rec.is_public = body.value("is_public", false);
+            rec.group_id = body.value("group_id", static_cast<int64_t>(0));
+            if (!is_global_role(session->role))
+            {
+                const auto groups = store_.get_user_groups(session->user_id);
+                if (std::find(groups.begin(), groups.end(), rec.group_id) == groups.end())
+                    throw std::runtime_error("view group is outside the user's groups");
+            }
             if (body.contains("agent_ids") && body["agent_ids"].is_array())
                 rec.agent_ids = body["agent_ids"].get<std::vector<std::string>>();
             rec.created_at = now_ms();
@@ -1942,7 +2295,9 @@ void ApiServer::setup_routes()
         {
             LOGF_WARNING("POST /api/views failed: %s", e.what());
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -1951,19 +2306,26 @@ void ApiServer::setup_routes()
         try
         {
             auto session = require_role(req, res, "viewer");
-            if (!session) return;
+            if (!session)
+                return;
             const auto id = std::stoll(req.path_params.at("id"));
             auto v = store_.get_view(id);
             if (!v)
             {
                 res.status = 404;
-                set_json(res, json{{"error", "not found"}});
+                set_json(res, json{
+                                  {"error", "not found"}
+                });
                 return;
             }
-            if (!v->is_public && v->owner_user_id != session->user_id && session->role != "admin")
+            auto groups = store_.get_user_groups(session->user_id);
+            const auto in_group = std::find(groups.begin(), groups.end(), v->group_id) != groups.end();
+            if (!v->is_public && v->owner_user_id != session->user_id && !is_global_role(session->role) && !in_group)
             {
                 res.status = 403;
-                set_json(res, json{{"error", "forbidden"}});
+                set_json(res, json{
+                                  {"error", "forbidden"}
+                });
                 return;
             }
             set_json(res, view_to_json(*v));
@@ -1971,7 +2333,9 @@ void ApiServer::setup_routes()
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -1980,19 +2344,24 @@ void ApiServer::setup_routes()
         try
         {
             auto session = require_role(req, res, "operator");
-            if (!session) return;
+            if (!session)
+                return;
             const auto id = std::stoll(req.path_params.at("id"));
             auto existing = store_.get_view(id);
             if (!existing)
             {
                 res.status = 404;
-                set_json(res, json{{"error", "not found"}});
+                set_json(res, json{
+                                  {"error", "not found"}
+                });
                 return;
             }
-            if (existing->owner_user_id != session->user_id && session->role != "admin")
+            if (existing->owner_user_id != session->user_id && !is_global_role(session->role))
             {
                 res.status = 403;
-                set_json(res, json{{"error", "forbidden"}});
+                set_json(res, json{
+                                  {"error", "forbidden"}
+                });
                 return;
             }
             auto body = json::parse(req.body);
@@ -2000,6 +2369,13 @@ void ApiServer::setup_routes()
             if (existing->name.empty())
                 throw std::runtime_error("name is required");
             existing->is_public = body.value("is_public", existing->is_public);
+            existing->group_id = body.value("group_id", existing->group_id);
+            if (!is_global_role(session->role))
+            {
+                const auto groups = store_.get_user_groups(session->user_id);
+                if (std::find(groups.begin(), groups.end(), existing->group_id) == groups.end())
+                    throw std::runtime_error("view group is outside the user's groups");
+            }
             if (body.contains("agent_ids") && body["agent_ids"].is_array())
                 existing->agent_ids = body["agent_ids"].get<std::vector<std::string>>();
             store_.update_view(*existing);
@@ -2009,7 +2385,9 @@ void ApiServer::setup_routes()
         {
             LOGF_WARNING("PUT /api/views/:id failed: %s", e.what());
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -2018,28 +2396,37 @@ void ApiServer::setup_routes()
         try
         {
             auto session = require_role(req, res, "operator");
-            if (!session) return;
+            if (!session)
+                return;
             const auto id = std::stoll(req.path_params.at("id"));
             auto existing = store_.get_view(id);
             if (!existing)
             {
                 res.status = 404;
-                set_json(res, json{{"error", "not found"}});
+                set_json(res, json{
+                                  {"error", "not found"}
+                });
                 return;
             }
-            if (existing->owner_user_id != session->user_id && session->role != "admin")
+            if (existing->owner_user_id != session->user_id && !is_global_role(session->role))
             {
                 res.status = 403;
-                set_json(res, json{{"error", "forbidden"}});
+                set_json(res, json{
+                                  {"error", "forbidden"}
+                });
                 return;
             }
             store_.delete_view(id);
-            set_json(res, json{{"ok", true}});
+            set_json(res, json{
+                              {"ok", true}
+            });
         }
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -2050,7 +2437,8 @@ void ApiServer::setup_routes()
         try
         {
             auto session = require_role(req, res, "viewer");
-            if (!session) return;
+            if (!session)
+                return;
             auto rows = store_.list_runbooks();
             json arr = json::array();
             for (const auto& r : rows)
@@ -2060,7 +2448,9 @@ void ApiServer::setup_routes()
         catch (const std::exception& e)
         {
             res.status = 500;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -2068,20 +2458,31 @@ void ApiServer::setup_routes()
     http_->Post("/api/runbooks", [this](const httplib::Request& req, httplib::Response& res) {
         try
         {
-            auto session = require_role(req, res, "admin");
-            if (!session) return;
+            auto session = require_role(req, res, "viewer");
+            if (!session)
+                return;
+            if (normalize_role(session->role) != "global_admin")
+            {
+                res.status = 403;
+                set_json(res, json{
+                                  {"error", "permission denied"}
+                });
+                return;
+            }
             if (!is_json_content_type(req))
             {
                 res.status = 415;
-                set_json(res, json{{"error", "Content-Type must be application/json"}});
+                set_json(res, json{
+                                  {"error", "Content-Type must be application/json"}
+                });
                 return;
             }
             const auto body = json::parse(req.body);
             RunbookRecord rec;
-            rec.indicator  = body.value("indicator", std::string("*"));
-            rec.status     = body.at("status").get<std::string>();
-            rec.url        = body.at("url").get<std::string>();
-            rec.notes      = body.value("notes", std::string(""));
+            rec.indicator = body.value("indicator", std::string("*"));
+            rec.status = body.at("status").get<std::string>();
+            rec.url = body.at("url").get<std::string>();
+            rec.notes = body.value("notes", std::string(""));
             rec.created_by = session->username;
             rec.created_at = now_ms();
             if (rec.url.empty())
@@ -2098,7 +2499,9 @@ void ApiServer::setup_routes()
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 
@@ -2106,16 +2509,29 @@ void ApiServer::setup_routes()
     http_->Delete("/api/runbooks/:id", [this](const httplib::Request& req, httplib::Response& res) {
         try
         {
-            auto session = require_role(req, res, "admin");
-            if (!session) return;
+            auto session = require_role(req, res, "viewer");
+            if (!session)
+                return;
+            if (normalize_role(session->role) != "global_admin")
+            {
+                res.status = 403;
+                set_json(res, json{
+                                  {"error", "permission denied"}
+                });
+                return;
+            }
             const auto id = std::stoll(req.path_params.at("id"));
             store_.delete_runbook(id);
-            set_json(res, json{{"ok", true}});
+            set_json(res, json{
+                              {"ok", true}
+            });
         }
         catch (const std::exception& e)
         {
             res.status = 400;
-            set_json(res, json{{"error", e.what()}});
+            set_json(res, json{
+                              {"error", e.what()}
+            });
         }
     });
 }

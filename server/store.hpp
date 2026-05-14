@@ -25,6 +25,7 @@ struct AgentRecord
     std::string maintenance_reason;
     int64_t maintenance_until = 0;
     int collection_interval = 30;
+    int heartbeat_interval = 5;
     int process_limit = 25;
     int64_t first_seen = 0;
     int64_t last_seen = 0;
@@ -42,6 +43,7 @@ struct AgentRecord
     double network_critical_pct_of_avg = 200.0;
     CollectorConfig collector_config;
     std::string description;
+    std::string runbook_markdown;
 };
 
 struct MetricsRow
@@ -104,6 +106,7 @@ struct AlertRecord
     std::string note;
     int64_t escalated_at = 0;
     std::string runbook_url; // populated from runbooks table when alert is created
+    std::string runbook_markdown;
 };
 
 struct MaintenanceWindowRecord
@@ -120,8 +123,8 @@ struct MaintenanceWindowRecord
 struct SilenceRecord
 {
     int64_t silence_id = 0;
-    std::string agent_id;   // '*' for all agents
-    std::string indicator;  // '*' for all indicators
+    std::string agent_id;  // '*' for all agents
+    std::string indicator; // '*' for all indicators
     std::string reason;
     int64_t until_ms = 0;
     std::string created_by;
@@ -150,9 +153,11 @@ struct LogMatchRecord
 struct RunbookRecord
 {
     int64_t runbook_id = 0;
+    std::string agent_id;
     std::string indicator; // exact name like "cpu", or "*" to match any indicator
     std::string status;    // "yellow", "amber", "red"
     std::string url;
+    std::string markdown;
     std::string notes;
     std::string created_by;
     int64_t created_at = 0;
@@ -165,6 +170,7 @@ struct ViewRecord
     int64_t owner_user_id = 0;
     std::string owner_username; // populated on read
     bool is_public = false;
+    int64_t group_id = 0;
     std::vector<std::string> agent_ids; // stored as JSON in config_json
     int64_t created_at = 0;
 };
@@ -232,6 +238,7 @@ public:
     virtual void bulk_soft_delete_alerts(const std::vector<int64_t>& alert_ids, int64_t deleted_at) = 0;
     virtual void clear_active_alerts_for_agent(const std::string& agent_id, int64_t cleared_at) = 0;
     virtual void set_agent_description(const std::string& agent_id, const std::string& description) = 0;
+    virtual void set_agent_runbook(const std::string& agent_id, const std::string& markdown) = 0;
     virtual std::vector<std::string> get_offline_unalerted_agent_ids() = 0;
     virtual void archive_heartbeat_alerts_for_agent(const std::string& agent_id, int64_t deleted_at) = 0;
     virtual void escalate_old_alerts(int64_t cutoff_ms, int64_t now_ms) = 0;
@@ -251,7 +258,8 @@ public:
     virtual std::vector<LogMatchRecord> list_log_matches(const std::string& agent_id, int limit = 200) = 0;
     virtual int64_t create_view(const ViewRecord& rec) = 0;
     virtual std::optional<ViewRecord> get_view(int64_t view_id) = 0;
-    virtual std::vector<ViewRecord> list_views(int64_t user_id) = 0; // own + public
+    virtual std::vector<ViewRecord> list_views(
+        int64_t user_id) = 0; // all when user_id <= 0; otherwise own/public/group
     virtual void update_view(const ViewRecord& rec) = 0;
     virtual void delete_view(int64_t view_id) = 0;
 
@@ -260,8 +268,7 @@ public:
     virtual std::vector<RunbookRecord> list_runbooks() = 0;
     virtual void delete_runbook(int64_t runbook_id) = 0;
     // Returns the best match for (indicator, status): exact > wildcard indicator.
-    virtual std::optional<RunbookRecord> get_runbook(const std::string& indicator,
-                                                     const std::string& status) = 0;
+    virtual std::optional<RunbookRecord> get_runbook(const std::string& indicator, const std::string& status) = 0;
 };
 
 std::unique_ptr<Store> make_store(const std::string& db_type, const std::string& db_path_or_dsn);

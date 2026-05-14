@@ -2,6 +2,7 @@
 #include "../agent/enrollment.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+
 #include <filesystem>
 #include <fstream>
 
@@ -106,6 +107,7 @@ SCENARIO("AgentConfig survives a save and reload cycle")
         original.server_public_key = "abcdefghijklmnopqrstuvwxyz0123456789ABCD";
         original.server_public_key_fingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         original.collection_interval = 15;
+        original.heartbeat_interval = 7;
         original.process_limit = 50;
         original.save(path);
 
@@ -123,6 +125,7 @@ SCENARIO("AgentConfig survives a save and reload cycle")
                 REQUIRE(reloaded.agent_public_key == original.agent_public_key);
                 REQUIRE(reloaded.agent_secret_key == original.agent_secret_key);
                 REQUIRE(reloaded.collection_interval == 15);
+                REQUIRE(reloaded.heartbeat_interval == 7);
                 REQUIRE(reloaded.process_limit == 50);
             }
         }

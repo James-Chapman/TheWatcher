@@ -42,7 +42,6 @@ import {
   setAgentCollectorConfig,
   setAgentDescription,
   sendReport,
-  setAgentGroups,
   setMaintenance,
   updateSettings,
   updateView,
@@ -84,9 +83,25 @@ import {
 } from './status';
 import './styles.css';
 
-const COMPONENT_LABELS = ['CPU', 'Memory', 'Disk', 'Network', 'Temp', 'Proc', 'Heartbeat'];
+const COMPONENT_LABELS = ['CPU', 'Memory', 'Disk', 'Network', 'Proc', 'Heartbeat'];
 
 type View = 'monitoring' | 'agents' | 'pending' | 'alerts' | 'users' | 'maintenance' | 'silences' | 'runbooks' | 'settings' | 'views';
+
+function isGlobal(role: SessionInfo['role']): boolean {
+  return role.startsWith('global_');
+}
+
+function canOperate(role: SessionInfo['role']): boolean {
+  return role === 'global_admin' || role === 'global_operator' || role === 'group_admin' || role === 'group_operator';
+}
+
+function canManageUsers(role: SessionInfo['role']): boolean {
+  return role === 'global_admin' || role === 'group_admin';
+}
+
+function canManageGroups(role: SessionInfo['role']): boolean {
+  return role === 'global_admin';
+}
 
 function colorLabel(color: HealthColor): string {
   return {
@@ -121,7 +136,6 @@ function Dashboard() {
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [busyAction, setBusyAction] = React.useState<string | null>(null);
-  const [groupDrafts, setGroupDrafts] = React.useState<Record<string, string>>({});
   const [configAgentId, setConfigAgentId] = React.useState<string | null>(null);
   const [overviewGroupFilter, setOverviewGroupFilter] = React.useState<OverviewGroupFilter>('all');
 
@@ -191,8 +205,9 @@ function Dashboard() {
 
   const counts = summaryCounts(agents);
   const displayAlerts = toDisplayAlerts(alerts, agents);
-  const admin = session.role === 'admin';
-  const operator = session.role === 'admin' || session.role === 'operator';
+  const global = isGlobal(session.role);
+  const admin = canManageUsers(session.role);
+  const operator = canOperate(session.role);
   const configAgent = agents.find((agent) => agent.id === configAgentId) ?? null;
 
   return (
@@ -206,13 +221,12 @@ function Dashboard() {
           <Tab view={view} target="monitoring" setView={setView} label="Monitoring" />
           <Tab view={view} target="views" setView={setView} label={`Views${customViews.length > 0 ? ` (${customViews.length})` : ''}`} />
           <Tab view={view} target="agents" setView={setView} label="Agents" />
-          {admin ? <Tab view={view} target="pending" setView={setView} label="Pending" /> : null}
+          {global && operator ? <Tab view={view} target="pending" setView={setView} label="Pending" /> : null}
           <Tab view={view} target="alerts" setView={setView} label="Alerts" />
           {operator ? <Tab view={view} target="maintenance" setView={setView} label="Maintenance" /> : null}
           {operator ? <Tab view={view} target="silences" setView={setView} label="Silences" /> : null}
-          {admin ? <Tab view={view} target="users" setView={setView} label="Users" /> : null}
-          {admin ? <Tab view={view} target="runbooks" setView={setView} label="Runbooks" /> : null}
-          {admin ? <Tab view={view} target="settings" setView={setView} label="Settings" /> : null}
+          <Tab view={view} target="users" setView={setView} label="Users" />
+          {global && operator ? <Tab view={view} target="settings" setView={setView} label="Settings" /> : null}
         </nav>
         <div className="topbar-meta">
           <span>
@@ -296,6 +310,7 @@ function Dashboard() {
           session={session}
           views={customViews}
           onOpenView={(viewId) => { setActiveViewId(viewId); setView('monitoring'); }}
+          groups={groups}
         />
       ) : null}
       {view === 'agents' ? (
@@ -303,14 +318,11 @@ function Dashboard() {
           agents={agents}
           busyAction={busyAction}
           error={error}
-          groupDrafts={groupDrafts}
           groups={groups}
           loading={loading}
-          admin={admin}
           operator={operator}
           onConfigure={setConfigAgentId}
           runAction={runAction}
-          setGroupDrafts={setGroupDrafts}
         />
       ) : null}
       {configAgent ? (
@@ -319,6 +331,8 @@ function Dashboard() {
           busy={busyAction === `${configAgent.id}:collector_config`}
           onClose={() => setConfigAgentId(null)}
           operator={operator && canManageAgent(configAgent)}
+          global={global}
+          groups={groups}
           runAction={runAction}
         />
       ) : null}
@@ -335,7 +349,6 @@ function Dashboard() {
         <SilencesPage agents={agents} busyAction={busyAction} operator={operator} runAction={runAction} silences={silences} />
       ) : null}
       {view === 'users' ? <UsersPage busyAction={busyAction} groups={groups} runAction={runAction} session={session} users={users} /> : null}
-      {view === 'runbooks' ? <RunbooksPage runAction={runAction} /> : null}
       {view === 'settings' ? <SettingsPage runAction={runAction} /> : null}
     </>
   );
@@ -489,7 +502,7 @@ function MonitoringTable({
                         });
                       }}
                     >
-                      <td><AgentIdentity id={agent.id} name={agent.name} prefix={<span className="chevron">&gt;</span>} /></td>
+                      <td><AgentIdentity id={agent.id} name={agent.name} prefix={<span className="chevron">&gt;</span>} secondary={agent.ipAddress || 'IP unknown'} /></td>
                       <td className={`uptime ${isUptimeAlarm(agent.uptimeSeconds) ? 'uptime-alarm' : ''}`}>{agent.uptime}</td>
                       <td className="dot-cell"><StatusDot color={agent.status} label={colorLabel(agent.status)} /></td>
                       <td className="dot-cell"><StatusDot color={agent.alertColor} label="Alerts" /></td>
@@ -655,29 +668,23 @@ function StatusHistoryModal({
 }
 
 function AgentManagement({
-  admin,
   agents,
   busyAction,
   error,
-  groupDrafts,
   groups,
   loading,
   onConfigure,
   operator,
   runAction,
-  setGroupDrafts,
 }: {
-  admin: boolean;
   agents: DashboardAgent[];
   busyAction: string | null;
   error: string | null;
-  groupDrafts: Record<string, string>;
   groups: GroupRecord[];
   loading: boolean;
   onConfigure: (agentId: string) => void;
   operator: boolean;
   runAction: (key: string, action: () => Promise<void>) => Promise<void>;
-  setGroupDrafts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }) {
   const [descDrafts, setDescDrafts] = React.useState<Record<string, string>>({});
 
@@ -701,7 +708,6 @@ function AgentManagement({
           </thead>
           <tbody>
             {agents.map((agent) => {
-              const groupValue = groupDrafts[agent.id] ?? String(agent.groupIds[0] ?? groups[0]?.group_id ?? 0);
               const descValue = descDrafts[agent.id] ?? agent.description;
               const manageable = operator && canManageAgent(agent);
               const maintenanceCommand = maintenanceAction(agent);
@@ -709,7 +715,7 @@ function AgentManagement({
                 <tr key={agent.id}>
                   <td>
                     <div className="agent-config-cell">
-                      <AgentIdentity id={agent.id} name={agent.name} />
+                      <AgentIdentity id={agent.id} name={agent.name} secondary={`${agent.ipAddress || 'IP unknown'} / ${agent.id}`} />
                       <ActionButton
                         busy={busyAction === `${agent.id}:configure`}
                         disabled={!manageable}
@@ -737,17 +743,7 @@ function AgentManagement({
                   <td>{agent.platform}</td>
                   <td><StatusDot color={agent.status} label={colorLabel(agent.status)} /></td>
                   <td className="uptime">{agent.lastSeen > 0 ? `${Math.floor((Date.now() - agent.lastSeen) / 60000)}m` : 'never'}</td>
-                  <td>
-                    <div className="settings-grid group-settings">
-                      <select disabled={!admin} value={groupValue} onChange={(event) => setGroupDrafts((current) => ({ ...current, [agent.id]: event.target.value }))}>
-                        <option value={0}>No group</option>
-                        {groups.map((group) => (
-                          <option key={group.group_id} value={group.group_id}>{group.name}</option>
-                        ))}
-                      </select>
-                      <ActionButton busy={busyAction === `${agent.id}:groups`} disabled={!admin} icon={<SlidersHorizontal size={14} />} label="Set" onClick={() => runAction(`${agent.id}:groups`, () => setAgentGroups(agent.id, Number(groupValue) > 0 ? [Number(groupValue)] : []))} />
-                    </div>
-                  </td>
+                  <td>{agent.groupIds.map((id) => groups.find((group) => group.group_id === id)?.name ?? id).join(', ') || 'No group'}</td>
                   <td>
                     <div className="button-row">
                       <ActionButton busy={busyAction === `${agent.id}:${maintenanceCommand}`} disabled={!manageable} icon={agent.maintenance ? <Play size={14} /> : <Pause size={14} />} label={maintenanceActionLabel(agent)} onClick={() => runAction(`${agent.id}:${maintenanceCommand}`, () => agent.maintenance ? resumeAgent(agent.id) : setMaintenance(agent.id, 'operator request', 0))} />
@@ -792,7 +788,10 @@ function buildCollectorDraft(agent: DashboardAgent): AgentCollectorConfigUpdate 
 
   return {
     collection_interval: agent.collectionInterval,
+    heartbeat_interval: agent.heartbeatInterval,
     process_limit: agent.processLimit,
+    group_ids: agent.groupIds,
+    runbook_markdown: agent.runbookMarkdown,
     collector_config: {
       ...config,
       cpu: { ...config.cpu },
@@ -822,12 +821,16 @@ function buildCollectorDraft(agent: DashboardAgent): AgentCollectorConfigUpdate 
 function AgentConfigModal({
   agent: agentProp,
   busy,
+  global,
+  groups,
   onClose,
   operator,
   runAction,
 }: {
   agent: DashboardAgent;
   busy: boolean;
+  global: boolean;
+  groups: GroupRecord[];
   onClose: () => void;
   operator: boolean;
   runAction: (key: string, action: () => Promise<void>) => Promise<void>;
@@ -905,17 +908,49 @@ function AgentConfigModal({
 
         <div className="config-grid">
           <section>
+            <h2>Access</h2>
+            <div className="form-grid">
+              <label title="Controls which group-scoped users can see alerts, metrics, maintenance, and views for this agent.">
+                Group
+                <select
+                  disabled={!global}
+                  value={String(draft.group_ids?.[0] ?? 0)}
+                  onChange={(event) => setDraft((current) => ({ ...current, group_ids: Number(event.target.value) > 0 ? [Number(event.target.value)] : [] }))}
+                >
+                  <option value={0}>No group</option>
+                  {groups.map((group) => (
+                    <option key={group.group_id} value={group.group_id}>{group.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section>
             <h2>Collection</h2>
             <div className="form-grid">
-              <NumberField label="Interval seconds" min={1} value={draft.collection_interval} onChange={(value) => setDraft((current) => ({ ...current, collection_interval: value }))} />
-              <NumberField label="Process sample limit" min={1} value={draft.process_limit} onChange={(value) => setDraft((current) => ({ ...current, process_limit: value }))} />
-              <NumberField label="CPU readings" min={1} value={draft.collector_config.cpu_readings} onChange={(value) => updateReading('cpu_readings', value)} />
-              <NumberField label="Memory readings" min={1} value={draft.collector_config.memory_readings} onChange={(value) => updateReading('memory_readings', value)} />
-              <NumberField label="Disk readings" min={1} value={draft.collector_config.disk_readings} onChange={(value) => updateReading('disk_readings', value)} />
-              <NumberField label="Network readings" min={1} value={draft.collector_config.network_readings} onChange={(value) => updateReading('network_readings', value)} />
-              <NumberField label="Process readings" min={1} value={draft.collector_config.process_readings} onChange={(value) => updateReading('process_readings', value)} />
-              <NumberField label="Stale metric after (seconds, 0=off)" min={0} value={draft.collector_config.stale_after_seconds ?? 0} onChange={(value) => updateConfig((config) => ({ ...config, stale_after_seconds: value }))} />
+              <NumberField help="How often collectors such as disk, CPU, memory, network, process, and logs run." label="Collection interval seconds" min={1} value={draft.collection_interval} onChange={(value) => setDraft((current) => ({ ...current, collection_interval: value }))} />
+              <NumberField help="How often the agent sends an online heartbeat independent of collector sampling." label="Heartbeat seconds" min={1} max={60} value={draft.heartbeat_interval} onChange={(value) => setDraft((current) => ({ ...current, heartbeat_interval: value }))} />
+              <NumberField help="Maximum number of top processes to include in each metric snapshot." label="Process sample limit" min={1} value={draft.process_limit} onChange={(value) => setDraft((current) => ({ ...current, process_limit: value }))} />
+              <NumberField help="Consecutive CPU samples required before status changes." label="CPU readings" min={1} value={draft.collector_config.cpu_readings} onChange={(value) => updateReading('cpu_readings', value)} />
+              <NumberField help="Consecutive memory samples required before status changes." label="Memory readings" min={1} value={draft.collector_config.memory_readings} onChange={(value) => updateReading('memory_readings', value)} />
+              <NumberField help="Consecutive disk samples required before status changes." label="Disk readings" min={1} value={draft.collector_config.disk_readings} onChange={(value) => updateReading('disk_readings', value)} />
+              <NumberField help="Consecutive network samples required before status changes." label="Network readings" min={1} value={draft.collector_config.network_readings} onChange={(value) => updateReading('network_readings', value)} />
+              <NumberField help="Consecutive process-watch samples required before status changes." label="Process readings" min={1} value={draft.collector_config.process_readings} onChange={(value) => updateReading('process_readings', value)} />
+              <NumberField help="Raises stale-data status when a metric value does not change for this many seconds. Zero disables it." label="Stale metric after (seconds, 0=off)" min={0} value={draft.collector_config.stale_after_seconds ?? 0} onChange={(value) => updateConfig((config) => ({ ...config, stale_after_seconds: value }))} />
             </div>
+          </section>
+
+          <section className="wide-section">
+            <h2>Runbook</h2>
+            <textarea
+              className="runbook-editor"
+              disabled={!operator}
+              rows={10}
+              title="Markdown instructions for this host. Include alarm-specific steps and links to external pages as needed."
+              value={draft.runbook_markdown ?? ''}
+              onChange={(event) => setDraft((current) => ({ ...current, runbook_markdown: event.target.value }))}
+            />
           </section>
 
           <section>
@@ -1061,22 +1096,26 @@ function AgentConfigModal({
 }
 
 function NumberField({
+  help,
   label,
+  max,
   min,
   onChange,
   step = 1,
   value,
 }: {
+  help?: string;
   label: string;
+  max?: number;
   min: number;
   onChange: (value: number) => void;
   step?: number;
   value: number;
 }) {
   return (
-    <label>
+    <label title={help}>
       {label}
-      <input min={min} step={step} type="number" value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      <input max={max} min={min} step={step} type="number" value={value} onChange={(event) => onChange(Number(event.target.value))} />
     </label>
   );
 }
@@ -1155,7 +1194,7 @@ function PendingEnrollments({ agents, busyAction, groups, runAction }: { agents:
           <thead><tr><th>Agent</th><th>Platform</th><th>Last Seen</th><th>Actions</th></tr></thead>
           <tbody>{agents.map((agent) => (
             <tr key={agent.id}>
-              <td><AgentIdentity id={agent.id} name={agent.name} /></td>
+              <td><AgentIdentity id={agent.id} name={agent.name} secondary={`${agent.ipAddress || 'IP unknown'} / ${agent.id}`} /></td>
               <td>{agent.platform}</td>
               <td className="uptime">{agent.lastSeen > 0 ? `${Math.floor((Date.now() - agent.lastSeen) / 60000)}m` : 'never'}</td>
               <td><div className="button-row">
@@ -1541,7 +1580,9 @@ function SilencesPage({
                 <option value="*">All indicators</option>
                 <option value="cpu">cpu</option>
                 <option value="memory">memory</option>
-                <option value="temperature">temperature</option>
+                <option value="disk">disk</option>
+                <option value="network">network</option>
+                <option value="processes">processes</option>
                 <option value="heartbeat">heartbeat</option>
               </select>
             </label>
@@ -1624,12 +1665,13 @@ function UsersPage({
   const [groupName, setGroupName] = React.useState('');
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
-  const [role, setRole] = React.useState<UserRecord['role']>('viewer');
+  const [role, setRole] = React.useState<UserRecord['role']>('group_viewer');
   const [groupId, setGroupId] = React.useState<number>(groups[0]?.group_id ?? 0);
   const [pwUserId, setPwUserId] = React.useState<number | null>(null);
   const [pwValue, setPwValue] = React.useState('');
 
-  const admin = session.role === 'admin';
+  const admin = canManageUsers(session.role);
+  const globalAdmin = session.role === 'global_admin';
   const currentUser = users.find((u) => u.username === session.username);
 
   return (
@@ -1671,7 +1713,7 @@ function UsersPage({
       ) : null}
       <div className="management-header"><h1>Users & Groups</h1></div>
       <div className="management-grid">
-        <form
+        {canManageGroups(session.role) ? <form
           className="inline-form"
           onSubmit={(event) => {
             event.preventDefault();
@@ -1681,8 +1723,8 @@ function UsersPage({
         >
           <input aria-label="Group name" placeholder="Group name" value={groupName} onChange={(event) => setGroupName(event.target.value)} />
           <ActionButton busy={busyAction === 'group:create'} icon={<Plus size={14} />} label="Group" onClick={() => undefined} type="submit" />
-        </form>
-        <form
+        </form> : null}
+        {admin ? <form
           className="inline-form user-form"
           onSubmit={(event) => {
             event.preventDefault();
@@ -1696,9 +1738,12 @@ function UsersPage({
           <input aria-label="Username" placeholder="Username" value={username} onChange={(event) => setUsername(event.target.value)} />
           <input aria-label="Password" placeholder="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
           <select aria-label="Role" value={role} onChange={(event) => setRole(event.target.value as UserRecord['role'])}>
-            <option value="viewer">Viewer</option>
-            <option value="operator">Operator</option>
-            <option value="admin">Admin</option>
+            {isGlobal(session.role) ? <option value="global_admin">Global admin</option> : null}
+            {isGlobal(session.role) ? <option value="global_operator">Global operator</option> : null}
+            {isGlobal(session.role) ? <option value="global_viewer">Global viewer</option> : null}
+            <option value="group_admin">Group admin</option>
+            <option value="group_operator">Group operator</option>
+            <option value="group_viewer">Group viewer</option>
           </select>
           <select aria-label="Group" value={groupId} onChange={(event) => setGroupId(Number(event.target.value))}>
             <option value={0}>No group</option>
@@ -1707,7 +1752,7 @@ function UsersPage({
             ))}
           </select>
           <ActionButton busy={busyAction === 'user:create'} icon={<Plus size={14} />} label="User" onClick={() => undefined} type="submit" />
-        </form>
+        </form> : null}
       </div>
       <div className="table-container">
         <table className="management-table">
@@ -1730,7 +1775,7 @@ function UsersPage({
                         onClick={() => { setPwUserId(user.user_id); setPwValue(''); }}
                       />
                     ) : null}
-                    {admin && !user.built_in ? (
+                    {globalAdmin && !user.built_in ? (
                       user.disabled ? (
                         <ActionButton
                           busy={busyAction === `user:${user.user_id}:enable`}
@@ -1747,7 +1792,7 @@ function UsersPage({
                         />
                       )
                     ) : null}
-                    {admin && !user.built_in ? (
+                    {globalAdmin && !user.built_in ? (
                       <ActionButton
                         busy={busyAction === `user:${user.user_id}:delete`}
                         danger
@@ -2018,14 +2063,14 @@ function SettingsPage({
   );
 }
 
-function AgentIdentity({ id, name, prefix }: { id: string; name: string; prefix?: React.ReactNode }) {
+function AgentIdentity({ id, name, prefix, secondary }: { id: string; name: string; prefix?: React.ReactNode; secondary?: string }) {
   return (
     <div>
       <div className="server-name">
         {prefix}
         <span>{name || id}</span>
       </div>
-      <div className="agent-id">{id}</div>
+      <div className="agent-id">{secondary ?? id}</div>
     </div>
   );
 }
@@ -2066,6 +2111,7 @@ function ViewsPage({
   session,
   views,
   onOpenView,
+  groups,
 }: {
   agents: DashboardAgent[];
   busyAction: string | null;
@@ -2074,23 +2120,27 @@ function ViewsPage({
   session: SessionInfo;
   views: ViewRecord[];
   onOpenView: (viewId: number) => void;
+  groups: GroupRecord[];
 }) {
   const [newName, setNewName] = React.useState('');
   const [newPublic, setNewPublic] = React.useState(false);
+  const [newGroupId, setNewGroupId] = React.useState<number>(groups[0]?.group_id ?? 0);
   const [newAgentIds, setNewAgentIds] = React.useState<string[]>([]);
   const [editId, setEditId] = React.useState<number | null>(null);
   const [editName, setEditName] = React.useState('');
   const [editPublic, setEditPublic] = React.useState(false);
+  const [editGroupId, setEditGroupId] = React.useState(0);
   const [editAgentIds, setEditAgentIds] = React.useState<string[]>([]);
 
   const startEdit = (v: ViewRecord) => {
     setEditId(v.view_id);
     setEditName(v.name);
     setEditPublic(v.is_public);
+    setEditGroupId(v.group_id);
     setEditAgentIds([...v.agent_ids]);
   };
 
-  const canEdit = (v: ViewRecord) => operator && (v.owner_username === session.username || session.role === 'admin');
+  const canEdit = (v: ViewRecord) => operator && (v.owner_username === session.username || isGlobal(session.role));
 
   return (
     <main className="table-wrap">
@@ -2102,6 +2152,7 @@ function ViewsPage({
               <th>Owner</th>
               <th>Agents</th>
               <th>Visibility</th>
+              <th>Group</th>
               <th>Created</th>
               <th />
             </tr>
@@ -2111,7 +2162,7 @@ function ViewsPage({
               <tr key={v.view_id}>
                 {editId === v.view_id ? (
                   <>
-                    <td colSpan={4}>
+                    <td colSpan={5}>
                       <div className="form-grid" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
                         <input value={editName} placeholder="View name" onChange={(e) => setEditName(e.target.value)} />
                         <label style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
@@ -2123,12 +2174,16 @@ function ViewsPage({
                           onChange={(e) => setEditAgentIds(Array.from(e.target.selectedOptions, (o) => o.value))}>
                           {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                         </select>
+                        <select value={editGroupId} onChange={(e) => setEditGroupId(Number(e.target.value))}>
+                          <option value={0}>No group</option>
+                          {groups.map((group) => <option key={group.group_id} value={group.group_id}>{group.name}</option>)}
+                        </select>
                       </div>
                     </td>
                     <td>{new Date(v.created_at).toLocaleDateString()}</td>
                     <td>
                       <ActionButton busy={busyAction === `view:save:${v.view_id}`} label="Save" icon={<Check size={14} />}
-                        onClick={() => void runAction(`view:save:${v.view_id}`, () => updateView(v.view_id, editName, editAgentIds, editPublic).then(() => {})).then(() => setEditId(null))} />
+                        onClick={() => void runAction(`view:save:${v.view_id}`, () => updateView(v.view_id, editName, editAgentIds, editPublic, editGroupId).then(() => {})).then(() => setEditId(null))} />
                       <ActionButton busy={false} label="Cancel" icon={<X size={14} />} onClick={() => setEditId(null)} />
                     </td>
                   </>
@@ -2138,6 +2193,7 @@ function ViewsPage({
                     <td>{v.owner_username}</td>
                     <td>{v.agent_ids.length} agent{v.agent_ids.length !== 1 ? 's' : ''}</td>
                     <td>{v.is_public ? 'Public' : 'Private'}</td>
+                    <td>{groups.find((group) => group.group_id === v.group_id)?.name ?? 'No group'}</td>
                     <td>{new Date(v.created_at).toLocaleDateString()}</td>
                     <td>
                       <ActionButton busy={false} label="Open" icon={<Search size={14} />} onClick={() => onOpenView(v.view_id)} />
@@ -2153,7 +2209,7 @@ function ViewsPage({
               </tr>
             ))}
             {views.length === 0 ? (
-              <tr><td colSpan={6} style={{ textAlign: 'center', padding: '1rem' }}>No views yet. Create one below.</td></tr>
+              <tr><td colSpan={7} style={{ textAlign: 'center', padding: '1rem' }}>No views yet. Create one below.</td></tr>
             ) : null}
           </tbody>
         </table>
@@ -2164,7 +2220,7 @@ function ViewsPage({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              void runAction('view:create', () => createView(newName, newAgentIds, newPublic).then(() => {})).then(() => {
+              void runAction('view:create', () => createView(newName, newAgentIds, newPublic, newGroupId).then(() => {})).then(() => {
                 setNewName('');
                 setNewPublic(false);
                 setNewAgentIds([]);
@@ -2181,6 +2237,10 @@ function ViewsPage({
               value={newAgentIds}
               onChange={(e) => setNewAgentIds(Array.from(e.target.selectedOptions, (o) => o.value))}>
               {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <select value={newGroupId} onChange={(e) => setNewGroupId(Number(e.target.value))}>
+              <option value={0}>No group</option>
+              {groups.map((group) => <option key={group.group_id} value={group.group_id}>{group.name}</option>)}
             </select>
             <button className="text-button" type="submit" disabled={busyAction === 'view:create' || !newName}>
               {busyAction === 'view:create' ? '...' : 'Create View'}
