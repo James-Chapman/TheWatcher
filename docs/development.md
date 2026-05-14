@@ -55,6 +55,8 @@ npm.cmd test
 - Use BDD-style tests with `GIVEN`, `WHEN`, and `THEN`.
 - Add tests before behavior changes.
 - Update docs for every behavior or workflow change.
+- For security-sensitive changes, update [Threat Model](threat-model.md) with
+  the affected asset, trust boundary, mitigation, and residual risk.
 - Bump the `version` in `meson.build` and update `CHANGELOG.md` for each
   change set.
 - Meson builds ZeroMQ and libsodium as local static subprojects from

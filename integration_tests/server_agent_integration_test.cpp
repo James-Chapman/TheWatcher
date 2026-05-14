@@ -1282,12 +1282,21 @@ SCENARIO("Session and login API enforces authentication and provides accurate se
             httplib::Client unauth("http://127.0.0.1:" + std::to_string(fx.config.api_port));
             unauth.set_connection_timeout(5, 0);
             unauth.set_read_timeout(5, 0);
-            const auto res = unauth.Get("/api/session");
+            std::optional<int> status;
 
             THEN("the server returns 401")
             {
-                REQUIRE(res);
-                REQUIRE(res->status == 401);
+                REQUIRE(eventually(
+                    [&] {
+                        const auto res = unauth.Get("/api/session");
+                        if (!res)
+                            return false;
+                        status = res->status;
+                        return true;
+                    },
+                    5s));
+                REQUIRE(status.has_value());
+                REQUIRE(*status == 401);
             }
         }
 
@@ -1312,6 +1321,94 @@ SCENARIO("Session and login API enforces authentication and provides accurate se
                     const auto res = fx.client.Get("/api/session");
                     REQUIRE(res);
                     REQUIRE(res->status == 401);
+                }
+            }
+
+            AND_WHEN("a browser sends an unsafe authenticated request from another origin")
+            {
+                httplib::Headers headers{
+                    {"Origin", "http://evil.example"}
+                };
+                const auto res =
+                    fx.client.Post("/api/groups", headers, R"({"name":"Cross Origin"})", "application/json");
+
+                THEN("the server rejects the request before it changes state")
+                {
+                    REQUIRE(res);
+                    REQUIRE(res->status == 403);
+
+                    const auto groups = get_json(fx.client, "/api/groups");
+                    REQUIRE(groups.has_value());
+                    for (const auto& group : *groups)
+                    {
+                        REQUIRE(group["name"].get<std::string>() != "Cross Origin");
+                    }
+                }
+            }
+
+            AND_WHEN("the same authenticated request comes from the API host origin")
+            {
+                httplib::Headers headers{
+                    {"Origin", "http://127.0.0.1:" + std::to_string(fx.config.api_port)}
+                };
+                const auto res =
+                    fx.client.Post("/api/groups", headers, R"({"name":"Same Origin"})", "application/json");
+
+                THEN("the server allows it")
+                {
+                    REQUIRE(res);
+                    REQUIRE(res->status == 200);
+                }
+            }
+
+            AND_WHEN("a proxied HTTPS request uses an origin with an implicit default port")
+            {
+                httplib::Headers headers{
+                    {"Host",              "watcher.example.com:443"    },
+                    {"Origin",            "https://watcher.example.com"},
+                    {"X-Forwarded-Proto", "https"                      }
+                };
+                const auto res =
+                    fx.client.Post("/api/groups", headers, R"({"name":"Default Port Origin"})", "application/json");
+
+                THEN("the server normalizes the default HTTPS port and allows it")
+                {
+                    REQUIRE(res);
+                    REQUIRE(res->status == 200);
+                }
+            }
+
+            AND_WHEN("a proxied HTTPS request receives an HTTP origin on the same host")
+            {
+                httplib::Headers headers{
+                    {"Host",              "watcher.example.com"       },
+                    {"Origin",            "http://watcher.example.com"},
+                    {"X-Forwarded-Proto", "https"                     }
+                };
+                const auto res =
+                    fx.client.Post("/api/groups", headers, R"({"name":"Wrong Scheme Origin"})", "application/json");
+
+                THEN("the server rejects it as a different browser origin")
+                {
+                    REQUIRE(res);
+                    REQUIRE(res->status == 403);
+                }
+            }
+
+            AND_WHEN("the authenticated request comes from the dashboard on the same loopback host")
+            {
+                httplib::Headers headers{
+                    {"Origin", "http://localhost:5173"}
+                };
+                const auto res =
+                    fx.client.Post("/api/groups", headers, R"({"name":"Dashboard Origin"})", "application/json");
+
+                THEN("the server allows it and emits credentialed CORS headers")
+                {
+                    REQUIRE(res);
+                    REQUIRE(res->status == 200);
+                    REQUIRE(res->get_header_value("Access-Control-Allow-Origin") == "http://localhost:5173");
+                    REQUIRE(res->get_header_value("Access-Control-Allow-Credentials") == "true");
                 }
             }
         }
@@ -1411,7 +1508,13 @@ SCENARIO(
                     },
                     5s));
 
-                REQUIRE(post_ok(fx.client, "/api/agents/" + agent_id + "/reject"));
+                httplib::Headers headers{
+                    {"Origin", "http://localhost:5173"}
+                };
+                const auto res = fx.client.Post("/api/agents/" + agent_id + "/reject", headers, "", "application/json");
+                REQUIRE(res);
+                REQUIRE(res->status == 200);
+                REQUIRE(res->get_header_value("Access-Control-Allow-Origin") == "http://localhost:5173");
 
                 THEN("the agent no longer appears in the pending-enrollments list")
                 {
@@ -1439,7 +1542,14 @@ SCENARIO(
                     return find_pending_agent(fx.client, agent_id2).has_value();
                 },
                 5s));
-            REQUIRE(post_ok(fx.client, "/api/agents/" + agent_id2 + "/approve"));
+            httplib::Headers headers{
+                {"Origin", "http://localhost:5173"}
+            };
+            const auto approve_res = fx.client.Post("/api/agents/" + agent_id2 + "/approve", headers,
+                                                    R"({"group_ids":[]})", "application/json");
+            REQUIRE(approve_res);
+            REQUIRE(approve_res->status == 200);
+            REQUIRE(approve_res->get_header_value("Access-Control-Allow-Origin") == "http://localhost:5173");
             REQUIRE(eventually(
                 [&] {
                     return find_agent(fx.client, agent_id2).has_value();

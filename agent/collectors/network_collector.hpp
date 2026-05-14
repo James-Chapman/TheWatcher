@@ -5,10 +5,17 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace thewatcher::agent
 {
+
+namespace detail
+{
+    bool is_windows_ipconfig_adapter_name(std::string_view name, std::string_view description);
+    bool is_windows_reportable_if_type(unsigned int if_type);
+} // namespace detail
 
 class NetworkCollector final : public Collector
 {

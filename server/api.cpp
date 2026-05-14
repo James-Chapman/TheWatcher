@@ -9,10 +9,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <optional>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <unordered_set>
 
 #include <httplib.h>
@@ -340,6 +344,227 @@ namespace
         return ct.find("application/json") != std::string::npos;
     }
 
+    bool is_unsafe_method(const std::string& method)
+    {
+        return method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE";
+    }
+
+    std::string lowercase_ascii(std::string value)
+    {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+            return static_cast<char>(std::tolower(ch));
+        });
+        return value;
+    }
+
+    bool contains_forbidden_authority_char(const std::string& authority)
+    {
+        return std::any_of(authority.begin(), authority.end(), [](unsigned char ch) {
+            return std::isspace(ch) || ch == '/' || ch == '\\' || ch == '@';
+        });
+    }
+
+    std::string trim_ascii(std::string_view value)
+    {
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+            value.remove_prefix(1);
+        while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+            value.remove_suffix(1);
+        return std::string(value);
+    }
+
+    bool parse_port(std::string_view text, int& port)
+    {
+        if (text.empty() || !std::all_of(text.begin(), text.end(), [](unsigned char ch) {
+                return std::isdigit(ch);
+            }))
+        {
+            return false;
+        }
+
+        int parsed = 0;
+        const auto* first = text.data();
+        const auto* last = text.data() + text.size();
+        const auto [ptr, ec] = std::from_chars(first, last, parsed);
+        if (ec != std::errc{} || ptr != last || parsed < 1 || parsed > 65535)
+            return false;
+
+        port = parsed;
+        return true;
+    }
+
+    int default_port_for_scheme(const std::string& scheme)
+    {
+        if (scheme == "http")
+            return 80;
+        if (scheme == "https")
+            return 443;
+        return 0;
+    }
+
+    struct AuthorityParts
+    {
+        std::string host;
+        int port = 0;
+        bool has_port = false;
+    };
+
+    struct OriginParts
+    {
+        std::string scheme;
+        std::string host;
+        int port = 0;
+    };
+
+    std::optional<AuthorityParts> parse_authority(const std::string& authority)
+    {
+        if (authority.empty() || contains_forbidden_authority_char(authority))
+            return std::nullopt;
+
+        AuthorityParts parsed;
+        if (authority.front() == '[')
+        {
+            const auto close = authority.find(']');
+            if (close == std::string::npos)
+                return std::nullopt;
+            parsed.host = lowercase_ascii(authority.substr(1, close - 1));
+            if (parsed.host.empty())
+                return std::nullopt;
+            if (close + 1 < authority.size())
+            {
+                if (authority[close + 1] != ':' ||
+                    !parse_port(std::string_view(authority).substr(close + 2), parsed.port))
+                {
+                    return std::nullopt;
+                }
+                parsed.has_port = true;
+            }
+            return parsed;
+        }
+
+        const auto first_colon = authority.find(':');
+        const auto last_colon = authority.rfind(':');
+        if (first_colon != last_colon)
+            return std::nullopt;
+        const auto host = first_colon == std::string::npos ? authority : authority.substr(0, first_colon);
+        if (host.empty())
+            return std::nullopt;
+        parsed.host = lowercase_ascii(host);
+        if (first_colon != std::string::npos)
+        {
+            if (!parse_port(std::string_view(authority).substr(first_colon + 1), parsed.port))
+                return std::nullopt;
+            parsed.has_port = true;
+        }
+        return parsed;
+    }
+
+    std::optional<OriginParts> parse_origin(const std::string& origin)
+    {
+        const auto scheme_end = origin.find("://");
+        if (scheme_end == std::string::npos)
+            return std::nullopt;
+
+        OriginParts parsed;
+        parsed.scheme = lowercase_ascii(origin.substr(0, scheme_end));
+        const auto default_port = default_port_for_scheme(parsed.scheme);
+        if (default_port == 0)
+            return std::nullopt;
+
+        const auto authority_start = scheme_end + 3;
+        const auto authority_end = origin.find_first_of("/?#", authority_start);
+        const auto authority = origin.substr(
+            authority_start, authority_end == std::string::npos ? std::string::npos : authority_end - authority_start);
+        const auto parsed_authority = parse_authority(authority);
+        if (!parsed_authority)
+            return std::nullopt;
+
+        parsed.host = parsed_authority->host;
+        parsed.port = parsed_authority->has_port ? parsed_authority->port : default_port;
+        return parsed;
+    }
+
+    std::optional<std::string> request_scheme(const httplib::Request& req)
+    {
+        auto forwarded = req.get_header_value("X-Forwarded-Proto");
+        if (forwarded.empty())
+            return std::string("http");
+
+        const auto comma = forwarded.find(',');
+        forwarded = lowercase_ascii(
+            trim_ascii(std::string_view(forwarded).substr(0, comma == std::string::npos ? forwarded.size() : comma)));
+        if (forwarded == "http" || forwarded == "https")
+            return forwarded;
+        return std::nullopt;
+    }
+
+    std::optional<OriginParts> request_origin(const httplib::Request& req)
+    {
+        const auto scheme = request_scheme(req);
+        if (!scheme)
+            return std::nullopt;
+
+        const auto parsed_authority = parse_authority(req.get_header_value("Host"));
+        if (!parsed_authority)
+            return std::nullopt;
+
+        const auto default_port = default_port_for_scheme(*scheme);
+        if (default_port == 0)
+            return std::nullopt;
+
+        return OriginParts{
+            *scheme,
+            parsed_authority->host,
+            parsed_authority->has_port ? parsed_authority->port : default_port,
+        };
+    }
+
+    bool is_loopback_host(const std::string& host)
+    {
+        return host == "localhost" || host == "localhost." || host == "::1" || host.rfind("127.", 0) == 0;
+    }
+
+    bool allows_browser_origin(const httplib::Request& req, const std::string& origin)
+    {
+        const auto request_parts = parse_origin(origin);
+        const auto api_parts = request_origin(req);
+        if (!request_parts || !api_parts)
+            return false;
+
+        const auto same_origin = request_parts->scheme == api_parts->scheme && request_parts->host == api_parts->host &&
+                                 request_parts->port == api_parts->port;
+        const auto loopback_dashboard = request_parts->scheme == api_parts->scheme &&
+                                        is_loopback_host(request_parts->host) && is_loopback_host(api_parts->host);
+        return same_origin || loopback_dashboard;
+    }
+
+    void apply_browser_origin_headers(const httplib::Request& req, httplib::Response& res)
+    {
+        const auto origin = req.get_header_value("Origin");
+        if (origin.empty() || !allows_browser_origin(req, origin))
+            return;
+
+        res.set_header("Access-Control-Allow-Origin", origin);
+        res.set_header("Access-Control-Allow-Credentials", "true");
+        res.set_header("Access-Control-Allow-Headers", "Content-Type");
+        res.set_header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+        res.set_header("Vary", "Origin");
+    }
+
+    bool rejects_unsafe_browser_origin(const httplib::Request& req)
+    {
+        if (!is_unsafe_method(req.method))
+            return false;
+
+        auto origin = req.get_header_value("Origin");
+        if (origin.empty())
+            origin = req.get_header_value("Referer");
+        if (origin.empty())
+            return false;
+
+        return !allows_browser_origin(req, origin);
+    }
+
     std::string hash_password(const std::string& password)
     {
         char hash[crypto_pwhash_STRBYTES] = {};
@@ -409,6 +634,15 @@ std::optional<SessionRecord> ApiServer::current_session(const httplib::Request& 
 std::optional<SessionRecord> ApiServer::require_role(const httplib::Request& req, httplib::Response& res,
                                                      const std::string& role)
 {
+    if (rejects_unsafe_browser_origin(req))
+    {
+        res.status = 403;
+        set_json(res, json{
+                          {"error", "cross-origin request rejected"}
+        });
+        return std::nullopt;
+    }
+
     auto session = current_session(req);
     if (!session)
     {
@@ -489,15 +723,20 @@ void ApiServer::setup_routes()
 {
     LOG_FUNCTION_TRACE
     http_->set_default_headers({
-        {"Access-Control-Allow-Origin",      "*"                      },
-        {"Access-Control-Allow-Credentials", "true"                   },
-        {"Access-Control-Allow-Headers",     "Content-Type"           },
-        {"Access-Control-Allow-Methods",     "GET,POST,DELETE,OPTIONS"}
+        {"Cache-Control",           "no-store"                                  },
+        {"Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"},
+        {"Referrer-Policy",         "no-referrer"                               },
+        {"X-Content-Type-Options",  "nosniff"                                   },
+        {"X-Frame-Options",         "DENY"                                      }
     });
-    LOG_DEBUG("Default CORS headers configured");
+    LOG_DEBUG("Default HTTP security headers configured");
 
-    http_->Options(R"(.*)", [](const httplib::Request&, httplib::Response& res) {
+    http_->Options(R"(.*)", [](const httplib::Request& req, httplib::Response& res) {
         res.status = 204;
+        apply_browser_origin_headers(req, res);
+    });
+    http_->set_post_routing_handler([](const httplib::Request& req, httplib::Response& res) {
+        apply_browser_origin_headers(req, res);
     });
 
     http_->Post("/api/login", [this](const httplib::Request& req, httplib::Response& res) {
@@ -591,6 +830,15 @@ void ApiServer::setup_routes()
     });
 
     http_->Post("/api/logout", [this](const httplib::Request& req, httplib::Response& res) {
+        if (rejects_unsafe_browser_origin(req))
+        {
+            res.status = 403;
+            set_json(res, json{
+                              {"error", "cross-origin request rejected"}
+            });
+            return;
+        }
+
         auto token = cookie_value(req, "tw_session");
         if (!token.empty())
             store_.delete_session(token);

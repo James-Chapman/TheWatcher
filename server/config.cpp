@@ -4,6 +4,7 @@
 #include "common/crypto.hpp"
 
 #include <cctype>
+#include <cstdint>
 #include <fstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -25,6 +26,9 @@ namespace fs = std::filesystem;
 
 namespace
 {
+constexpr std::uintmax_t max_config_file_bytes = 1024 * 1024;
+constexpr std::size_t max_config_line_bytes = 8 * 1024;
+
 std::string trim(std::string value)
 {
     while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
@@ -36,6 +40,11 @@ std::string trim(std::string value)
 
 std::unordered_map<std::string, std::string> read_key_value_file(const fs::path& path)
 {
+    std::error_code ec;
+    const auto file_size = fs::file_size(path, ec);
+    if (!ec && file_size > max_config_file_bytes)
+        throw std::runtime_error("Config file is too large: " + path.string());
+
     std::ifstream f(path);
     if (!f)
         throw std::runtime_error("Cannot open " + path.string());
@@ -44,6 +53,8 @@ std::unordered_map<std::string, std::string> read_key_value_file(const fs::path&
     std::string line;
     while (std::getline(f, line))
     {
+        if (line.size() > max_config_line_bytes)
+            throw std::runtime_error("Config line is too long: " + path.string());
         line = trim(line);
         if (line.empty() || line[0] == '#')
             continue;

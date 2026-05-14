@@ -5,19 +5,58 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <optional>
 #include <sstream>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #ifdef _WIN32
+#include <iphlpapi.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <iphlpapi.h>
 #endif
 
 namespace thewatcher::agent
 {
+
+namespace detail
+{
+    namespace
+    {
+        std::string lowercase_ascii(std::string_view value)
+        {
+            std::string out(value);
+            std::transform(out.begin(), out.end(), out.begin(), [](unsigned char ch) {
+                return static_cast<char>(std::tolower(ch));
+            });
+            return out;
+        }
+
+        bool contains(std::string_view haystack, std::string_view needle)
+        {
+            return haystack.find(needle) != std::string_view::npos;
+        }
+    } // namespace
+
+    bool is_windows_ipconfig_adapter_name(std::string_view name, std::string_view description)
+    {
+        const auto haystack = lowercase_ascii(std::string(name) + " " + std::string(description));
+        return !contains(haystack, "packet scheduler") && !contains(haystack, "wfp native mac layer") &&
+               !contains(haystack, "lightweight filter") && !contains(haystack, "hyper-v virtual switch") &&
+               !contains(haystack, "network bridge") && !contains(haystack, "6to4 adapter") &&
+               !contains(haystack, "isatap") && !contains(haystack, "teredo") && !contains(haystack, "wan miniport");
+    }
+
+    bool is_windows_reportable_if_type(unsigned int if_type)
+    {
+        constexpr unsigned int ethernet_csmacd = 6;
+        constexpr unsigned int ppp = 23;
+        constexpr unsigned int ieee80211 = 71;
+        return if_type == ethernet_csmacd || if_type == ppp || if_type == ieee80211;
+    }
+} // namespace detail
 
 namespace
 {
@@ -87,6 +126,15 @@ namespace
 #endif
 
 #ifdef _WIN32
+    struct WindowsAdapterInfo
+    {
+        uint64_t luid = 0;
+        unsigned long if_index = 0;
+        std::string name;
+        std::string description;
+        std::string ip_address;
+    };
+
     std::string wide_to_utf8(const wchar_t* value)
     {
         if (value == nullptr || *value == L'\0')
@@ -117,9 +165,20 @@ namespace
         return {};
     }
 
-    std::unordered_map<uint64_t, std::string> adapter_ips()
+    std::optional<std::string> first_reportable_ip(const IP_ADAPTER_UNICAST_ADDRESS* first_unicast)
     {
-        std::unordered_map<uint64_t, std::string> ips;
+        for (auto* unicast = first_unicast; unicast != nullptr; unicast = unicast->Next)
+        {
+            const auto ip = sockaddr_to_string(unicast->Address.lpSockaddr);
+            if (!ip.empty() && ip != "127.0.0.1" && ip != "::1")
+                return ip;
+        }
+        return std::nullopt;
+    }
+
+    std::vector<WindowsAdapterInfo> read_windows_ipconfig_adapters()
+    {
+        std::vector<WindowsAdapterInfo> result;
         ULONG size = 15 * 1024;
         std::vector<unsigned char> buffer(size);
         auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
@@ -135,21 +194,29 @@ namespace
                                         nullptr, adapters, &size);
         }
         if (rc != NO_ERROR)
-            return ips;
+            return result;
 
         for (auto* adapter = adapters; adapter != nullptr; adapter = adapter->Next)
         {
-            for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next)
+            WindowsAdapterInfo info;
+            info.luid = adapter->Luid.Value;
+            info.if_index = adapter->IfIndex;
+            info.name = wide_to_utf8(adapter->FriendlyName);
+            info.description = wide_to_utf8(adapter->Description);
+            if (info.name.empty())
+                info.name = info.description;
+
+            if (!detail::is_windows_reportable_if_type(adapter->IfType) ||
+                !detail::is_windows_ipconfig_adapter_name(info.name, info.description))
             {
-                const auto ip = sockaddr_to_string(unicast->Address.lpSockaddr);
-                if (!ip.empty() && ip != "127.0.0.1" && ip != "::1")
-                {
-                    ips[adapter->Luid.Value] = ip;
-                    break;
-                }
+                continue;
             }
+
+            if (const auto ip = first_reportable_ip(adapter->FirstUnicastAddress))
+                info.ip_address = *ip;
+            result.push_back(std::move(info));
         }
-        return ips;
+        return result;
     }
 #endif
 
@@ -189,30 +256,31 @@ void NetworkCollector::update(SystemMetrics& metrics)
     }
     LOGF_TRACE("Network collector updated interfaces=%zu", metrics.networks.size());
 #elif defined(_WIN32)
-    PMIB_IF_TABLE2 table = nullptr;
-    if (::GetIfTable2(&table) != NO_ERROR || table == nullptr)
-    {
-        LOG_DEBUG("Windows network collector could not read interface table");
-        return;
-    }
-
-    const auto ips = adapter_ips();
+    const auto adapters = read_windows_ipconfig_adapters();
     const auto now = std::chrono::steady_clock::now();
-    for (ULONG i = 0; i < table->NumEntries; ++i)
+    for (const auto& adapter : adapters)
     {
-        const auto& row = table->Table[i];
+        MIB_IF_ROW2 row{};
+        row.InterfaceLuid.Value = adapter.luid;
+        if (::GetIfEntry2(&row) != NO_ERROR)
+        {
+            MIB_IF_ROW2 row_by_index{};
+            row_by_index.InterfaceIndex = adapter.if_index;
+            if (::GetIfEntry2(&row_by_index) != NO_ERROR)
+                continue;
+            row = row_by_index;
+        }
+
         NetworkMetrics network;
-        network.interface_name = wide_to_utf8(row.Alias);
-        if (network.interface_name.empty())
-            network.interface_name = wide_to_utf8(row.Description);
-        network.ip_address = ips.contains(row.InterfaceLuid.Value) ? ips.at(row.InterfaceLuid.Value) : "";
+        network.interface_name = adapter.name;
+        network.ip_address = adapter.ip_address;
         network.is_up = row.OperStatus == IfOperStatusUp;
         network.errors_in = row.InErrors;
         network.errors_out = row.OutErrors;
         network.drops_in = row.InDiscards;
         network.drops_out = row.OutDiscards;
 
-        const auto key = std::to_string(row.InterfaceIndex);
+        const auto key = std::to_string(adapter.luid);
         auto previous = prev_.find(key);
         if (previous != prev_.end())
         {
@@ -226,7 +294,6 @@ void NetworkCollector::update(SystemMetrics& metrics)
         prev_[key] = {row.InOctets, row.OutOctets, row.InUcastPkts, row.OutUcastPkts, now};
         metrics.networks.push_back(std::move(network));
     }
-    ::FreeMibTable(table);
     LOGF_TRACE("Windows network collector updated interfaces=%zu", metrics.networks.size());
 #else
     LOG_DEBUG("Network collector has no implementation for this platform");

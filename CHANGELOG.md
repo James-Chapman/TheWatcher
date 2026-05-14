@@ -5,6 +5,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-05-14
+
+### Fixed
+- Fixed Linux/BSD integration-test startup timing by waiting until the REST API
+  accepts a session request before asserting the unauthenticated response.
+- Normalized browser-origin checks to compare scheme, host, and effective
+  default ports so HTTPS reverse-proxy requests are not rejected when one side
+  omits `:443`, while HTTP origins on HTTPS API hosts remain blocked.
+- Hardened webhook IPv6 literal filtering by parsing IPv6 addresses before
+  rejecting loopback, unspecified, documentation, benchmark, multicast,
+  link-local, unique-local, and IPv4-mapped restricted targets.
+- Filtered Windows network collection to IP Helper adapters that correspond to
+  `ipconfig` output instead of lower-layer NDIS, bridge, tunnel, scheduler, and
+  filter devices.
+
+## [0.7.1] - 2026-05-14
+
+### Fixed
+- Fixed pending enrollment Approve and Reject actions from dashboard origins
+  that share the API host or loopback machine but use a different port. The API
+  now emits credentialed CORS headers for those allowed origins while continuing
+  to reject arbitrary cross-site unsafe requests.
+
+## [0.7.0] - 2026-05-14
+
+### Added
+- Added `docs/threat-model.md` covering assets, trust boundaries, STRIDE-style
+  threats, mitigations, and residual risks for the dashboard, API, agents,
+  database, configuration files, and outbound webhooks.
+- Added direct BDD coverage for webhook URL validation, oversized config input,
+  and cross-origin authenticated browser write rejection.
+
+### Changed
+- Hardened REST API responses with baseline browser security headers and reject
+  unsafe authenticated requests when `Origin` or `Referer` does not match
+  `Host`.
+- Replaced duplicated alert/report webhook URL parsing with a shared validator
+  that rejects localhost, private, link-local, multicast, malformed authority,
+  userinfo, invalid-port, and non-HTTP targets before making outbound requests.
+- Bounded server and agent KEY=VALUE config parsing to reject files above 1 MiB
+  or individual lines above 8 KiB before applying settings.
+
 ## [0.6.0] - 2026-05-13
 
 ### Added

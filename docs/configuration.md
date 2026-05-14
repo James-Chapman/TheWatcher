@@ -16,7 +16,8 @@ Linux/BSD: /etc/thewatcher/TheWatcherServer.conf
 
 The server uses `--config <path>` when provided. Otherwise it uses the platform
 default path. If the file does not exist, the server creates it and generates a
-CURVE keypair.
+CURVE keypair. Existing config files above 1 MiB, or with any single line above
+8 KiB, are rejected before settings are applied.
 
 Example:
 
@@ -59,7 +60,7 @@ dedicated dashboard controls exist.
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `notifications.webhook_url` | empty | Optional HTTP webhook URL. The server posts alert JSON when an alert is generated. `http://` URLs are supported by the current build. |
+| `notifications.webhook_url` | empty | Optional HTTP webhook URL. The server posts alert JSON when an alert is generated. `http://` URLs are supported by the current build. Localhost, private, link-local, multicast, documentation, benchmark, malformed authority, userinfo, and invalid-port targets are rejected before sending. |
 
 ## Per-Agent Collector Configuration
 
@@ -122,7 +123,7 @@ Collector fields:
 | `network_readings` | `1` | Consecutive worsening network readings required before the worse state is committed. |
 | `process_readings` | `3` | Consecutive missing process readings required to reach red. The first failed reading is yellow, the second is amber, and the third is red when the default is used. |
 | `disks` | empty | Per fixed-disk configuration. An empty list means monitor all reported fixed disks with default thresholds. Entries are matched by `mount_point` and displayed as `mount point (device)`. |
-| `networks` | empty | Per-interface configuration. An empty list means monitor all reported non-loopback interfaces. Thresholds are combined receive plus transmit megabits per second. |
+| `networks` | empty | Per-interface configuration. An empty list means monitor all reported non-loopback interfaces. On Windows, reported interfaces are limited to IP Helper adapters that match `ipconfig` output; lower-layer filter, bridge, tunnel, and scheduler devices are ignored. Thresholds are combined receive plus transmit megabits per second. |
 | `processes` | empty | Exact executable names and expected instance counts. Fewer running instances than `expected_count` escalates process health and the alert message names the missing process. |
 
 `heartbeat_interval` is the per-agent heartbeat cadence in seconds. It is
@@ -160,6 +161,15 @@ group: Admins
 
 Passwords are stored as libsodium password hashes, not plaintext. Sessions are
 stored in SQLite and returned to the browser as HTTP-only `tw_session` cookies.
+Unsafe authenticated API requests that include an `Origin` or `Referer` header
+must match the API scheme, host, and effective port, or come from a loopback
+dashboard origin talking to a loopback API. `X-Forwarded-Proto` is used when the
+API is behind an HTTPS reverse proxy. Other cross-origin browser writes are
+rejected with HTTP 403. Allowed dashboard origins receive credentialed CORS
+response headers so local dashboard/API port splits work without weakening
+arbitrary cross-site writes. API responses also send baseline browser hardening
+headers including `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+`Cache-Control: no-store`, and a restrictive Content Security Policy.
 
 Roles:
 
@@ -193,6 +203,8 @@ Linux/BSD: ~/.config/thewatcher/TheWatcherAgent.conf
 
 Use `--config <path>` for services and repeatable deployments. If the file does
 not exist, the agent creates it and generates an agent id plus CURVE keypair.
+Existing config files above 1 MiB, or with any single line above 8 KiB, are
+rejected before settings are applied.
 
 Minimal example:
 

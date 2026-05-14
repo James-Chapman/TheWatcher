@@ -22,6 +22,14 @@ status_engine_test = executable(
 )
 test('status_engine', status_engine_test)
 
+webhook_security_test = executable(
+  'webhook_security_test',
+  ['webhook_security_test.cpp'],
+  include_directories: root_inc,
+  dependencies: [server_store_dep, catch2_dep, platform_deps],
+)
+test('webhook_security', webhook_security_test)
+
 zap_handler_test = executable(
   'zap_handler_test',
   ['zap_handler_test.cpp'],
