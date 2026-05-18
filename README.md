@@ -71,6 +71,8 @@ the agent writes back to `TheWatcherAgent.conf`.
   commands.
 - [Development](docs/development.md): repository layout, build/test targets,
   coding workflow, and how to extend the product end to end.
+- [Progress Tracker](docs/01-progress-tracker.md): alpha, beta, and v1
+  production release Done/TODO tracking.
 - [Collector Contract](docs/collector-contract.md): how collectors populate
   `SystemMetrics` and what to change when adding a collector.
 - [Build Environment](docs/build-environment.md): Windows, Linux, and BSD
