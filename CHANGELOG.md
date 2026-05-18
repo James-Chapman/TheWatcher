@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-05-18
+
+### Added
+- Added `docs/01-progress-tracker.md` as the consolidated alpha, beta, and v1
+  production release progress tracker with explicit Done and TODO sections.
+
 ## [0.7.5] - 2026-05-14
 
 ### Changed
